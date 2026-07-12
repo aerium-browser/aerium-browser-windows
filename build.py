@@ -32,46 +32,89 @@ _PATCH_BIN_RELPATH = Path('third_party/git/usr/bin/patch.exe')
 # Browser brand name (replaces "Chromium" in product name, UI strings,
 # shortcuts, registry paths and the user data directory)
 _BRAND_NAME = 'Aerium'
+_COMPANY_NAME = 'Dioide'
 
 
 def _apply_branding(source_tree):
-    """Renames Chromium to Aerium and swaps in the Aerium logo assets"""
+    """Renames Chromium to Aerium (by Dioide) and swaps in the Aerium logos"""
     get_logger().info('Applying %s branding...', _BRAND_NAME)
 
-    # BRANDING: product and installer names (company/copyright left intact)
+    # BRANDING: product, installer, company and copyright
     branding_path = source_tree / 'chrome' / 'app' / 'theme' / 'chromium' / 'BRANDING'
     branding_lines = []
     for line in branding_path.read_text(encoding=ENCODING).splitlines():
         if line.startswith('PRODUCT_'):
             line = line.replace('Chromium', _BRAND_NAME)
+        elif line.startswith('COMPANY_FULLNAME=') or line.startswith('COMPANY_SHORTNAME='):
+            line = line.split('=', 1)[0] + '=' + _COMPANY_NAME
+        elif line.startswith('COPYRIGHT='):
+            line = ('COPYRIGHT=Copyright @LASTCHANGE_YEAR@ {}. '
+                    'All rights reserved.'.format(_COMPANY_NAME))
         branding_lines.append(line)
     branding_path.write_text('\n'.join(branding_lines) + '\n', encoding=ENCODING)
 
-    # Product name in UI strings (all locales), installer strings and
-    # install-mode constants (shortcut name, ProgIDs, registry paths,
-    # user data directory)
-    rename_files = [
-        source_tree / 'chrome' / 'app' / 'chromium_strings.grd',
-        source_tree / 'components' / 'components_chromium_strings.grd',
-        source_tree / 'chrome' / 'install_static' / 'chromium_install_modes.h',
-    ]
-    rename_files += sorted(
-        (source_tree / 'chrome' / 'app' / 'resources').glob('chromium_strings_*.xtb'))
-    rename_files += sorted(
-        (source_tree / 'components' / 'strings').glob('components_chromium_strings_*.xtb'))
-    for rename_path in rename_files:
-        text = rename_path.read_text(encoding='utf-8')
-        rename_path.write_text(text.replace('Chromium', _BRAND_NAME), encoding='utf-8')
+    # Product name in every UI string source (.grd/.grdp and all .xtb
+    # locales). This covers not only chromium_strings.grd but also the many
+    # generated_resources/components strings that hard-code "Chromium" inside
+    # <if expr> branches (e.g. "About Chromium"). Note: changed source texts
+    # get new grit message IDs, so affected strings fall back to English in
+    # non-English locales (fallback_to_english is enabled for these grds).
+    string_roots = ('chrome', 'components', 'extensions', 'ui', 'content')
+    string_suffixes = ('.grd', '.grdp', '.xtb')
+    replaced_count = 0
+    for root in string_roots:
+        root_path = source_tree / root
+        if not root_path.exists():
+            continue
+        for path in root_path.rglob('*'):
+            if path.suffix not in string_suffixes or not path.is_file():
+                continue
+            try:
+                text = path.read_text(encoding='utf-8')
+            except (UnicodeDecodeError, OSError):
+                continue
+            if 'Chromium' not in text and 'ungoogled-chromium' not in text:
+                continue
+            new_text = text.replace('The Chromium Authors', _COMPANY_NAME)
+            new_text = new_text.replace('Chromium', _BRAND_NAME)
+            new_text = new_text.replace(
+                'ungoogled-chromium', '{} by {}'.format(_BRAND_NAME, _COMPANY_NAME))
+            if new_text != text:
+                path.write_text(new_text, encoding='utf-8')
+                replaced_count += 1
+    get_logger().info('Renamed product in %d string files', replaced_count)
+
+    # Install-mode constants (shortcut name, ProgIDs, registry paths, user
+    # data directory)
+    install_modes_path = (
+        source_tree / 'chrome' / 'install_static' / 'chromium_install_modes.h')
+    install_modes_text = install_modes_path.read_text(encoding='utf-8')
+    install_modes_path.write_text(
+        install_modes_text.replace('Chromium', _BRAND_NAME), encoding='utf-8')
 
     # Logo assets
     brand_dir = _ROOT_DIR / 'brand'
     theme_dir = source_tree / 'chrome' / 'app' / 'theme' / 'chromium'
     shutil.copyfile(brand_dir / 'aerium.ico', theme_dir / 'win' / 'chromium.ico')
+    # File-association and app-list icons still carry the Chromium logo;
+    # replace them with the Aerium logo as well.
+    shutil.copyfile(brand_dir / 'aerium.ico', theme_dir / 'win' / 'chromium_doc.ico')
+    shutil.copyfile(brand_dir / 'aerium.ico', theme_dir / 'win' / 'chromium_pdf.ico')
+    shutil.copyfile(brand_dir / 'aerium.ico', theme_dir / 'win' / 'app_list.ico')
     shutil.copyfile(brand_dir / 'product_logo.svg', theme_dir / 'product_logo.svg')
     for png_path in brand_dir.glob('product_logo_*.png'):
         shutil.copyfile(png_path, theme_dir / png_path.name)
     for tile_path in (brand_dir / 'tiles').iterdir():
         shutil.copyfile(tile_path, theme_dir / 'win' / 'tiles' / tile_path.name)
+    # In-app logos used by Windows theme resources (about page, profile menu)
+    for scale in ('default_100_percent', 'default_200_percent'):
+        scale_src = brand_dir / 'inapp' / scale
+        scale_dst = source_tree / 'chrome' / 'app' / 'theme' / scale / 'chromium'
+        for png_path in scale_src.iterdir():
+            shutil.copyfile(png_path, scale_dst / png_path.name)
+    # WebUI logo (settings sidebar etc.)
+    shutil.copyfile(brand_dir / 'chrome_logo_dark.svg',
+                    source_tree / 'ui' / 'webui' / 'resources' / 'images' / 'chrome_logo_dark.svg')
 
 
 # Chromium Web Store extension (https://github.com/NeverDecaf/chromium-web-store)

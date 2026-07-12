@@ -1,6 +1,6 @@
 --- a/components/webui/flags/pref_service_flags_storage.cc
 +++ b/components/webui/flags/pref_service_flags_storage.cc
-@@ -87,7 +87,27 @@
+@@ -87,7 +87,26 @@
  
  // static
  void PrefServiceFlagsStorage::RegisterPrefs(PrefRegistrySimple* registry) {
@@ -17,7 +17,6 @@
 +  default_flags.Append("fingerprinting-client-rects-noise");
 +  default_flags.Append("force-punycode-hostnames");
 +  default_flags.Append("increase-incognito-storage-quota@1");
-+  default_flags.Append("minimal-referrers@1");
 +  default_flags.Append("popups-to-tabs");
 +  default_flags.Append("reduced-system-info@1");
 +  default_flags.Append("remove-client-hints@1");

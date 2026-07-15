@@ -2,15 +2,29 @@ name: build-x64
 on:
   workflow_dispatch:
   push:
+    branches: [master]
     tags:
       - '*'
+    paths:
+      - 'build.py'
+      - 'package.py'
+      - 'args.gn'
+      - 'flags.windows.gn'
+      - 'downloads.ini'
+      - 'domain_substitution.list'
+      - 'pruning.list'
+      - 'patches/**'
+      - 'brand/**'
+      - 'ungoogled-chromium'
+      - '.github/workflows/**'
+      - '.github/actions/**'
 
 permissions:
   contents: read
 
 concurrency:
   group: build-x64-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:

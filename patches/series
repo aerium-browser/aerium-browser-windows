@@ -23,8 +23,6 @@ ungoogled-chromium/windows/windows-fix-missing-includes.patch
 ungoogled-chromium/windows/windows-fix-unsupported-llvm-flags.patch
 ungoogled-fatih/default-flags.patch
 ungoogled-fatih/bundled-external-extensions.patch
-ungoogled-fatih/aerium-theme.patch
-ungoogled-fatih/aerium-shell-colors.patch
 ungoogled-fatih/aerium-first-run-page.patch
 ungoogled-fatih/aerium-battery-efficiency.patch
 ungoogled-fatih/aerium-https-first-balanced.patch

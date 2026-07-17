@@ -9,13 +9,13 @@
 [![build-x64](https://img.shields.io/github/actions/workflow/status/fatih-gh/aerium-browser-windows/build-x64.yml?label=build)](https://github.com/fatih-gh/aerium-browser-windows/actions/workflows/build-x64.yml)
 [![release](https://img.shields.io/github/v/release/fatih-gh/aerium-browser-windows)](https://github.com/fatih-gh/aerium-browser-windows/releases/latest)
 
-Aerium is a browser for people who'd rather their browser stayed out of the way. Dark, deep-navy interface by default. No telemetry calling home, no bundled Google services, no ad platform baked into the settings page. Extensions install straight from the Chrome Web Store — no sideloading, no workarounds.
+Aerium is a browser for people who'd rather their browser stayed out of the way. No telemetry calling home, no bundled Google services, no ad platform baked into the settings page. Extensions install straight from the Chrome Web Store — no sideloading, no workarounds.
 
 [**Download for Windows**](https://github.com/fatih-gh/aerium-browser-windows/releases/latest)
 
 ## What you get
 
-- **A browser that looks like Aerium, not like a rebadged default.** Frame, toolbar, and tab strip carry their own deep-navy palette, not just a dark-mode filter over stock Chromium.
+- **Its own name, its own icon — your own colors.** The appearance picker in Settings works exactly like it does in stock Chromium; nothing forces a palette on top of it.
 - **Extensions that work out of the box.** The Chrome Web Store is available from the first launch — install and update the same way you would anywhere else.
 - **Privacy defaults you don't have to hunt for.** Fingerprinting resistance, minimal referrers, reduced system info, and a handful of others are on from the start. Nothing's locked — change any of it in `chrome://flags` and it behaves like flags always have.
 - **HTTPS by default.** Balanced Mode upgrades navigations to HTTPS automatically, without the disruptive full-site warnings of strict HTTPS-only enforcement.
@@ -35,4 +35,4 @@ Issues and pull requests are welcome. See [UPDATING.md](UPDATING.md) for how the
 
 ## About
 
-Aerium is built on [Chromium](https://www.chromium.org/) via [ungoogled-chromium](https://github.com/ungoogled-software/ungoogled-chromium), with its own branding, theme, and defaults layered on top. The bundled store integration comes from [chromium-web-store](https://github.com/NeverDecaf/chromium-web-store). Licensed under Chromium's BSD-style license — see [LICENSE](LICENSE).
+Aerium is built on [Chromium](https://www.chromium.org/) via [ungoogled-chromium](https://github.com/ungoogled-software/ungoogled-chromium), with its own branding and defaults layered on top. The bundled store integration comes from [chromium-web-store](https://github.com/NeverDecaf/chromium-web-store). Licensed under Chromium's BSD-style license — see [LICENSE](LICENSE).

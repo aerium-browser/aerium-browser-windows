@@ -10,8 +10,9 @@ watch** workflow opens a tracking issue.
   Chromium version is in `ungoogled-chromium/chromium_version.txt`.
 - **Our changes**: `_apply_branding` in `build.py` (Chromium→Aerium,
   Dioide, logo swap), `patches/ungoogled-fatih/` (default-flags,
-  bundled-external-extensions, aerium-theme), `brand/` (logo assets),
-  the staged workflow under `.github/`.
+  bundled-external-extensions, aerium-first-run-page,
+  aerium-battery-efficiency, aerium-https-first-balanced), `brand/`
+  (logo assets), the staged workflow under `.github/`.
 
 ## Sync procedure
 
@@ -25,22 +26,33 @@ Upstream (ungoogled-software) uses normal PRs, so a merge is safe here.
    (ours is a distinct staged pipeline — usually keep ours).
 4. Bump the submodule if the merge didn't:
    `git -C ungoogled-chromium fetch --tags && git -C ungoogled-chromium checkout <tag>`.
-5. Verify our three patches still apply against the new Chromium:
+5. Verify our patches still apply against the new Chromium:
    ```
    # in a scratch checkout of the new chromium source
    patch -p1 --dry-run < patches/ungoogled-fatih/default-flags.patch
    patch -p1 --dry-run < patches/ungoogled-fatih/bundled-external-extensions.patch
-   patch -p1 --dry-run < patches/ungoogled-fatih/aerium-theme.patch
+   patch -p1 --dry-run < patches/ungoogled-fatih/aerium-first-run-page.patch
+   patch -p1 --dry-run < patches/ungoogled-fatih/aerium-battery-efficiency.patch
+   patch -p1 --dry-run < patches/ungoogled-fatih/aerium-https-first-balanced.patch
    ```
 6. Commit and dispatch **build-x64**.
 
 ## When a patch fails to apply
 
-Our three patches target specific Chromium files that occasionally move:
+Our patches target specific Chromium files that occasionally move:
 
 - `default-flags.patch` → `components/webui/flags/pref_service_flags_storage.cc`
 - `bundled-external-extensions.patch` → `chrome/browser/extensions/external_provider_impl.cc`
-- `aerium-theme.patch` → `chrome/browser/themes/theme_service.cc`
+- `aerium-first-run-page.patch` → `chrome/browser/ui/webui/ungoogled_first_run.h`
+  (this file itself comes from ungoogled-chromium's own
+  `patches/extra/ungoogled-chromium/first-run-page.patch`, not stock
+  Chromium — if the whole file goes missing, check there first)
+- `aerium-battery-efficiency.patch` → `components/performance_manager/user_tuning/prefs.cc`,
+  `chrome/browser/background/extensions/background_mode_manager.cc`,
+  `chrome/browser/preloading/preloading_prefs.cc`,
+  `components/optimization_guide/core/optimization_guide_features.cc`,
+  `components/domain_reliability/domain_reliability_prefs.cc`
+- `aerium-https-first-balanced.patch` → `chrome/browser/ui/browser_ui_prefs.cc`
 
 If `--dry-run` reports a hunk failure, open the target file at the new
 Chromium tag on

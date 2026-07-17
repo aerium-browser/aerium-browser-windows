@@ -12,8 +12,8 @@ watch** workflow opens a tracking issue.
   Dioide, logo swap), `patches/ungoogled-fatih/` (default-flags,
   bundled-external-extensions, aerium-first-run-page,
   aerium-battery-efficiency, aerium-https-first-balanced,
-  aerium-global-privacy-control), `brand/` (logo assets), the staged
-  workflow under `.github/`.
+  aerium-global-privacy-control, aerium-widevine-toggle), `brand/`
+  (logo assets), the staged workflow under `.github/`.
 
 ## Sync procedure
 
@@ -36,6 +36,7 @@ Upstream (ungoogled-software) uses normal PRs, so a merge is safe here.
    patch -p1 --dry-run < patches/ungoogled-fatih/aerium-battery-efficiency.patch
    patch -p1 --dry-run < patches/ungoogled-fatih/aerium-https-first-balanced.patch
    patch -p1 --dry-run < patches/ungoogled-fatih/aerium-global-privacy-control.patch
+   patch -p1 --dry-run < patches/ungoogled-fatih/aerium-widevine-toggle.patch
    ```
 6. Commit and dispatch **build-x64**.
 
@@ -63,6 +64,12 @@ Our patches target specific Chromium files that occasionally move:
   (each mirrors an existing DNT-header call site — grep for
   `kDoNotTrackHeader` if one of these moves, the GPC block should sit
   right next to it)
+- `aerium-widevine-toggle.patch` → `chrome/browser/existing_switch_flag_entries.h`
+  (this file comes from ungoogled-chromium's own
+  `patches/extra/ungoogled-chromium/add-flags-for-existing-switches.patch`,
+  same situation as `ungoogled_first_run.h` above) and
+  `chrome/common/media/cdm_registration.cc`'s `RegisterCdmInfo()` — the
+  `AddWidevine(cdms);` call, gated on the new `enable-widevine` switch
 
 If `--dry-run` reports a hunk failure, open the target file at the new
 Chromium tag on

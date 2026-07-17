@@ -22,7 +22,7 @@ Aerium is a browser for people who'd rather their browser stayed out of the way.
 - **Global Privacy Control sent by default.** The `Sec-GPC` opt-out signal and `navigator.globalPrivacyControl` — recognized under CCPA, but still not implemented in stock Chromium — are on for every page, no toggle needed.
 - **A first-run page that's actually useful.** Recommendations for an ad blocker, a bookmark sync tool, and a new-tab replacement — all free and open-source, none of them installed for you.
 - **Lighter by default.** Memory Saver and Battery Saver are on out of the box, and a handful of background network chatter — hint prefetching, domain reliability pings — is off. The name comes from aerogel, the lightest solid there is.
-- **DRM off.** Widevine stays disabled.
+- **DRM off by default, your call either way.** Widevine isn't registered unless you turn it on at `chrome://flags/#enable-widevine` — same idea as Brave's toggle, just without the extra settings page.
 
 ## Building
 

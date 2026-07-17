@@ -1,0 +1,86 @@
+--- a/third_party/blink/renderer/core/frame/navigator.idl
++++ b/third_party/blink/renderer/core/frame/navigator.idl
+@@ -26,6 +26,8 @@
+     [MeasureAs=NavigatorVendorSub] readonly attribute DOMString vendorSub;
+     [MeasureAs=NavigatorProductSub] readonly attribute DOMString productSub;
+     [MeasureAs=NavigatorVendor] readonly attribute DOMString vendor;
++    // https://w3c.github.io/gpc/#dom-navigator-globalprivacycontrol
++    readonly attribute boolean globalPrivacyControl;
+ };
+ 
+ Navigator includes NavigatorConcurrentHardware;
+--- a/third_party/blink/renderer/core/frame/navigator.h
++++ b/third_party/blink/renderer/core/frame/navigator.h
+@@ -44,6 +44,7 @@
+   String productSub() const;
+   String vendor() const;
+   String vendorSub() const;
++  bool globalPrivacyControl() const;
+ 
+   String platform() const override;
+ 
+--- a/third_party/blink/renderer/core/frame/navigator.cc
++++ b/third_party/blink/renderer/core/frame/navigator.cc
+@@ -55,6 +55,12 @@
+   return "";
+ }
+ 
++bool Navigator::globalPrivacyControl() const {
++  // https://w3c.github.io/gpc/#dom-navigator-globalprivacycontrol
++  // Aerium always opts users out; there's no per-site toggle to check.
++  return true;
++}
++
+ String Navigator::platform() const {
+   // TODO(955620): Consider changing devtools overrides to only allow overriding
+   // the platform with a frozen platform to distinguish between
+--- a/content/browser/loader/browser_initiated_resource_request.cc
++++ b/content/browser/loader/browser_initiated_resource_request.cc
+@@ -31,6 +31,14 @@
+     headers->SetHeaderIfMissing(blink::kDoNotTrackHeader, "1");
+   }
+ 
++  // Global Privacy Control opt-out signal (https://w3c.github.io/gpc/),
++  // legally recognized under CCPA. Sent unconditionally, matching
++  // Brave/DuckDuckGo's default behavior - there's no per-site toggle.
++  if (should_update_existing_headers) {
++    headers->RemoveHeader("Sec-GPC");
++  }
++  headers->SetHeaderIfMissing("Sec-GPC", "1");
++
+   // TODO(crbug.com/40833603): WARNING: This bypasses the permissions policy.
+   // Unfortunately, workers lack a permissions policy and to derive proper hints
+   // https://github.com/w3c/webappsec-permissions-policy/issues/207.
+--- a/content/renderer/render_frame_impl.cc
++++ b/content/renderer/render_frame_impl.cc
+@@ -4559,6 +4559,10 @@
+         blink::WebString::FromUtf8(blink::kDoNotTrackHeader), "1");
+   }
+ 
++  // Global Privacy Control - see content/browser/loader/
++  // browser_initiated_resource_request.cc for the browser-initiated case.
++  request.SetHttpHeaderField(blink::WebString::FromUtf8("Sec-GPC"), "1");
++
+   // The request's extra data may indicate that we should set a custom user
+   // agent. This needs to be done here, after WebKit is through with setting the
+   // user agent on its own.
+--- a/third_party/blink/renderer/platform/loader/fetch/url_loader/dedicated_or_shared_worker_global_scope_context_impl.cc
++++ b/third_party/blink/renderer/platform/loader/fetch/url_loader/dedicated_or_shared_worker_global_scope_context_impl.cc
+@@ -377,6 +377,7 @@
+   if (renderer_preferences_.enable_do_not_track) {
+     request.SetHttpHeaderField(WebString::FromUtf8(kDoNotTrackHeader), "1");
+   }
++  request.SetHttpHeaderField(WebString::FromUtf8("Sec-GPC"), "1");
+ 
+   auto url_request_extra_data = base::MakeRefCounted<WebURLRequestExtraData>();
+   request.SetURLRequestExtraData(std::move(url_request_extra_data));
+--- a/third_party/blink/renderer/modules/service_worker/web_service_worker_fetch_context_impl.cc
++++ b/third_party/blink/renderer/modules/service_worker/web_service_worker_fetch_context_impl.cc
+@@ -150,6 +150,7 @@
+   if (renderer_preferences_.enable_do_not_track) {
+     request.SetHttpHeaderField(WebString::FromUtf8(kDoNotTrackHeader), "1");
+   }
++  request.SetHttpHeaderField(WebString::FromUtf8("Sec-GPC"), "1");
+   auto url_request_extra_data = base::MakeRefCounted<WebURLRequestExtraData>();
+   url_request_extra_data->set_originated_from_service_worker(true);
+ 

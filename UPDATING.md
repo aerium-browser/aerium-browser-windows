@@ -11,8 +11,9 @@ watch** workflow opens a tracking issue.
 - **Our changes**: `_apply_branding` in `build.py` (Chromium→Aerium,
   Dioide, logo swap), `patches/ungoogled-fatih/` (default-flags,
   bundled-external-extensions, aerium-first-run-page,
-  aerium-battery-efficiency, aerium-https-first-balanced), `brand/`
-  (logo assets), the staged workflow under `.github/`.
+  aerium-battery-efficiency, aerium-https-first-balanced,
+  aerium-global-privacy-control), `brand/` (logo assets), the staged
+  workflow under `.github/`.
 
 ## Sync procedure
 
@@ -34,6 +35,7 @@ Upstream (ungoogled-software) uses normal PRs, so a merge is safe here.
    patch -p1 --dry-run < patches/ungoogled-fatih/aerium-first-run-page.patch
    patch -p1 --dry-run < patches/ungoogled-fatih/aerium-battery-efficiency.patch
    patch -p1 --dry-run < patches/ungoogled-fatih/aerium-https-first-balanced.patch
+   patch -p1 --dry-run < patches/ungoogled-fatih/aerium-global-privacy-control.patch
    ```
 6. Commit and dispatch **build-x64**.
 
@@ -53,6 +55,14 @@ Our patches target specific Chromium files that occasionally move:
   `components/optimization_guide/core/optimization_guide_features.cc`,
   `components/domain_reliability/domain_reliability_prefs.cc`
 - `aerium-https-first-balanced.patch` → `chrome/browser/ui/browser_ui_prefs.cc`
+- `aerium-global-privacy-control.patch` → `third_party/blink/renderer/core/frame/navigator.idl/.h/.cc`,
+  `content/browser/loader/browser_initiated_resource_request.cc`,
+  `content/renderer/render_frame_impl.cc`,
+  `third_party/blink/renderer/platform/loader/fetch/url_loader/dedicated_or_shared_worker_global_scope_context_impl.cc`,
+  `third_party/blink/renderer/modules/service_worker/web_service_worker_fetch_context_impl.cc`
+  (each mirrors an existing DNT-header call site — grep for
+  `kDoNotTrackHeader` if one of these moves, the GPC block should sit
+  right next to it)
 
 If `--dry-run` reports a hunk failure, open the target file at the new
 Chromium tag on

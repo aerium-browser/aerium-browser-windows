@@ -51,13 +51,22 @@ jobs:
           echo "tag=v${version}-b${run}" >> "$GITHUB_OUTPUT"
           echo "Resolved version $version, tag v${version}-b${run}"
 
+      - name: Compute checksums
+        run: |
+          set -euo pipefail
+          cd artifacts
+          sha256sum $(ls aerium_*_installer_x64.exe aerium_*_windows_x64.zip 2>/dev/null) > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: Aerium ${{ steps.meta.outputs.version }} (x64)
           target_commitish: ${{ github.event.workflow_run.head_sha }}
+          generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
             artifacts/aerium_*_installer_x64.exe
             artifacts/aerium_*_windows_x64.zip
+            artifacts/SHA256SUMS.txt

@@ -1,0 +1,257 @@
+--- a/chrome/browser/ui/webui/ungoogled_first_run.h
++++ b/chrome/browser/ui/webui/ungoogled_first_run.h
+@@ -1,8 +1,13 @@
+ #ifndef CHROME_BROWSER_UI_WEBUI_UNGOOGLED_FIRST_RUN_H_
+ #define CHROME_BROWSER_UI_WEBUI_UNGOOGLED_FIRST_RUN_H_
+ 
++#include "base/functional/bind.h"
+ #include "base/memory/ref_counted_memory.h"
++#include "base/values.h"
++#include "chrome/browser/browser_process.h"
+ #include "chrome/browser/profiles/profile.h"
++#include "chrome/common/pref_names.h"
++#include "components/prefs/pref_service.h"
+ #include "content/public/browser/url_data_source.h"
+ #include "content/public/browser/web_ui.h"
+ #include "content/public/browser/web_ui_controller.h"
+@@ -25,51 +30,112 @@
+                         const content::WebContents::Getter& wc_getter,
+                         GotDataCallback callback) {
+     std::string source = R"(
+-<title>ungoogled-chromium first run page</title>
++<title>Welcome to Aerium</title>
+ <meta name="color-scheme" content="light dark">
+ <style>
+  @import url(chrome://resources/css/text_defaults_md.css);
+- html{color:#202124; background:white; line-height:1.1em}
++ html{color:#202124; background:#f4f6fb; line-height:1.1em}
+  a{color:#1967d2}
+- h2{margin:0; padding:0.67em 1.33em}
++ h2{margin:0; padding:0.67em 1.33em; display:flex; align-items:center; gap:.5em}
++ h2 svg{flex:none}
+  p,details{border-top:.063em solid #f0f0f0; margin:0; padding:1em 2em}
+  ul,ol{padding-left:2em}
+  code{background:rgba(128 128 128 / .2); padding:0 0.5em; border-radius:0.25em}
+  summary{cursor:pointer}
+  section{width:60em; margin:4em auto; border-radius:.5em;
+          background:white; box-shadow:0 .063em .125em 0 #c4c5c6, 0 .125em .375em .125em #e2e3e3}
++ .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(15em,1fr)); gap:1em; padding:1em 2em; border-top:.063em solid #f0f0f0}
++ .card{border:.063em solid #dadce0; border-radius:.5em; padding:1em}
++ .card h3{margin:0 0 .3em; font-size:1em}
++ .card p{border:none; padding:0; margin:0 0 .7em; font-size:.9em; color:#5f6368}
++ .dns-options{display:flex; flex-direction:column; gap:.5em; padding:1em 2em; border-top:.063em solid #f0f0f0}
++ .dns-option{display:flex; align-items:baseline; gap:.6em}
++ .dns-option label{font-weight:500}
++ .dns-option span{font-size:.85em; color:#5f6368}
++ #dnsApply{margin:1em 2em 0; padding:.5em 1.2em; border-radius:1.2em; border:none;
++   background:#1967d2; color:white; font-size:.95em; cursor:pointer}
++ #dnsApply:hover{background:#1a56b0}
++ #dnsStatus{padding:0 2em 1em; font-size:.9em; color:#188038; min-height:1.2em}
+  @media(prefers-color-scheme:dark){
+-  html{color:#e8eaed; background:#202124}
++  html{color:#e8eaed; background:#0e1531}
+   a{color:#8ab4f8}
+   p,details{border-top:.063em solid #3f4042}
+-  section{background:#292a2d; box-shadow:0 .063em .125em 0 #161719, 0 .125em .375em .125em #1b1c1f}
++  section{background:#151f3e; box-shadow:0 .063em .125em 0 #080d1e, 0 .125em .375em .125em #0b1026}
++  .cards{border-top:.063em solid #3f4042}
++  .card{border-color:#3f4042}
++  .card p{color:#9aa0a6}
++  .dns-options{border-top:.063em solid #3f4042}
++  .dns-option span{color:#9aa0a6}
++  #dnsStatus{color:#81c995}
+  }
+ </style>
+ <base target="_blank">
+ <section>
+- <h2>ungoogled-chromium</h2><p>
+- This browser was built with ungoogled-chromium patches and differs from the default Chromium experience
+- in a few ways. Look over the sections below and the
+- <a href="https://github.com/ungoogled-software/ungoogled-chromium/blob/master/docs/default_settings.md">
+-  changes to the default settings</a> to see what may be important to you.<p>
+- This page can always be accessed again at <a href="chrome://ungoogled-first-run">chrome://ungoogled-first-run</a>
++ <h2><svg width="28" height="28" viewBox="0 0 512 512"><path d="M330 384L149 489A256 256 0 0 1 108 47L108 256A148 148 0 0 0 330 384Z" fill="#1B2C5E"/><path d="M108 256L108 47A256 256 0 0 1 511 232L330 128A148 148 0 0 0 108 256Z" fill="#2A4485"/><path d="M330 128L511 232A256 256 0 0 1 149 489L330 384A148 148 0 0 0 330 128Z" fill="#111C42"/><circle cx="256" cy="256" r="150" fill="#E9F1FB"/><circle cx="256" cy="256" r="104" fill="#2C6BAE"/><circle cx="238" cy="236" r="82" fill="#4C97CF"/><circle cx="222" cy="218" r="46" fill="#7FC4E4"/></svg> Welcome to Aerium</h2><p>
++ Aerium is a Chromium-based browser built on the ungoogled-chromium project, with a curated set of
++ privacy defaults and a browser identity of its own. Look over the sections below to see what may be
++ useful to you.<p>
++ This page can always be reopened at <a href="chrome://ungoogled-first-run">chrome://ungoogled-first-run</a>.
+ </section>
+ <section>
+- <h2>How-To</h2>
+- <details><summary><b>Install and update extensions</b></summary><br>
+-  <a href="https://github.com/NeverDecaf">NeverDecaf</a> has created an extension to make this process easy:
+-  <ol>
+-   <li>Set <a href="chrome://flags/#extension-mime-request-handling">chrome://flags/#extension-mime-request-handling</a>
+-    to <code>Always prompt for install</code> and relaunch.</li>
+-   <li>Then click on the latest <code>Chromium.Web.Store.crx</code> link on
+-    <a href="https://github.com/NeverDecaf/chromium-web-store/releases">the extension's Releases page</a>.</li>
+-  </ol>
+-  Please check out the <a href="https://github.com/NeverDecaf/chromium-web-store">chromium-web-store</a>
+-  repo for further details and alternate installation methods for the extension.<br><br>
+-  If you do not wish to install this extension, there is still a way to install other extensions albeit
+-  without the ability to easily update them. In this case, please refer to the entry on the wiki for
+-  <a href="https://ungoogled-software.github.io/ungoogled-chromium-wiki/faq#downloading-the-crx-file">
+-   installing extensions manually</a>.</details>
++ <h2>Recommended, free and open-source</h2><p>
++ None of these are installed automatically &mdash; they're just tools we think are worth knowing about.
++ Every one is free, open-source, and independently maintained.
++ <div class="cards">
++  <div class="card">
++   <h3>uBlock Origin</h3>
++   <p>Efficient, open-source content blocking.</p>
++   <a href="https://chromewebstore.google.com/detail/ublock-origin/cjpalhdlnbpafiamejdnhcphjbkeiagm">Get it from the Chrome Web Store</a>
++  </div>
++  <div class="card">
++   <h3>floccus</h3>
++   <p>Sync bookmarks across browsers using your own storage &mdash; nothing passes through floccus's servers.</p>
++   <a href="https://chromewebstore.google.com/detail/floccus-bookmarks-sync/fnaicdffflnofjppbagibeoednhnbjhg">Get it from the Chrome Web Store</a>
++  </div>
++  <div class="card">
++   <h3>Tabliss</h3>
++   <p>A customisable new tab page &mdash; backgrounds, widgets, and a calmer default tab.</p>
++   <a href="https://chromewebstore.google.com/detail/tabliss-a-beautiful-new-t/hipekcciheckooncpjeljhnekcoolahp">Get it from the Chrome Web Store</a>
++  </div>
++ </div>
++</section>
++<section>
++ <h2>Secure DNS</h2><p>
++ Choose a DNS-over-HTTPS provider. This replaces your network's default DNS resolution for all sites,
++ encrypting your lookups. You can change this later in <a href="chrome://settings/security">chrome://settings/security</a>.
++ <div class="dns-options">
++  <div class="dns-option">
++   <input type="radio" name="dns" id="dns-off" value="off">
++   <label for="dns-off">Off</label>
++   <span>Use the operating system's default DNS.</span>
++  </div>
++  <div class="dns-option">
++   <input type="radio" name="dns" id="dns-cloudflare" value="cloudflare" checked>
++   <label for="dns-cloudflare">Cloudflare</label>
++   <span>Independently audited no-log policy, generally the fastest of the three.</span>
++  </div>
++  <div class="dns-option">
++   <input type="radio" name="dns" id="dns-quad9" value="quad9">
++   <label for="dns-quad9">Quad9</label>
++   <span>Nonprofit, blocks known-malicious domains at the resolver.</span>
++  </div>
++  <div class="dns-option">
++   <input type="radio" name="dns" id="dns-nextdns" value="nextdns">
++   <label for="dns-nextdns">NextDNS</label>
++   <span>Anonymous shared endpoint; a free NextDNS account unlocks per-device filtering.</span>
++  </div>
++ </div>
++ <button id="dnsApply">Apply</button>
++ <div id="dnsStatus"></div>
++</section>
++<section>
++ <h2>Extensions</h2><p>
++ The Chrome Web Store is bundled and ready to use &mdash; open
++ <a href="https://chromewebstore.google.com/">chromewebstore.google.com</a> and install extensions the
++ same way you would in Chrome, updates included.
++</section>
++<section>
++ <h2>Spellcheck dictionaries</h2>
+  <details><summary><b>Enable spellcheck</b></summary>
+   <ol>
+    <li>Go to <a href="https://chromium.googlesource.com/chromium/deps/hunspell_dictionaries/+/main">
+@@ -82,34 +148,21 @@
+    <li>This is a base64-encoded file that needs to be decoded. Use the button below to select the .txt file you saved
+     and save/move the resulting bdic file to your Dictionaries directory. Default locations:
+     <ul>
+-     <li>Linux: <code>~/.config/chromium/Dictionaries/</code><br></li>
+-     <li>Mac: <code>~/Library/Application Support/Chromium/Dictionaries/</code><br></li>
+-     <li>Windows: <code>%LOCALAPPDATA%\Chromium\Application\Dictionaries\</code><br></li>
++     <li>Windows: <code>%LOCALAPPDATA%\Aerium\Dictionaries\</code><br></li>
+     </ul>
+     <input id="bdic" type="file" accept=".txt,text/plain" />
+    </li>
+    <li>Toggle spell check in <a href="chrome://settings/languages">chrome://settings/languages</a>,
+     or restart the browser for the dictionaries to take effect.</li>
+-  </ol></details><p>
+-  <a href="https://ungoogled-software.github.io/ungoogled-chromium-wiki/faq">Check out the FAQ on the wiki</a>
+-  for information on other common topics.
+-</section>
+-<section>
+- <h2>Extra Features</h2><p>
+-  Most features introduced by ungoogled-chromium are disabled by default and can be enabled in
+-  <a href="chrome://flags">chrome://flags</a> or as command-line switches. Take a look at
+-  <a href="https://github.com/ungoogled-software/ungoogled-chromium/blob/master/docs/flags.md">
+-   the flags documentation</a> to see what features you may find useful to enable.
+-</section>
+-<section>
+- <h2>Additional Links</h2><p>
+-  Privacy and security information, motivation and philosophy, rationale for changes, and more can be found in the
+-  <a href="https://github.com/ungoogled-software/ungoogled-chromium/blob/master/README.md">README</a>.<p>
+-  Visit our <a href="https://github.com/ungoogled-software/ungoogled-chromium/blob/master/SUPPORT.md">
+-   support page</a> if you wish to report problems.<p>
+-  Are you a developer? Consider
+-  <a href="https://github.com/ungoogled-software/ungoogled-chromium/blob/master/docs/contributing.md">
+-   contributing</a> to ungoogled-chromium!
++  </ol></details>
++</section>
++<section>
++ <h2>Flags and links</h2><p>
++ Most privacy features are pref *defaults* here, not locked in &mdash; check
++ <a href="chrome://flags">chrome://flags</a> for what's enabled and what else is available.<p>
++ Aerium is built on <a href="https://github.com/ungoogled-software/ungoogled-chromium">ungoogled-chromium</a>,
++ which has its own <a href="https://github.com/ungoogled-software/ungoogled-chromium/blob/master/docs/default_settings.md">
++ default settings documentation</a> covering changes shared with every ungoogled-chromium build.
+ </section>
+ <script>
+  document.getElementById("bdic").onchange = function(e){
+@@ -120,6 +173,27 @@
+    a.setAttribute("download", e.target.files[0].name.replace(/\.[^/.]+$/, ".bdic"));
+    a.click()
+   }, f.readAsText(this.files[0])};
++
++ var AERIUM_DNS_TEMPLATES = {
++  cloudflare: "https://chrome.cloudflare-dns.com/dns-query",
++  quad9: "https://dns.quad9.net/dns-query",
++  nextdns: "https://chromium.dns.nextdns.io"
++ };
++ document.getElementById("dnsApply").onclick = function(){
++  var choice = document.querySelector('input[name="dns"]:checked').value;
++  var status = document.getElementById("dnsStatus");
++  if (!window.chrome || !window.chrome.send) {
++   status.textContent = "Could not reach the browser to apply this setting.";
++   status.style.color = "#d93025";
++   return;
++  }
++  if (choice === "off") {
++   window.chrome.send("aeriumSetSecureDns", ["off", ""]);
++  } else {
++   window.chrome.send("aeriumSetSecureDns", ["secure", AERIUM_DNS_TEMPLATES[choice]]);
++  }
++  status.textContent = "Applied.";
++ };
+ </script>
+ )";
+     std::move(callback).Run(base::MakeRefCounted<base::RefCountedString>(std::move(source)));
+@@ -136,9 +210,28 @@
+  public:
+   UngoogledFirstRun(content::WebUI* web_ui) : content::WebUIController(web_ui) {
+     content::URLDataSource::Add(Profile::FromWebUI(web_ui), std::make_unique<UFRDataSource>());
++    web_ui->RegisterMessageCallback(
++        "aeriumSetSecureDns",
++        base::BindRepeating(&UngoogledFirstRun::HandleSetSecureDns,
++                            base::Unretained(this)));
+   }
+   UngoogledFirstRun(const UngoogledFirstRun&) = delete;
+   UngoogledFirstRun& operator=(const UngoogledFirstRun&) = delete;
++
++ private:
++  // Secure DNS (dns_over_https.mode/templates) is a local-state pref, not a
++  // profile pref - it governs the whole browser's DNS resolution, not a
++  // single profile. See chrome/browser/net/stub_resolver_config_reader.cc.
++  void HandleSetSecureDns(const base::ListValue& args) {
++    if (args.size() != 2 || !args[0].is_string() || !args[1].is_string())
++      return;
++    const std::string& mode = args[0].GetString();
++    if (mode != "off" && mode != "automatic" && mode != "secure")
++      return;
++    PrefService* local_state = g_browser_process->local_state();
++    local_state->SetString(prefs::kDnsOverHttpsMode, mode);
++    local_state->SetString(prefs::kDnsOverHttpsTemplates, args[1].GetString());
++  }
+ };
+ 
+ #endif  // CHROME_BROWSER_UI_WEBUI_UNGOOGLED_FIRST_RUN_H_

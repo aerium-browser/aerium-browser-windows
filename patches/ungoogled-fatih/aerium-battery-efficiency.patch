@@ -1,0 +1,66 @@
+--- a/components/performance_manager/user_tuning/prefs.cc
++++ b/components/performance_manager/user_tuning/prefs.cc
+@@ -32,13 +32,13 @@
+       kMemorySaverModeTimeBeforeDiscardInMinutes,
+       kDefaultMemorySaverModeTimeBeforeDiscardInMinutes);
+   registry->RegisterIntegerPref(
+-      kMemorySaverModeState, static_cast<int>(MemorySaverModeState::kDisabled));
++      kMemorySaverModeState, static_cast<int>(MemorySaverModeState::kEnabled));
+   registry->RegisterIntegerPref(
+       kMemorySaverModeAggressiveness,
+       static_cast<int>(MemorySaverModeAggressiveness::kMedium));
+   registry->RegisterIntegerPref(
+       kBatterySaverModeState,
+-      static_cast<int>(BatterySaverModeState::kEnabledBelowThreshold));
++      static_cast<int>(BatterySaverModeState::kEnabledOnBattery));
+   registry->RegisterTimePref(kLastBatteryUseTimestamp, base::Time());
+   registry->RegisterBooleanPref(kDiscardRingTreatmentEnabled, true);
+   registry->RegisterBooleanPref(kPerformanceInterventionNotificationEnabled,
+--- a/chrome/browser/background/extensions/background_mode_manager.cc
++++ b/chrome/browser/background/extensions/background_mode_manager.cc
+@@ -348,7 +348,7 @@
+ 
+ // static
+ void BackgroundModeManager::RegisterPrefs(PrefRegistrySimple* registry) {
+-  registry->RegisterBooleanPref(prefs::kBackgroundModeEnabled, true);
++  registry->RegisterBooleanPref(prefs::kBackgroundModeEnabled, false);
+ }
+ 
+ void BackgroundModeManager::RegisterProfile(Profile* profile) {
+--- a/chrome/browser/preloading/preloading_prefs.cc
++++ b/chrome/browser/preloading/preloading_prefs.cc
+@@ -16,7 +16,7 @@
+     user_prefs::PrefRegistrySyncable* registry) {
+   registry->RegisterIntegerPref(
+       prefs::kNetworkPredictionOptions,
+-      static_cast<int>(NetworkPredictionOptions::kDefault),
++      static_cast<int>(NetworkPredictionOptions::kDisabled),
+       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+ }
+ 
+--- a/components/optimization_guide/core/optimization_guide_features.cc
++++ b/components/optimization_guide/core/optimization_guide_features.cc
+@@ -53,10 +53,10 @@
+ 
+ // Enables the syncing of the Optimization Hints component, which provides
+ // hints for what optimizations can be applied on a page load.
+-BASE_FEATURE(kOptimizationHints, base::FEATURE_ENABLED_BY_DEFAULT);
++BASE_FEATURE(kOptimizationHints, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ // Enables the prediction of optimization targets.
+-BASE_FEATURE(kOptimizationTargetPrediction, base::FEATURE_ENABLED_BY_DEFAULT);
++BASE_FEATURE(kOptimizationTargetPrediction, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ // This feature flag does not turn off any behavior, it is only used for
+ // experiment parameters.
+--- a/components/domain_reliability/domain_reliability_prefs.cc
++++ b/components/domain_reliability/domain_reliability_prefs.cc
+@@ -15,7 +15,7 @@
+ }  // namespace prefs
+ 
+ void RegisterPrefs(PrefRegistrySimple* registry) {
+-  registry->RegisterBooleanPref(prefs::kDomainReliabilityAllowedByPolicy, true);
++  registry->RegisterBooleanPref(prefs::kDomainReliabilityAllowedByPolicy, false);
+ }
+ 
+ }  // namespace domain_reliability

@@ -12,7 +12,8 @@ watch** workflow opens a tracking issue.
   Dioide, logo swap), `patches/ungoogled-fatih/` (default-flags,
   bundled-external-extensions, aerium-first-run-page,
   aerium-battery-efficiency, aerium-https-first-balanced,
-  aerium-global-privacy-control, aerium-widevine-toggle), `brand/`
+  aerium-global-privacy-control, aerium-widevine-toggle,
+  aerium-search-engines), `brand/`
   (logo assets), the staged workflow under `.github/`.
 
 ## Sync procedure
@@ -37,6 +38,7 @@ Upstream (ungoogled-software) uses normal PRs, so a merge is safe here.
    patch -p1 --dry-run < patches/ungoogled-fatih/aerium-https-first-balanced.patch
    patch -p1 --dry-run < patches/ungoogled-fatih/aerium-global-privacy-control.patch
    patch -p1 --dry-run < patches/ungoogled-fatih/aerium-widevine-toggle.patch
+   patch -p1 --dry-run < patches/ungoogled-fatih/aerium-search-engines.patch
    ```
 6. Commit and dispatch **build-x64**.
 
@@ -70,6 +72,20 @@ Our patches target specific Chromium files that occasionally move:
   same situation as `ungoogled_first_run.h` above) and
   `chrome/common/media/cdm_registration.cc`'s `RegisterCdmInfo()` — the
   `AddWidevine(cdms);` call, gated on the new `enable-widevine` switch
+- `aerium-search-engines.patch` →
+  `third_party/search_engines_data/resources/definitions/prepopulated_engines.json`
+  and `regional_settings.json` (these live in the DEPS-pulled
+  `external/search_engines_data` subproject, not the main Chromium repo —
+  the pristine base for regeneration is the revision pinned in DEPS; note
+  the prepopulated_engines.json hunks are diffed against the state *after*
+  ungoogled-chromium's `replace-google-search-engine-with-nosearch.patch`,
+  which rewrites the google entry in the same file),
+  `components/regional_capabilities/regional_capabilities_utils.cc`
+  (`GetRegionalSettings()` forced to the "ZZ" default list) and
+  `components/search_engines/template_url_prepopulate_data.cc`
+  (`GetPrepopulatedFallbackSearch()` → `startpage.id`). Our engine IDs
+  start at 1001 so upstream additions can never collide; if upstream
+  raises `kCurrentDataVersion` past 250, raise ours above it again.
 
 If `--dry-run` reports a hunk failure, open the target file at the new
 Chromium tag on

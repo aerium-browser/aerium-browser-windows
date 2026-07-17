@@ -14,7 +14,7 @@
  #include "content/public/browser/url_data_source.h"
  #include "content/public/browser/web_ui.h"
  #include "content/public/browser/web_ui_controller.h"
-@@ -25,51 +30,127 @@
+@@ -25,51 +30,132 @@
                          const content::WebContents::Getter& wc_getter,
                          GotDataCallback callback) {
      std::string source = R"(
@@ -121,6 +121,11 @@
 +   <p>Clears a site's cookies once you close its tabs, with a whitelist for the ones you want to keep.</p>
 +   <a href="https://chromewebstore.google.com/detail/cookie-autodelete-v3/jofioghmpdcgiiobkhmdojhjbjiejfbd">Get it from the Chrome Web Store</a>
 +  </div>
++  <div class="card">
++   <h3>Decentraleyes</h3>
++   <p>Serves common libraries locally instead of fetching them from a CDN, cutting a quiet tracking channel most blockers miss.</p>
++   <a href="https://chromewebstore.google.com/detail/decentraleyes/ldpochfccmkkmhdbclfhpagapcfdljkj">Get it from the Chrome Web Store</a>
++  </div>
 + </div>
 +</section>
 +<section>
@@ -168,7 +173,7 @@
   <details><summary><b>Enable spellcheck</b></summary>
    <ol>
     <li>Go to <a href="https://chromium.googlesource.com/chromium/deps/hunspell_dictionaries/+/main">
-@@ -82,34 +163,21 @@
+@@ -82,34 +168,24 @@
     <li>This is a base64-encoded file that needs to be decoded. Use the button below to select the .txt file you saved
      and save/move the resulting bdic file to your Dictionaries directory. Default locations:
      <ul>
@@ -209,11 +214,14 @@
 + <a href="chrome://flags">chrome://flags</a> for what's enabled and what else is available.<p>
 + Aerium is built on <a href="https://github.com/ungoogled-software/ungoogled-chromium">ungoogled-chromium</a>,
 + which has its own <a href="https://github.com/ungoogled-software/ungoogled-chromium/blob/master/docs/default_settings.md">
-+ default settings documentation</a> covering changes shared with every ungoogled-chromium build.
++ default settings documentation</a> covering changes shared with every ungoogled-chromium build.<p>
++ One to know about: WebRTC's IP handling defaults to not exposing your local network address to sites.
++ If a voice or video call app misbehaves because of this, change it at
++ <code>chrome://flags/#webrtc-ip-handling-policy</code>.
  </section>
  <script>
   document.getElementById("bdic").onchange = function(e){
-@@ -120,6 +188,28 @@
+@@ -120,6 +196,28 @@
     a.setAttribute("download", e.target.files[0].name.replace(/\.[^/.]+$/, ".bdic"));
     a.click()
    }, f.readAsText(this.files[0])};
@@ -242,7 +250,7 @@
  </script>
  )";
      std::move(callback).Run(base::MakeRefCounted<base::RefCountedString>(std::move(source)));
-@@ -136,9 +226,28 @@
+@@ -136,9 +234,28 @@
   public:
    UngoogledFirstRun(content::WebUI* web_ui) : content::WebUIController(web_ui) {
      content::URLDataSource::Add(Profile::FromWebUI(web_ui), std::make_unique<UFRDataSource>());

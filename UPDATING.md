@@ -53,10 +53,18 @@ Our patches target specific Chromium files that occasionally move:
   `patches/extra/ungoogled-chromium/first-run-page.patch`, not stock
   Chromium — if the whole file goes missing, check there first)
 - `aerium-battery-efficiency.patch` → `components/performance_manager/user_tuning/prefs.cc`,
-  `chrome/browser/background/extensions/background_mode_manager.cc`,
   `chrome/browser/preloading/preloading_prefs.cc`,
   `components/optimization_guide/core/optimization_guide_features.cc`,
-  `components/domain_reliability/domain_reliability_prefs.cc`
+  `components/domain_reliability/domain_reliability_prefs.cc`.
+  Deliberately does **not** touch `kBackgroundModeEnabled` in
+  `chrome/browser/background/extensions/background_mode_manager.cc` -
+  ungoogled-chromium's own `patches/extra/inox-patchset/0006-modify-default-prefs.patch`
+  already flips that pref to `false` and applies before our series, so a
+  redundant hunk there fails with "reversed (or previously applied) patch
+  detected", which aborts `apply_patches()` with an uncaught exception and
+  silently skips every patch after it in the series (a real regression hit
+  2026-07-18 - always check ungoogled-chromium's own patches for a pref
+  before adding it here)
 - `aerium-https-first-balanced.patch` → `chrome/browser/ui/browser_ui_prefs.cc`
 - `aerium-global-privacy-control.patch` → `third_party/blink/renderer/core/frame/navigator.idl/.h/.cc`,
   `content/browser/loader/browser_initiated_resource_request.cc`,

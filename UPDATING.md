@@ -102,6 +102,32 @@ find the moved code, and regenerate the patch against it. The
 `_apply_branding` string sweep in `build.py` is version-tolerant (it
 greps for "Chromium" across grd/grdp/xtb) and rarely needs changes.
 
+## When a stage dies with no log at all
+
+A stage occasionally fails after ~3h with `conclusion: failure`, zero
+compiler errors visible anywhere, and no log content survives past
+some point (sometimes none at all - `jobs/{id}/logs` 404s with
+`BlobNotFound`; fall back to the whole-run archive,
+`actions/runs/{run_id}/logs`, which is more likely to have at least a
+partial per-job `.txt`). This looks like the runner VM itself dying
+(disk exhaustion or OOM) rather than a build/patch problem - if it were
+the internal 3.5h ninja timeout in `build.py` firing normally, the log
+would show `Sending keyboard interrupt` and a clean `KeyboardInterrupt`
+traceback (it does, on a healthy timeout - compare against a
+successful stage's log to tell the difference).
+
+`prepare/action.yml`'s "Disk space report (before stage)" step prints
+free space on every drive at the start of each stage - added 2026-07-19
+specifically to check a live theory: the build tree lives on `C:` (see
+the `Init` step, which copies the checkout there), but
+`GITHUB_WORKSPACE` (the actual checkout) lives on `D:`, which is
+typically the larger/less-contended drive on GH-hosted Windows
+runners. If `C:` free space is already tight at a stage's start and the
+stage that dies is the one where it's tightest, that's a strong signal
+the fix is relocating the build tree to `D:` instead of just reporting
+on the problem - not yet done, needs a real dead stage's baseline
+number first.
+
 ## Chrome Web Store crx pin
 
 `build.py` pins the bundled extension by version + sha256

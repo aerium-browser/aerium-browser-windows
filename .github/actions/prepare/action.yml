@@ -22,6 +22,21 @@ runs:
       shell: pwsh
       run: Copy-Item -Path . -Destination 'C:\ungoogled-chromium-windows' -Recurse
 
+    - name: Disk space report (before stage)
+      shell: pwsh
+      run: |
+        # Cheap, instant (no recursive file walk - the build tree can have
+        # 1M+ files, so du-style per-folder sizing here would burn real
+        # minutes off every stage's compile budget for a nice-to-have).
+        # Goal: confirm/refute whether C: (where the build tree lives, see
+        # the Init step above) is the tighter drive relative to D: (where
+        # GITHUB_WORKSPACE / the actual checkout lives) - a stage that dies
+        # with zero surviving log looks a lot like the runner running out of
+        # disk on C: earlier than expected.
+        Get-Volume | Where-Object { $_.DriveLetter } | ForEach-Object {
+          "{0}: {1:N1} GB free / {2:N1} GB total" -f $_.DriveLetter, ($_.SizeRemaining / 1GB), ($_.Size / 1GB)
+        }
+
     - name: Setup Stage
       shell: pwsh
       run: npm install

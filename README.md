@@ -6,12 +6,12 @@
 
 <p align="center"><i>by Dioide</i></p>
 
-[![build-x64](https://img.shields.io/github/actions/workflow/status/fatih-gh/aerium-browser-windows/build-x64.yml?label=build)](https://github.com/fatih-gh/aerium-browser-windows/actions/workflows/build-x64.yml)
-[![release](https://img.shields.io/github/v/release/fatih-gh/aerium-browser-windows)](https://github.com/fatih-gh/aerium-browser-windows/releases/latest)
+[![build-x64](https://img.shields.io/github/actions/workflow/status/aerium-browser/aerium-browser-windows/build-x64.yml?label=build)](https://github.com/aerium-browser/aerium-browser-windows/actions/workflows/build-x64.yml)
+[![release](https://img.shields.io/github/v/release/aerium-browser/aerium-browser-windows)](https://github.com/aerium-browser/aerium-browser-windows/releases/latest)
 
 Aerium is a browser for people who'd rather their browser stayed out of the way. No telemetry calling home, no bundled Google services, no ad platform baked into the settings page. Extensions install straight from the Chrome Web Store — no sideloading, no workarounds.
 
-[**Download for Windows**](https://github.com/fatih-gh/aerium-browser-windows/releases/latest)
+[**Download for Windows**](https://github.com/aerium-browser/aerium-browser-windows/releases/latest)
 
 ## What you get
 

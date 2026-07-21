@@ -1,28 +1,19 @@
 --- a/components/webui/flags/pref_service_flags_storage.cc
 +++ b/components/webui/flags/pref_service_flags_storage.cc
-@@ -87,7 +87,26 @@
+@@ -87,7 +87,17 @@
  
  // static
  void PrefServiceFlagsStorage::RegisterPrefs(PrefRegistrySimple* registry) {
 -  registry->RegisterListPref(prefs::kAboutFlagsEntries);
-+  // Enable a set of recommended ungoogled-chromium flags by default. These
-+  // act as pref defaults: they apply until the user changes any flag in
-+  // chrome://flags (at which point the full list is written to Local State).
++  // Silently seed just this one flag by default (it's a security backstop -
++  // don't silently download-and-run a CRX/user-script MIME type without
++  // asking first - not really an opt-in "feature" the way the others are).
++  // The other recommended ungoogled-chromium/bromite flags are intentionally
++  // NOT pref-seeded here anymore; they're listed as opt-in choices on the
++  // first-run page (see aerium-first-run-page.patch) instead, so picking
++  // them is a visible decision rather than a silent default.
 +  base::ListValue default_flags;
-+  default_flags.Append("disable-search-engine-collection");
-+  default_flags.Append("enable-parallel-downloading@1");
 +  default_flags.Append("extension-mime-request-handling@2");
-+  default_flags.Append("fingerprinting-canvas-image-data-noise");
-+  default_flags.Append("fingerprinting-canvas-measuretext-noise");
-+  default_flags.Append("fingerprinting-client-rects-noise");
-+  default_flags.Append("force-punycode-hostnames");
-+  default_flags.Append("increase-incognito-storage-quota@1");
-+  default_flags.Append("popups-to-tabs");
-+  default_flags.Append("reduced-system-info@1");
-+  default_flags.Append("remove-client-hints@1");
-+  default_flags.Append("remove-tabsearch-button");
-+  default_flags.Append("show-avatar-button@2");
-+  default_flags.Append("spoof-webgl-info@1");
 +  registry->RegisterListPref(prefs::kAboutFlagsEntries,
 +                             std::move(default_flags));
    registry->RegisterDictionaryPref(prefs::kAboutFlagsOriginLists);

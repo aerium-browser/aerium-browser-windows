@@ -188,7 +188,7 @@
   <details><summary><b>Enable spellcheck</b></summary>
    <ol>
     <li>Go to <a href="https://chromium.googlesource.com/chromium/deps/hunspell_dictionaries/+/main">
-@@ -82,34 +186,24 @@
+@@ -82,34 +186,44 @@
     <li>This is a base64-encoded file that needs to be decoded. Use the button below to select the .txt file you saved
      and save/move the resulting bdic file to your Dictionaries directory. Default locations:
      <ul>
@@ -233,10 +233,30 @@
 + One to know about: WebRTC's IP handling defaults to not exposing your local network address to sites.
 + If a voice or video call app misbehaves because of this, change it at
 + <code>chrome://flags/#webrtc-ip-handling-policy</code>.
++</section>
++<section>
++ <h2>More privacy flags to consider</h2><p>
++ These aren't on by default &mdash; each is a deliberate tradeoff, so Aerium leaves them for you to opt into
++ individually at <a href="chrome://flags">chrome://flags</a>.
++ <ul>
++  <li><code>chrome://flags/#disable-search-engine-collection</code> &mdash; stop Chromium from scraping search engines it notices on visited pages.</li>
++  <li><code>chrome://flags/#enable-parallel-downloading</code> &mdash; split downloads into multiple simultaneous requests for faster large files.</li>
++  <li><code>chrome://flags/#fingerprinting-canvas-image-data-noise</code> &mdash; slightly perturb Canvas image-data readback to resist fingerprinting.</li>
++  <li><code>chrome://flags/#fingerprinting-canvas-measuretext-noise</code> &mdash; add tiny random noise to Canvas measureText() output.</li>
++  <li><code>chrome://flags/#fingerprinting-client-rects-noise</code> &mdash; add tiny random noise to getClientRects()/getBoundingClientRect().</li>
++  <li><code>chrome://flags/#force-punycode-hostnames</code> &mdash; always show internationalized domain names as punycode, closing a homograph-spoofing vector.</li>
++  <li><code>chrome://flags/#increase-incognito-storage-quota</code> &mdash; raise the storage quota for Incognito and Guest profiles.</li>
++  <li><code>chrome://flags/#popups-to-tabs</code> &mdash; open popup windows as new tabs instead.</li>
++  <li><code>chrome://flags/#reduced-system-info</code> &mdash; reduce system info exposed via headers/JS, and report two CPU cores regardless of the real count.</li>
++  <li><code>chrome://flags/#remove-client-hints</code> &mdash; strip Client Hints headers (detailed system info sent to servers).</li>
++  <li><code>chrome://flags/#remove-tabsearch-button</code> &mdash; remove the tab-search button from the tab strip.</li>
++  <li><code>chrome://flags/#show-avatar-button</code> &mdash; control when the profile avatar button appears (always, only in Incognito/Guest, or never).</li>
++  <li><code>chrome://flags/#spoof-webgl-info</code> &mdash; return generic WebGL renderer/vendor strings instead of your real GPU info.</li>
++ </ul>
  </section>
  <script>
   document.getElementById("bdic").onchange = function(e){
-@@ -120,6 +214,28 @@
+@@ -120,6 +234,28 @@
     a.setAttribute("download", e.target.files[0].name.replace(/\.[^/.]+$/, ".bdic"));
     a.click()
    }, f.readAsText(this.files[0])};
@@ -265,7 +285,7 @@
  </script>
  )";
      std::move(callback).Run(base::MakeRefCounted<base::RefCountedString>(std::move(source)));
-@@ -136,9 +252,28 @@
+@@ -136,9 +272,28 @@
   public:
    UngoogledFirstRun(content::WebUI* web_ui) : content::WebUIController(web_ui) {
      content::URLDataSource::Add(Profile::FromWebUI(web_ui), std::make_unique<UFRDataSource>());

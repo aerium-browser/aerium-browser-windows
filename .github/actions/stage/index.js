@@ -9,9 +9,11 @@ async function run() {
     })
     const finished = core.getBooleanInput('finished', {required: true});
     const from_artifact = core.getBooleanInput('from_artifact', {required: true});
+    const resumeRunId = core.getInput('resume_run_id', {required: false});
+    const githubToken = core.getInput('github_token', {required: false});
     const x86 = core.getBooleanInput('x86', {required: false})
     const arm = core.getBooleanInput('arm', {required: false})
-    console.log(`finished: ${finished}, artifact: ${from_artifact}`);
+    console.log(`finished: ${finished}, artifact: ${from_artifact}, resume_run_id: ${resumeRunId || '(none)'}`);
     if (finished) {
         core.setOutput('finished', true);
         return;
@@ -21,8 +23,20 @@ async function run() {
     const artifactName = x86 ? 'build-artifact-x86' : (arm ? 'build-artifact-arm' : 'build-artifact');
 
     if (from_artifact) {
-        const artifactInfo = await artifact.getArtifact(artifactName);
-        await artifact.downloadArtifact(artifactInfo.artifact.id, {path: 'C:\\ungoogled-chromium-windows\\build'});
+        // Cross-run resume (build-1 of a fresh dispatch picking up a dead
+        // run's last checkpoint) needs findBy - same-run lookups (build-2
+        // onward, every normal case) use the runner's own internal token and
+        // don't need it. Without this, a crashed run's progress is
+        // unrecoverable: DefaultArtifactClient.getArtifact() with no findBy
+        // only ever sees the CURRENT run's own artifacts.
+        const findBy = resumeRunId ? {
+            token: githubToken,
+            workflowRunId: parseInt(resumeRunId, 10),
+            repositoryOwner: process.env.GITHUB_REPOSITORY.split('/')[0],
+            repositoryName: process.env.GITHUB_REPOSITORY.split('/')[1],
+        } : undefined;
+        const artifactInfo = await artifact.getArtifact(artifactName, findBy ? {findBy} : undefined);
+        await artifact.downloadArtifact(artifactInfo.artifact.id, {path: 'C:\\ungoogled-chromium-windows\\build', findBy});
         await exec.exec('7z', ['x', 'C:\\ungoogled-chromium-windows\\build\\artifacts.zip',
             '-oC:\\ungoogled-chromium-windows\\build', '-y']);
         await io.rmRF('C:\\ungoogled-chromium-windows\\build\\artifacts.zip');

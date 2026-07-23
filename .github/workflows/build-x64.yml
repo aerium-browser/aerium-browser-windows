@@ -1,6 +1,12 @@
 name: build-x64
 on:
   workflow_dispatch:
+    inputs:
+      resume_run_id:
+        description: 'Resume compiling from this earlier run''s last saved build-artifact instead of starting build-1 from scratch. Only useful when a previous run died mid-build (e.g. a runner crash) - a normal same-run stage failure/timeout already resumes on its own. Find the run id in the failed run''s URL.'
+        type: string
+        required: false
+        default: ''
   push:
     branches: [master]
     tags:
@@ -21,6 +27,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: build-x64-${{ github.ref }}
@@ -29,3 +36,5 @@ concurrency:
 jobs:
   build:
     uses: ./.github/workflows/reusable-build.yml
+    with:
+      resume_run_id: ${{ inputs.resume_run_id || '' }}

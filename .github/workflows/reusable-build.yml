@@ -14,6 +14,15 @@ on:
         type: boolean
         required: false
         default: false
+      resume_run_id:
+        description: Resume from this earlier run's last saved build-artifact instead of starting build-1 fresh - the only way to recover a run that died mid-build, since same-run resume (build-2 onward) can't reach back into a different, already-completed/dead run.
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
 
 jobs:
   build-1:
@@ -31,7 +40,9 @@ jobs:
         uses: ./.github/actions/stage
         with:
           finished: false
-          from_artifact: false
+          from_artifact: ${{ inputs.resume_run_id != '' }}
+          resume_run_id: ${{ inputs.resume_run_id }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           x86: ${{ inputs.x86 }}
           arm: ${{ inputs.arm }}
     outputs:

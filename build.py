@@ -129,10 +129,21 @@ _CWS_SHA256 = '326443baec3d204b1358eba6aa025cf6bd930c08a0b98f6784e7a3236528445b'
 
 def _stage_bundled_extensions(source_tree):
     """
-    Downloads the Chromium Web Store crx and stages it, along with the
-    external_extensions.json manifest, into out/Default/Extensions so that
-    both the installer (via chrome.release) and the zip (via package.py)
-    pick it up.
+    Downloads the Chromium Web Store crx into out/Default/Extensions and
+    writes the manifest listing it into the SOURCE tree's
+    chrome/browser/extensions/default_extensions/external_extensions.json.
+
+    The manifest must go into the source file, not out/Default: ninja's
+    default_extensions copy step (chrome/browser/extensions/
+    default_extensions/BUILD.gn, Windows-only) copies that source file over
+    out/Default/extensions/external_extensions.json on every build, so a
+    manifest staged into the out dir gets clobbered with the stock empty
+    placeholder mid-build and the installer/zip silently ship an empty
+    extension list (this is exactly how v150.0.7871.128-b39 shipped with a
+    non-installing Web Store). The crx itself is safe in out/Default - no
+    build step writes that filename - and both the installer
+    (chrome.release's "Extensions\\*.*" glob) and the zip (package.py
+    include_paths) pick up the pair from there.
     """
     import hashlib
     import json
@@ -147,15 +158,21 @@ def _stage_bundled_extensions(source_tree):
         if hashlib.sha256(data).hexdigest() != _CWS_SHA256:
             raise RuntimeError('Chromium Web Store crx checksum mismatch')
         crx_path.write_bytes(data)
-    (ext_dir / 'external_extensions.json').write_text(
-        json.dumps(
-            {
-                _CWS_ID: {
-                    'external_crx': crx_path.name,
-                    'external_version': _CWS_VERSION,
-                }
-            }, indent=2),
-        encoding=ENCODING)
+    manifest = json.dumps(
+        {
+            _CWS_ID: {
+                'external_crx': crx_path.name,
+                'external_version': _CWS_VERSION,
+            }
+        }, indent=2)
+    json_src = (source_tree / 'chrome' / 'browser' / 'extensions' /
+                'default_extensions' / 'external_extensions.json')
+    if not json_src.exists():
+        raise RuntimeError(
+            'default_extensions/external_extensions.json not found - upstream '
+            'moved it, update _stage_bundled_extensions to match')
+    if json_src.read_text(encoding=ENCODING) != manifest:
+        json_src.write_text(manifest, encoding=ENCODING)
 
 
 def _get_vcvars_path(name='64'):
@@ -418,7 +435,7 @@ def main():
         gn_flags += windows_flags
         (source_tree / 'out/Default/args.gn').write_text(gn_flags, encoding=ENCODING)
 
-    # Stage bundled extensions (Chromium Web Store) into out/Default/Extensions
+    # Stage bundled extensions (Chromium Web Store)
     _stage_bundled_extensions(source_tree)
 
     # Enter source tree to run build commands

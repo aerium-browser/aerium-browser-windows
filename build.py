@@ -306,33 +306,6 @@ def main():
             get_logger().info('Unpacking chromium tarball...')
             downloads.unpack_downloads(download_info, downloads_cache, None, source_tree, extractors)
         else:
-            # The submodule's depot_tools.patch is written against whatever
-            # depot_tools' unpinned main happened to look like when upstream
-            # last touched it, and clone.py always fetches main HEAD - so a
-            # depot_tools-side reformat breaks every clone (run 29987588482
-            # burned 11 stages silently on exactly that: "patch failed:
-            # gclient.py:128"). Two working-tree fixes, nothing committed to
-            # the submodule:
-            #   1. overwrite the patch with our regenerated copy
-            #      (devutils/depot_tools.patch, validated against the pin)
-            #   2. pin clone.py's fetch to the commit that patch was
-            #      regenerated against (fetch-by-sha verified to work on
-            #      this googlesource host)
-            # When bumping the pin: update _DEPOT_TOOLS_PIN, regenerate
-            # devutils/depot_tools.patch against it, re-validate with
-            # git apply --check.
-            _DEPOT_TOOLS_PIN = 'b276ddf3c75027b86715bab97ea46f1d463e087c'
-            uc_utils = _ROOT_DIR / 'ungoogled-chromium' / 'utils'
-            shutil.copyfile(_ROOT_DIR / 'devutils' / 'depot_tools.patch', uc_utils / 'depot_tools.patch')
-            clone_py = uc_utils / 'clone.py'
-            clone_text = clone_py.read_text(encoding='utf-8')
-            unpinned = "'git', 'fetch', '--depth=1', 'origin', 'main'"
-            pinned = "'git', 'fetch', '--depth=1', 'origin', '%s'" % _DEPOT_TOOLS_PIN
-            if unpinned in clone_text:
-                clone_py.write_text(clone_text.replace(unpinned, pinned), encoding='utf-8')
-            elif pinned not in clone_text:
-                get_logger().error('depot_tools pin anchor not found in clone.py - upstream changed the fetch line, update _DEPOT_TOOLS_PIN handling')
-                exit(1)
             # Clone sources
             subprocess.run([sys.executable, str(Path('ungoogled-chromium', 'utils', 'clone.py')), '-o', 'build\\src', '-p', 'win32' if args.x86 else 'win-arm64' if args.arm else 'win64'], check=True)
 

@@ -1,6 +1,7 @@
 import * as core from '@actions/core';
 import * as io from '@actions/io';
 import * as exec from '@actions/exec';
+import * as fs from 'fs';
 import { DefaultArtifactClient } from '@actions/artifact';
 import * as glob from '@actions/glob';
 
@@ -40,6 +41,20 @@ async function run() {
         await exec.exec('7z', ['x', 'C:\\ungoogled-chromium-windows\\build\\artifacts.zip',
             '-oC:\\ungoogled-chromium-windows\\build', '-y']);
         await io.rmRF('C:\\ungoogled-chromium-windows\\build\\artifacts.zip');
+
+        // The restored tree came from a different machine via a zip
+        // round-trip. 7z's -mtc=on preserves NTFS timestamps, but ninja's
+        // incremental correctness still rests on each output's current mtime
+        // matching what .ninja_log recorded - `-t restat` re-syncs the log
+        // to the files' actual on-disk state without rebuilding anything
+        // (https://ninja-build.org/manual.html#_extra_tools). Cheap
+        // insurance against any mtime drift in the archive round-trip; a
+        // no-op when the tree is already consistent.
+        const ninjaExe = 'C:\\ungoogled-chromium-windows\\build\\src\\third_party\\ninja\\ninja.exe';
+        if (fs.existsSync(ninjaExe)) {
+            await exec.exec(ninjaExe, ['-C', 'C:\\ungoogled-chromium-windows\\build\\src\\out\\Default',
+                '-t', 'restat'], {ignoreReturnCode: true});
+        }
     }
 
     const args = ['build.py', '--ci', '-j', '2']

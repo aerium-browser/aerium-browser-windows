@@ -1,0 +1,42 @@
+name: auto-resume
+# When a build fails AND left a checkpoint behind, re-dispatch it with
+# resume_run_id so transient runner deaths (VM preemption, one-off process
+# crashes) self-heal without a human noticing. A run that failed WITHOUT a
+# checkpoint hit a real error at its first stage (patch/gn/clone failure) -
+# resuming or retrying that would fail identically, so it is left alone.
+on:
+  workflow_run:
+    workflows: [build-x64]
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  resume:
+    if: github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.head_branch == 'master'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resume from the failed run's checkpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if ! gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[].name' | grep -qx 'build-artifact'; then
+            echo "Run $RUN_ID saved no checkpoint - real error, not a transient crash. Not resuming."
+            exit 0
+          fi
+          # Cap the auto-retry chain per commit. Dispatches made with the
+          # workflow token show actor github-actions[bot], so manual resumes
+          # by a human don't count against the cap.
+          attempts=$(gh api "repos/$REPO/actions/workflows/build-x64.yml/runs?head_sha=$HEAD_SHA&per_page=100" \
+            --jq '[.workflow_runs[] | select(.actor.login == "github-actions[bot]")] | length')
+          if [ "$attempts" -ge 2 ]; then
+            echo "Already auto-resumed $attempts times for $HEAD_SHA - giving up, this needs a human."
+            exit 0
+          fi
+          echo "Dispatching resume of run $RUN_ID (auto-attempt $((attempts + 1)))"
+          gh api -X POST "repos/$REPO/actions/workflows/build-x64.yml/dispatches" \
+            -f ref=master -f "inputs[resume_run_id]=$RUN_ID"

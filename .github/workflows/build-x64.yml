@@ -30,9 +30,12 @@ permissions:
   contents: read
   actions: read
 
+# cancel-in-progress deliberately false: a routine push must QUEUE behind a
+# multi-day build, not kill it (three 30h+ builds died to pushes this way).
+# To supersede a doomed run, cancel it manually first.
 concurrency:
   group: build-x64-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:

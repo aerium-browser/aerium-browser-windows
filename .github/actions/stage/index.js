@@ -66,12 +66,27 @@ async function run() {
         cwd: 'C:\\ungoogled-chromium-windows',
         ignoreReturnCode: true
     });
-    const buildStart = Date.now();
-    const retCode = await exec.exec('python', args, {
+    let buildStart = Date.now();
+    let retCode = await exec.exec('python', args, {
         cwd: 'C:\\ungoogled-chromium-windows',
         ignoreReturnCode: true
     });
-    const buildMinutes = (Date.now() - buildStart) / 60000;
+    let buildMinutes = (Date.now() - buildStart) / 60000;
+    // A fast non-zero exit is either a real error (patch/gn failure - fails
+    // identically every time) or a transient process crash (e.g. a rollup
+    // node.exe access violation took down run 30147140738 57 minutes in).
+    // One in-place retry tells them apart for the price of the failure
+    // window: the tree persists in the workspace, so ninja resumes
+    // incrementally and a transient crash costs minutes instead of the run.
+    if (retCode !== 0 && buildMinutes < 60) {
+        console.log(`build.py failed after ${buildMinutes.toFixed(1)} minutes (exit ${retCode}) - retrying once in case it was a transient crash...`);
+        buildStart = Date.now();
+        retCode = await exec.exec('python', args, {
+            cwd: 'C:\\ungoogled-chromium-windows',
+            ignoreReturnCode: true
+        });
+        buildMinutes = (Date.now() - buildStart) / 60000;
+    }
     // build.py's internal ninja timeout is 3.5h, so a stage that exits
     // non-zero after only minutes did NOT time out - it hit a real error
     // (clone failure, patch failure, gn failure). Without this check every
@@ -84,7 +99,7 @@ async function run() {
     // checkpoint upload on fast-fail also keeps a broken tree from
     // overwriting the last good checkpoint on resumed runs.
     if (retCode !== 0 && buildMinutes < 60) {
-        core.setFailed(`build.py failed after only ${buildMinutes.toFixed(1)} minutes (exit ${retCode}) - real error, not a stage timeout. Not uploading a checkpoint.`);
+        core.setFailed(`build.py failed after only ${buildMinutes.toFixed(1)} minutes (exit ${retCode}) on both attempts - real error, not a stage timeout. Not uploading a checkpoint.`);
         return;
     }
     if (retCode === 0) {
@@ -101,7 +116,7 @@ async function run() {
             }
             try {
                 await artifact.uploadArtifact(finalArtifactName, packageList,
-                    'C:\\ungoogled-chromium-windows\\build', {retentionDays: 4, compressionLevel: 0});
+                    'C:\\ungoogled-chromium-windows\\build', {retentionDays: 10, compressionLevel: 0});
                 break;
             } catch (e) {
                 console.error(`Upload artifact failed: ${e}`);
@@ -121,7 +136,7 @@ async function run() {
             }
             try {
                 await artifact.uploadArtifact(artifactName, ['C:\\ungoogled-chromium-windows\\artifacts.zip'],
-                    'C:\\ungoogled-chromium-windows', {retentionDays: 4, compressionLevel: 0});
+                    'C:\\ungoogled-chromium-windows', {retentionDays: 10, compressionLevel: 0});
                 break;
             } catch (e) {
                 console.error(`Upload artifact failed: ${e}`);

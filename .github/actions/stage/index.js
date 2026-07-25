@@ -66,26 +66,37 @@ async function run() {
         cwd: 'C:\\ungoogled-chromium-windows',
         ignoreReturnCode: true
     });
-    let buildStart = Date.now();
-    let retCode = await exec.exec('python', args, {
-        cwd: 'C:\\ungoogled-chromium-windows',
-        ignoreReturnCode: true
-    });
-    let buildMinutes = (Date.now() - buildStart) / 60000;
-    // A fast non-zero exit is either a real error (patch/gn failure - fails
-    // identically every time) or a transient process crash (e.g. a rollup
-    // node.exe access violation took down run 30147140738 57 minutes in).
-    // One in-place retry tells them apart for the price of the failure
-    // window: the tree persists in the workspace, so ninja resumes
-    // incrementally and a transient crash costs minutes instead of the run.
-    if (retCode !== 0 && buildMinutes < 60) {
-        console.log(`build.py failed after ${buildMinutes.toFixed(1)} minutes (exit ${retCode}) - retrying once in case it was a transient crash...`);
+    // A fast non-zero exit is either a real error (patch/gn/clone failure -
+    // reproduces identically every attempt) or a crashy build action. The
+    // devtools-frontend rollup bundling is the known crashy one here:
+    // @rollup/wasm-node's node.exe dies with a bare 0xC0000005 access
+    // violation (exit=3221225477, no stderr) on a DIFFERENT bundle target
+    // each time - runs 30147140738 (issue_counter.js, 57min) and
+    // 30156502322 (source_map_scopes.js, 39min) both died this way.
+    //
+    // Retrying in-place is the right tool: the tree persists in the
+    // workspace, so ninja resumes incrementally and each attempt carries the
+    // build further through the bundling phase. One retry isn't enough when
+    // the crash can recur on any of the many bundle targets, so allow a few -
+    // a genuine error still burns only minutes, since it re-fails instantly
+    // every time rather than making progress.
+    const MAX_FAST_FAIL_ATTEMPTS = 3;
+    let buildStart, buildMinutes, retCode;
+    for (let attempt = 1; attempt <= MAX_FAST_FAIL_ATTEMPTS; ++attempt) {
         buildStart = Date.now();
         retCode = await exec.exec('python', args, {
             cwd: 'C:\\ungoogled-chromium-windows',
             ignoreReturnCode: true
         });
         buildMinutes = (Date.now() - buildStart) / 60000;
+        // Success, or a slow failure (the stage hit build.py's own 3.5h ninja
+        // timeout) - either way this attempt loop is done.
+        if (retCode === 0 || buildMinutes >= 60) {
+            break;
+        }
+        if (attempt < MAX_FAST_FAIL_ATTEMPTS) {
+            console.log(`build.py failed after ${buildMinutes.toFixed(1)} minutes (exit ${retCode}) - attempt ${attempt}/${MAX_FAST_FAIL_ATTEMPTS}, retrying in place (ninja resumes incrementally)...`);
+        }
     }
     // build.py's internal ninja timeout is 3.5h, so a stage that exits
     // non-zero after only minutes did NOT time out - it hit a real error
@@ -99,7 +110,7 @@ async function run() {
     // checkpoint upload on fast-fail also keeps a broken tree from
     // overwriting the last good checkpoint on resumed runs.
     if (retCode !== 0 && buildMinutes < 60) {
-        core.setFailed(`build.py failed after only ${buildMinutes.toFixed(1)} minutes (exit ${retCode}) on both attempts - real error, not a stage timeout. Not uploading a checkpoint.`);
+        core.setFailed(`build.py failed after only ${buildMinutes.toFixed(1)} minutes (exit ${retCode}) on all ${MAX_FAST_FAIL_ATTEMPTS} attempts - real error, not a stage timeout. Not uploading a checkpoint.`);
         return;
     }
     if (retCode === 0) {

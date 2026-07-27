@@ -472,7 +472,12 @@ def main():
         _run_build_process_timeout(*ninja_commandline, timeout=3.5*60*60)
         # package
         os.chdir(_ROOT_DIR)
-        subprocess.run([sys.executable, 'package.py', '--cpu-arch', '32bit' if args.x86 else 'arm' if args.arm else '64bit'])
+        # check=True: without it a failing package.py (missing mini_installer,
+        # FILES.cfg entry gone, ...) left the stage green and the release job
+        # publishing nothing.
+        subprocess.run([sys.executable, 'package.py', '--cpu-arch',
+                        '32bit' if args.x86 else 'arm' if args.arm else '64bit'],
+                       check=True)
     else:
         _run_build_process(*ninja_commandline)
 

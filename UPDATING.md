@@ -91,9 +91,32 @@ Our patches target specific Chromium files that occasionally move:
   `components/regional_capabilities/regional_capabilities_utils.cc`
   (`GetRegionalSettings()` forced to the "ZZ" default list) and
   `components/search_engines/template_url_prepopulate_data.cc`
-  (`GetPrepopulatedFallbackSearch()` → `startpage.id`). Our engine IDs
-  start at 1001 so upstream additions can never collide; if upstream
+  (`GetPrepopulatedFallbackSearch()` → `startpage.id`). If upstream
   raises `kCurrentDataVersion` past 250, raise ours above it again.
+
+  **Engine IDs must stay ≤ 1000.** Ours are 117/118/119, taken from the
+  free range just above upstream's highest (116), with
+  `kMaxPrepopulatedEngineID` raised to 119 to match — which is exactly
+  what the comment above that constant tells you to do. It is tempting to
+  use 1001+ instead so upstream additions can never collide, and an
+  earlier revision of this patch did; that is wrong, because Chromium
+  treats > 1000 as the "distribution custom engine" range and behaves
+  differently for it:
+  - `components/search_engines/template_url_data.cc` `GenerateGUID()`
+    only produces the deterministic sync GUID for IDs in `[1, 1000]`.
+    Above that every construction gets a fresh random UUID — precisely
+    what the deterministic GUID exists to prevent, so synced profiles
+    accumulate duplicate rows (and duplicate keywords) for the same
+    engine.
+  - `search_engine_choice_service.cc` classifies
+    `prepopulate_id > kMaxPrepopulatedEngineID` as a distribution custom
+    engine. Raising `kMaxPrepopulatedEngineID` to 1003 to cover 1001+ IDs
+    disabled that check for genuinely custom engines too.
+
+  So on every Chromium bump, check whether upstream has claimed 117-119
+  for its own engines. If it has, move ours to the next free IDs below
+  1000 and bump `kMaxPrepopulatedEngineID` and `kCurrentDataVersion`
+  accordingly.
 
 If `--dry-run` reports a hunk failure, open the target file at the new
 Chromium tag on

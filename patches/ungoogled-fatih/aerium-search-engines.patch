@@ -1,3 +1,68 @@
+# Replace every per-country prepopulated engine list with one fixed
+# privacy-focused set: Startpage (default), DuckDuckGo, DuckDuckGo Lite,
+# DuckDuckGo HTML and SearXNG. ungoogled-chromium replaces the Google engine
+# with a "No Search" stub, so without this the omnibox cannot search at all
+# until the user configures an engine by hand.
+#
+# ID allocation: the three new engines take the next free IDs after upstream's
+# highest (116), and kMaxPrepopulatedEngineID is raised to match, exactly as
+# prepopulated_engines.json's own comment instructs. IDs must stay <= 1000:
+#   - components/search_engines/template_url_data.cc GenerateGUID() only emits
+#     the deterministic sync GUID for prepopulate_id in [1, 1000]. Anything
+#     above gets a fresh random UUID per construction, which is what the
+#     deterministic GUID exists to prevent ("to make sure sync doesn't incur in
+#     duplicates for prepopulated engines") - two synced devices would each
+#     mint their own row for the same engine, leaving duplicate keywords in the
+#     keyword database.
+#   - search_engine_choice_service.cc treats prepopulate_id >
+#     kMaxPrepopulatedEngineID as "distribution custom search engine". Pushing
+#     kMaxPrepopulatedEngineID to 1003 to cover 1001+ IDs silently disabled
+#     that classification for every real distribution-custom engine too.
+# On a Chromium version bump, check whether upstream has claimed 117-119 for
+# its own engines before re-applying - see UPDATING.md.
+
+--- a/components/regional_capabilities/regional_capabilities_utils.cc
++++ b/components/regional_capabilities/regional_capabilities_utils.cc
+@@ -46,14 +46,20 @@
+ // category.
+ constexpr size_t kTopSearchEnginesThreshold = 5;
+ 
+-// Returns regional settings appropriate for the provided country. If no
+-// specific regional settings are defined, returns the default settings.
+-const RegionalSettings& GetRegionalSettings(CountryId country_id) {
+-  auto iter = TemplateURLPrepopulateData::kRegionalSettings.find(country_id);
+-  if (iter == TemplateURLPrepopulateData::kRegionalSettings.end()) {
+-    // Fallback to default country.
+-    iter = TemplateURLPrepopulateData::kRegionalSettings.find(CountryId());
+-  }
++// Aerium: every country gets the same privacy-focused engine list - the "ZZ"
++// default in regional_settings.json - instead of per-country Google-led lists,
++// so the requested country is deliberately ignored.
++const RegionalSettings& GetRegionalSettings(
++    [[maybe_unused]] CountryId country_id) {
++  // A default-constructed CountryId is the "ZZ" unknown-country key (see
++  // country_codes.h), which regional_settings.json always defines, so this
++  // lookup cannot miss. Upstream's "fall back to the default country" branch
++  // is dropped rather than kept: with the primary lookup already using
++  // CountryId() the fallback repeated the identical query, so it could never
++  // recover - it only left a path that dereferences end(). The CHECK states
++  // the data invariant instead of relying on undefined behaviour.
++  auto iter = TemplateURLPrepopulateData::kRegionalSettings.find(CountryId());
++  CHECK(iter != TemplateURLPrepopulateData::kRegionalSettings.end());
+ 
+   return *iter->second;
+ }
+--- a/components/search_engines/template_url_prepopulate_data.cc
++++ b/components/search_engines/template_url_prepopulate_data.cc
+@@ -276,7 +276,7 @@
+     const std::vector<const PrepopulatedEngine*>&
+         regional_prepopulated_engines) {
+   return FindPrepopulatedEngineInternal(prefs, regional_prepopulated_engines,
+-                                        google.id,
++                                        startpage.id,
+                                         /*use_first_as_fallback=*/true);
+ }
+ 
 --- a/third_party/search_engines_data/resources/definitions/prepopulated_engines.json
 +++ b/third_party/search_engines_data/resources/definitions/prepopulated_engines.json
 @@ -22,13 +22,13 @@
@@ -5,7 +70,7 @@
      // to include the full range or else not all engines will be counted in
      // stats.
 -    "kMaxPrepopulatedEngineID": 116,
-+    "kMaxPrepopulatedEngineID": 1003,
++    "kMaxPrepopulatedEngineID": 119,
  
      // Increment this if you change the data in ways that mean users with
      // existing data should get a new version. Otherwise, existing data may
@@ -27,7 +92,7 @@
 +      "search_url": "https://html.duckduckgo.com/html/?q={searchTerms}",
 +      "suggest_url": "https://duckduckgo.com/ac/?q={searchTerms}&type=list",
 +      "type": "SEARCH_ENGINE_DUCKDUCKGO",
-+      "id": 1001
++      "id": 117
 +    },
 +
 +    "duckduckgo_lite": {
@@ -37,7 +102,7 @@
 +      "search_url": "https://lite.duckduckgo.com/lite/?q={searchTerms}",
 +      "suggest_url": "https://duckduckgo.com/ac/?q={searchTerms}&type=list",
 +      "type": "SEARCH_ENGINE_DUCKDUCKGO",
-+      "id": 1002
++      "id": 118
 +    },
 +
      "ecosia": {
@@ -53,7 +118,7 @@
 +      "favicon_url": "https://searx.be/favicon.ico",
 +      "search_url": "https://searx.be/search?q={searchTerms}",
 +      "type": "SEARCH_ENGINE_OTHER",
-+      "id": 1003
++      "id": 119
 +    },
 +
      "seznam": {
@@ -85,28 +150,3 @@
        ]
      }
    }
---- a/components/regional_capabilities/regional_capabilities_utils.cc
-+++ b/components/regional_capabilities/regional_capabilities_utils.cc
-@@ -49,7 +49,10 @@
- // Returns regional settings appropriate for the provided country. If no
- // specific regional settings are defined, returns the default settings.
- const RegionalSettings& GetRegionalSettings(CountryId country_id) {
--  auto iter = TemplateURLPrepopulateData::kRegionalSettings.find(country_id);
-+  // Aerium: every country gets the same privacy-focused engine list - the
-+  // "ZZ" default in regional_settings.json - instead of per-country
-+  // Google-led lists.
-+  auto iter = TemplateURLPrepopulateData::kRegionalSettings.find(CountryId());
-   if (iter == TemplateURLPrepopulateData::kRegionalSettings.end()) {
-     // Fallback to default country.
-     iter = TemplateURLPrepopulateData::kRegionalSettings.find(CountryId());
---- a/components/search_engines/template_url_prepopulate_data.cc
-+++ b/components/search_engines/template_url_prepopulate_data.cc
-@@ -276,7 +276,7 @@
-     const std::vector<const PrepopulatedEngine*>&
-         regional_prepopulated_engines) {
-   return FindPrepopulatedEngineInternal(prefs, regional_prepopulated_engines,
--                                        google.id,
-+                                        startpage.id,
-                                         /*use_first_as_fallback=*/true);
- }
- 

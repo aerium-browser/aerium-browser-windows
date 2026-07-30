@@ -1,3 +1,13 @@
+# Sec-GPC injection at the render_frame_impl.cc site below feeds into every
+# renderer-initiated navigation's BeginNavigation IPC to the browser process.
+# content/browser/renderer_host/ipc_utils.cc's VerifyNavigationHeaders()
+# strictly allowlists which headers a navigation may carry - DNT is on that
+# list (which is why the DNT injection at this same call site is safe), but
+# Sec-GPC never was, since it doesn't exist upstream. Without the
+# ipc_utils.cc hunk below, the browser process kills the renderer
+# (bad_message.h reason 342, RFH_INVALID_NAVIGATION_HEADERS) on every single
+# navigation - reproduced as RESULT_CODE_KILLED_BAD_MESSAGE on any URL entry.
+
 --- a/third_party/blink/renderer/core/frame/navigator.idl
 +++ b/third_party/blink/renderer/core/frame/navigator.idl
 @@ -26,6 +26,8 @@
@@ -64,6 +74,25 @@
    // The request's extra data may indicate that we should set a custom user
    // agent. This needs to be done here, after WebKit is through with setting the
    // user agent on its own.
+--- a/content/browser/renderer_host/ipc_utils.cc
++++ b/content/browser/renderer_host/ipc_utils.cc
+@@ -480,7 +480,15 @@
+         header.name() != net::HttpRequestHeaders::kContentType &&
+         header.name() != net::HttpRequestHeaders::kUserAgent &&
+         header.name() != net::HttpRequestHeaders::kSecPurpose &&
+-        header.name() != net::HttpRequestHeaders::kDNT) {
++        header.name() != net::HttpRequestHeaders::kDNT &&
++        // Aerium: Sec-GPC is injected unconditionally alongside DNT at the
++        // same renderer call sites (see FinalizeRequestInternal in
++        // content/renderer/render_frame_impl.cc), so it must be allowlisted
++        // here the same way DNT is - otherwise every renderer-initiated
++        // navigation carries a header this allowlist doesn't recognize and
++        // gets RFH_INVALID_NAVIGATION_HEADERS-killed
++        // (content/browser/bad_message.h reason 342).
++        header.name() != "Sec-GPC") {
+       if (base::FeatureList::IsEnabled(
+               features::kKillOnInvalidNavigationHeaders)) {
+         SCOPED_CRASH_KEY_STRING64("Bug487795397", "invalid_header",
 --- a/third_party/blink/renderer/platform/loader/fetch/url_loader/dedicated_or_shared_worker_global_scope_context_impl.cc
 +++ b/third_party/blink/renderer/platform/loader/fetch/url_loader/dedicated_or_shared_worker_global_scope_context_impl.cc
 @@ -377,6 +377,7 @@

@@ -38,8 +38,27 @@ async function run() {
         } : undefined;
         const artifactInfo = await artifact.getArtifact(artifactName, findBy ? {findBy} : undefined);
         await artifact.downloadArtifact(artifactInfo.artifact.id, {path: 'C:\\ungoogled-chromium-windows\\build', findBy});
-        await exec.exec('7z', ['x', 'C:\\ungoogled-chromium-windows\\build\\artifacts.zip',
-            '-oC:\\ungoogled-chromium-windows\\build', '-y']);
+
+        // Immediately after a large download, Windows Defender's on-access
+        // scanner can still hold a lock on the freshly-written zip for a
+        // moment, making 7z fail with "The process cannot access the file
+        // because it is being used by another process." A short retry
+        // clears this transient race without masking a real extraction
+        // failure (a corrupt/missing archive fails the same way on every
+        // attempt).
+        for (let attempt = 1; ; attempt++) {
+            try {
+                await exec.exec('7z', ['x', 'C:\\ungoogled-chromium-windows\\build\\artifacts.zip',
+                    '-oC:\\ungoogled-chromium-windows\\build', '-y']);
+                break;
+            } catch (err) {
+                if (attempt >= 5) {
+                    throw err;
+                }
+                console.log(`7z extract failed (attempt ${attempt}), retrying in 5s: ${err}`);
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+        }
         await io.rmRF('C:\\ungoogled-chromium-windows\\build\\artifacts.zip');
 
         // The restored tree came from a different machine via a zip

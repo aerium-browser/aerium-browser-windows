@@ -14,7 +14,7 @@
  #include "content/public/browser/url_data_source.h"
  #include "content/public/browser/web_ui.h"
  #include "content/public/browser/web_ui_controller.h"
-@@ -25,51 +30,150 @@
+@@ -25,51 +30,169 @@
                          const content::WebContents::Getter& wc_getter,
                          GotDataCallback callback) {
      std::string source = R"(
@@ -176,6 +176,25 @@
 + The Chrome Web Store is bundled and ready to use &mdash; open
 + <a href="https://chromewebstore.google.com/">chromewebstore.google.com</a> and install extensions the
 + same way you would in Chrome, updates included.
++</section>
++<section>
++ <h2>Password managers</h2><p>
++ Aerium doesn't have a built-in password manager. For saving and autofilling passwords, use a
++ dedicated, open-source password manager instead &mdash; it works across every browser and device,
++ not just this one.
++ <div class="cards">
++  <div class="card card-featured">
++   <span class="card-badge">Recommended</span>
++   <h3>Bitwarden</h3>
++   <p>Free, open-source, cloud-synced password manager with a polished browser extension.</p>
++   <a class="card-cta" href="https://chromewebstore.google.com/detail/bitwarden-password-manage/nngceckbapebfimnlniiiahkandclblb">Install Bitwarden</a>
++  </div>
++  <div class="card">
++   <h3>KeePassXC</h3>
++   <p>Local-only, fully offline password database &mdash; nothing ever leaves your machine unless you choose to sync it yourself.</p>
++   <a href="https://keepassxc.org/">Get KeePassXC</a>
++  </div>
++ </div>
 +</section>
 +<section>
 + <h2>Updates</h2><p>

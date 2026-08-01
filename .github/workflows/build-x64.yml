@@ -1,7 +1,3 @@
-# Deactivated (not deleted) in favor of fast-build.yml's self-hosted Azure
-# runner architecture - the push trigger is removed so this no longer runs
-# automatically, but workflow_dispatch is kept as a manual fallback in case
-# the self-hosted path is ever unavailable.
 name: build-x64
 on:
   workflow_dispatch:
@@ -11,6 +7,24 @@ on:
         type: string
         required: false
         default: ''
+  push:
+    branches: [master]
+    tags:
+      - '*'
+    paths:
+      - 'build.py'
+      - 'package.py'
+      - 'args.gn'
+      - 'flags.windows.gn'
+      - 'downloads.ini'
+      - 'domain_substitution.list'
+      - 'pruning.list'
+      - 'patches/**'
+      - 'brand/**'
+      - 'devutils/**'
+      - 'ungoogled-chromium'
+      - '.github/workflows/**'
+      - '.github/actions/**'
 
 permissions:
   contents: read

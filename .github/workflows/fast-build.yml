@@ -21,19 +21,11 @@ name: Fast build (self-hosted Azure)
 # variables AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
 # AZURE_RESOURCE_GROUP, AZURE_VM_NAME (the Windows VM this time).
 
+# Manual dispatch only - builds are triggered from GitHub (Actions tab),
+# never automatically on push/commit. This keeps the VM from spinning up on
+# every routine push; you decide when a build actually happens.
 on:
   workflow_dispatch:
-  push:
-    branches: [master]
-    paths:
-      - 'patches/**'
-      - 'flags.windows.gn'
-      - 'build.py'
-      - 'package.py'
-      - 'downloads.ini'
-      - 'pruning.list'
-      - 'domain_substitution.list'
-      - '.github/workflows/fast-build.yml'
 
 permissions:
   id-token: write

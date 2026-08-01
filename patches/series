@@ -32,3 +32,4 @@ ungoogled-fatih/aerium-widevine-toggle.patch
 ungoogled-fatih/aerium-search-engines.patch
 ungoogled-fatih/aerium-remove-autofill-passwords-menu.patch
 ungoogled-fatih/aerium-people-page-rebrand.patch
+ungoogled-fatih/fix-metrics-histograms-xml-non-git-checkout.patch

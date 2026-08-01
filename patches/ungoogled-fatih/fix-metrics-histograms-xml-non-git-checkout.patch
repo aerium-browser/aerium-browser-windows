@@ -1,0 +1,36 @@
+Fix "Unresolved dependencies" gn gen failure on tarball (non-git) checkouts.
+
+In 151.0.7922.71 the two halves of this conditional disagree:
+
+  * action("histograms_xml") is defined only `if (path_exists("//.git"))`
+  * but metrics_metadata adds it to deps `if (generate_location_tags)`
+
+We fetch Chromium as a release tarball, so there is no //.git and the
+action is never defined - while generate_location_tags is still true, so
+the dependency edge is added anyway. gn gen then dies with:
+
+  ERROR Unresolved dependencies.
+  //tools/metrics:metrics_metadata(//build/toolchain/linux:clang_arm64)
+    needs //tools/metrics:histograms_xml(//build/toolchain/linux:clang_arm64)
+
+Upstream has already corrected this in trunk by switching the group to
+the same path_exists("//.git") guard; this is that change backported.
+Drop once the pinned Chromium version contains it.
+
+--- a/tools/metrics/BUILD.gn
++++ b/tools/metrics/BUILD.gn
+@@ -41,11 +41,11 @@
+   ]
+
+   # Only include histograms_xml if we have access to dirmd data, which
+-  # is used to populate ownership information. This is only set to false
+-  # for non-git checkouts.
++  # is used to populate ownership information. This is disabled
++  # for non-git checkouts, as dirmd doesn't work on non-git checkout.
+   # TODO(crbug.com/329080012): Remove this once dirmd works in non-git
+   # checkouts.
+-  if (generate_location_tags) {
++  if (path_exists("//.git")) {
+     deps += [ ":histograms_xml" ]
+   }
+ }

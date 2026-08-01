@@ -1,0 +1,14 @@
+Rebrand the "You and Google" settings page title (IDS_SETTINGS_PEOPLE) - Aerium
+doesn't have a Google account relationship to manage on this page anymore.
+
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -3651,7 +3651,7 @@
+
+     <!-- Sync / People Page -->
+     <message name="IDS_SETTINGS_PEOPLE" desc="Name of the settings page which manages the user's relationship to Google.">
+-      You and Google
++      Your browser
+     </message>
+     <message name="IDS_SETTINGS_CHANGE_PICTURE_PROFILE_PHOTO" desc="The text on the Google profile photo of the user.">
+       Google Profile photo

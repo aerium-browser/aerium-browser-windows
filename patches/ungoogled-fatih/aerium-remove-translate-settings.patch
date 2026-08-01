@@ -1,0 +1,37 @@
+Remove the "Use Google Translate" option from chrome://settings/languages.
+
+ungoogled-chromium already neuters the translate backend (translation only
+works if explicitly re-enabled via a command-line switch - see
+core/ungoogled-chromium/toggle-translation-via-switch.patch), so the
+"Google Translate" card on the languages page is a toggle for a service
+Aerium doesn't talk to. Drop the card entirely.
+
+The languages page composes three cards through a cr-view-manager, so the
+element and its entry in switchViews() have to go together - leaving the
+id in the list would make the view manager look up a view that no longer
+exists. translate_page.{html,ts} itself is left in the build (still
+imported, still listed in BUILD.gn); it is simply never instantiated.
+
+--- a/chrome/browser/resources/settings/languages_page/languages_page_index.html
++++ b/chrome/browser/resources/settings/languages_page/languages_page_index.html
+@@ -21,10 +21,6 @@
+       languages="[[languages]]" route-path$="[[routes_.SPELL_CHECK.path]]">
+   </settings-spell-check-page>
+
+-  <settings-translate-page slot="view" id="translate" prefs="{{prefs}}"
+-      languages="[[languages]]">
+-  </settings-translate-page>
+-
+ <if expr="not is_macosx">
+   <settings-edit-dictionary-page slot="view" id="editDictionary"
+       data-parent-view-id="spellCheck" prefs="{{prefs}}"
+--- a/chrome/browser/resources/settings/languages_page/languages_page_index.ts
++++ b/chrome/browser/resources/settings/languages_page/languages_page_index.ts
+@@ -63,7 +63,7 @@
+
+   private showDefaultViews_() {
+     this.$.viewManager.switchViews(
+-        ['languages', 'spellCheck', 'translate'], 'no-animation',
++        ['languages', 'spellCheck'], 'no-animation',
+         'no-animation');
+   }

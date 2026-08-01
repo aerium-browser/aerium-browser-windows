@@ -22,6 +22,20 @@ runs:
       shell: pwsh
       run: Copy-Item -Path . -Destination 'C:\ungoogled-chromium-windows' -Recurse
 
+    - name: Exclude build tree from Windows Defender
+      shell: pwsh
+      run: |
+        # Defender's real-time scanner is on by default on windows-2022
+        # runners and scans every file read/write - a well-documented major
+        # tax on Chromium compile times. Best-effort: never fail the build
+        # over this, it's a speed optimization, not correctness.
+        try {
+          Add-MpPreference -ExclusionPath 'C:\ungoogled-chromium-windows' -ErrorAction Stop
+          Add-MpPreference -ExclusionPath "${env:GITHUB_WORKSPACE}" -ErrorAction Stop
+        } catch {
+          Write-Host "Defender exclusion failed (non-fatal): $_"
+        }
+
     - name: Disk space report (before stage)
       shell: pwsh
       run: |

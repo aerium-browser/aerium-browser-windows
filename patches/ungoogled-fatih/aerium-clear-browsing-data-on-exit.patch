@@ -1,0 +1,172 @@
+Add a "Delete browsing data when you close Aerium" toggle to Settings.
+
+ungoogled-chromium already wires browsing-data-on-exit deletion into
+ChromeBrowsingDataLifetimeManager::ClearBrowsingDataForOnExitPolicy() via
+extra/ungoogled-chromium/add-flag-to-clear-data-on-exit.patch, but only
+behind the #clear-data-on-exit entry in chrome://flags. A flag is not a
+feature most people will ever find. This exposes the same shutdown deletion
+as an ordinary toggle in Settings > Privacy and security, backed by a pref,
+so it survives restarts and shows up in search.
+
+It hangs off the existing code path rather than adding a second one: the new
+pref simply widens the condition that already guards the removal.
+
+Two deliberate choices:
+
+  - A new pref instead of writing into kClearBrowsingDataOnExitList. That
+    list is owned by the ClearBrowsingDataOnExit enterprise policy, and a
+    toggle that rewrote it would look like the browser overriding managed
+    configuration. The two sources are ORed at shutdown, so both work.
+
+  - A narrower removal mask than the flag's AllRemoveMask(). That one also
+    wipes saved passwords and site settings. A discoverable toggle gets
+    switched on by people who want a clean slate each session, and quietly
+    destroying their saved passwords and per-site permissions on every quit
+    is not what the label promises. The toggle clears history, downloads,
+    cookies and site data, cache and form data; the flag keeps its existing,
+    more aggressive behaviour untouched.
+
+The pref has to be added to the settingsPrivate allowlist as well, otherwise
+the Settings page silently fails to read or write it.
+
+--- a/components/browsing_data/core/pref_names.h
++++ b/components/browsing_data/core/pref_names.h
+@@ -32,6 +32,12 @@
+ inline constexpr char kClearBrowsingDataOnExitList[] =
+     "browser.clear_data.clear_on_exit";
+ 
++// Aerium: set by the "Delete browsing data when you close Aerium" toggle in
++// Settings > Privacy and security. Kept separate from the policy list above,
++// which stays enterprise-owned; the two are ORed together at shutdown.
++inline constexpr char kAeriumClearBrowsingDataOnExit[] =
++    "browser.clear_data.aerium_clear_on_exit";
++
+ // Clear browsing data deletion time period.
+ inline constexpr char kDeleteTimePeriod[] = "browser.clear_data.time_period";
+ 
+--- a/components/browsing_data/core/pref_names.cc
++++ b/components/browsing_data/core/pref_names.cc
+@@ -41,6 +41,7 @@
+   registry->RegisterListPref(kBrowsingDataLifetime);
+   registry->RegisterBooleanPref(kClearBrowsingDataOnExitDeletionPending, false);
+   registry->RegisterListPref(kClearBrowsingDataOnExitList);
++  registry->RegisterBooleanPref(kAeriumClearBrowsingDataOnExit, false);
+   // TODO(crbug.com/471197613): When MaybeMigrateToQuickDeletePrefValues is
+   // removed, set default value in iOS for the `kDeleteTimePeriod` pref to 15
+   // minutes.
+--- a/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc
++++ b/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc
+@@ -162,6 +162,20 @@
+          chrome_browsing_data_remover::DATA_TYPE_SITE_DATA;
+ }
+ 
++// Aerium: what the Settings toggle deletes. Deliberately narrower than
++// AllRemoveMask() above, which backs the #clear-data-on-exit flag: that one
++// also wipes saved passwords and site settings. A discoverable toggle in
++// Settings is going to be switched on by people who just want a clean slate
++// each session, and silently destroying their saved passwords and per-site
++// permissions every time they quit is not what the label promises.
++uint64_t AeriumOnExitRemoveMask() {
++  return content::BrowsingDataRemover::DATA_TYPE_CACHE |
++         content::BrowsingDataRemover::DATA_TYPE_DOWNLOADS |
++         chrome_browsing_data_remover::DATA_TYPE_FORM_DATA |
++         chrome_browsing_data_remover::DATA_TYPE_HISTORY |
++         chrome_browsing_data_remover::DATA_TYPE_SITE_DATA;
++}
++
+ uint64_t GetOriginTypeMask(const base::ListValue& data_types) {
+   uint64_t result = 0;
+   for (const auto& data_type : data_types) {
+@@ -344,7 +358,10 @@
+       browsing_data::prefs::kClearBrowsingDataOnExitList);
+ 
+   bool cdoe = base::FeatureList::IsEnabled(features::kClearDataOnExit);
+-  if (cdoe || (!data_types.empty() &&
++  // Aerium: same shutdown path, driven by a Settings toggle instead of a flag.
++  const bool aerium_cdoe = profile_->GetPrefs()->GetBoolean(
++      browsing_data::prefs::kAeriumClearBrowsingDataOnExit);
++  if (cdoe || aerium_cdoe || (!data_types.empty() &&
+       IsConditionSatisfiedForBrowsingDataRemoval(GetSyncTypesForPolicyPref(
+           profile_, browsing_data::prefs::kClearBrowsingDataOnExitList)))) {
+     profile_->GetPrefs()->SetBoolean(
+@@ -357,8 +374,15 @@
+       DCHECK(keep_browser_alive);
+ #endif
+     remover->RemoveAndReply(base::Time(), base::Time::Max(),
+-                            cdoe ? AllRemoveMask() : GetRemoveMask(data_types),
+-                            cdoe ? AllOriginTypeMask() : GetOriginTypeMask(data_types),
++                            cdoe ? AllRemoveMask()
++                                 : (GetRemoveMask(data_types) |
++                                    (aerium_cdoe ? AeriumOnExitRemoveMask() : 0)),
++                            cdoe ? AllOriginTypeMask()
++                                 : (GetOriginTypeMask(data_types) |
++                                    (aerium_cdoe
++                                         ? content::BrowsingDataRemover::
++                                               ORIGIN_TYPE_UNPROTECTED_WEB
++                                         : 0)),
+                             BrowsingDataRemoverObserver::Create(
+                                 remover, /*filterable_deletion=*/true, profile_,
+                                 keep_browser_alive));
+--- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
++++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
+@@ -579,6 +579,8 @@
+       settings_api::PrefType::kBoolean;
+   (*s_allowlist)[browsing_data::prefs::kDeleteHostedAppsData] =
+       settings_api::PrefType::kBoolean;
++  (*s_allowlist)[browsing_data::prefs::kAeriumClearBrowsingDataOnExit] =
++      settings_api::PrefType::kBoolean;
+   (*s_allowlist)[browsing_data::prefs::kDeleteTimePeriod] =
+       settings_api::PrefType::kNumber;
+ 
+--- a/chrome/browser/resources/settings/privacy_page/privacy_page.html
++++ b/chrome/browser/resources/settings/privacy_page/privacy_page.html
+@@ -16,6 +16,11 @@
+         label="$i18n{clearBrowsingData}"
+         sub-label="$i18n{clearBrowsingDataDescription}"
+         on-click="onClearBrowsingDataClick_"></cr-link-row>
++    <settings-toggle-button id="clearBrowsingDataOnExit" class="hr"
++        pref="{{prefs.browser.clear_data.aerium_clear_on_exit}}"
++        label="$i18n{clearBrowsingDataOnExitLabel}"
++        sub-label="$i18n{clearBrowsingDataOnExitDesc}">
++    </settings-toggle-button>
+     <cr-link-row id="thirdPartyCookiesLinkRow"
+         start-icon="privacy:cookie"
+         class="hr" label="$i18n{thirdPartyCookiesLinkRowLabel}"
+--- a/chrome/browser/resources/settings/privacy_page/privacy_page.ts
++++ b/chrome/browser/resources/settings/privacy_page/privacy_page.ts
+@@ -14,6 +14,7 @@
+ import 'chrome://resources/cr_elements/cr_toast/cr_toast.js';
+ import '../icons.html.js';
+ import '../privacy_icons.html.js';
++import '../controls/settings_toggle_button.js';
+ import '../settings_page/settings_section.js';
+ import '../settings_shared.css.js';
+ import './privacy_guide/privacy_guide_dialog.js';
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -2184,6 +2184,12 @@
+     <message name="IDS_SETTINGS_CLEAR_DATA_DESCRIPTION" desc="Description for delete browsing data button in Privacy options. 'History' refers to browsing history. 'Cookies' refers to the technical meaning of a cookie, i.e. data saved by a website on the user's computer, as in when a website saves your preferences.">
+       Delete history, cookies, cache, and more
+     </message>
++    <message name="IDS_SETTINGS_CLEAR_BROWSING_DATA_ON_EXIT_LABEL" desc="Label for a toggle that deletes browsing data every time the browser is closed.">
++      Delete browsing data when you close Aerium
++    </message>
++    <message name="IDS_SETTINGS_CLEAR_BROWSING_DATA_ON_EXIT_DESC" desc="Description for a toggle that deletes browsing data every time the browser is closed. Lists which categories are cleared and which are kept.">
++      Clears history, downloads, cookies and site data, cache, and form data on exit. Saved passwords, site settings, and bookmarks are kept.
++    </message>
+     <message name="IDS_SETTINGS_TITLE_AND_COUNT" desc="The title of a section in the settings page with a count of the total number of items in the section">
+       <ph name="TITLE">$1<ex>Block</ex></ph> - <ph name="COUNT">$2<ex>42</ex></ph>
+     </message>
+--- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
++++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+@@ -2419,6 +2419,10 @@
+       {"clearedData", IDS_SETTINGS_CLEARED_DATA},
+       {"clearBrowsingData", IDS_SETTINGS_CLEAR_BROWSING_DATA},
+       {"clearBrowsingDataDescription", IDS_SETTINGS_CLEAR_DATA_DESCRIPTION},
++      {"clearBrowsingDataOnExitLabel",
++       IDS_SETTINGS_CLEAR_BROWSING_DATA_ON_EXIT_LABEL},
++      {"clearBrowsingDataOnExitDesc",
++       IDS_SETTINGS_CLEAR_BROWSING_DATA_ON_EXIT_DESC},
+       {"titleAndCount", IDS_SETTINGS_TITLE_AND_COUNT},
+       {"safeBrowsingEnableExtendedReportingDesc",
+        IDS_SETTINGS_SAFEBROWSING_ENABLE_REPORTING_DESC},

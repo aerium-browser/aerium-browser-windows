@@ -36,3 +36,4 @@ ungoogled-fatih/fix-metrics-histograms-xml-non-git-checkout.patch
 ungoogled-fatih/aerium-remove-translate-settings.patch
 ungoogled-fatih/aerium-remove-passwords-autofill-app-menu.patch
 ungoogled-fatih/aerium-clear-browsing-data-on-exit.patch
+ungoogled-fatih/aerium-about-page-project-url.patch

@@ -1,0 +1,27 @@
+Point the About-page project link at Aerium's own site.
+
+chrome://settings/help renders IDS_VERSION_UI_LICENSE with
+chrome::kChromiumProjectURL as its href. Upstream that is
+www.chromium.org, which ungoogled-chromium's domain substitution
+rewrites to the placeholder host ch40m1um.qjz9zk - a domain that does
+not resolve, so the link on the About page is dead. Point it at
+aerium-browser.github.io instead.
+
+--- a/chrome/common/url_constants.h
++++ b/chrome/common/url_constants.h
+@@ -174,8 +174,13 @@
+ inline constexpr char kChromeUIUntrustedNewTabPageUrl[] =
+     "chrome-untrusted://new-tab-page/";
+ 
+-// The URL for the Chromium project used in the About dialog.
+-inline constexpr char16_t kChromiumProjectURL[] = u"https://www.chromium.org/";
++// The URL for the Chromium project used in the About dialog. Aerium points
++// this at its own site: upstream's value is www.chromium.org, which
++// ungoogled-chromium's domain substitution rewrites into the unreachable
++// placeholder host ch40m1um.qjz9zk, leaving a dead link on
++// chrome://settings/help.
++inline constexpr char16_t kChromiumProjectURL[] =
++    u"https://aerium-browser.github.io";
+ #if BUILDFLAG(IS_CHROMEOS)
+ static_assert(std::u16string_view(kChromiumProjectURL) ==
+               ash::chrome_external_urls::kChromiumProjectURL);

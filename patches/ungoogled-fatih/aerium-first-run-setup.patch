@@ -1,0 +1,332 @@
+Turn the first-run page into a setup screen: presets, import, and a flag fix.
+
+The page already told people what Aerium had decided for them and listed flags
+they could go and set by hand. This makes it do the setting - three presets, one
+Apply button - and adds an entry point for bringing a previous browser's data
+across.
+
+Presets
+-------
+Recommended (pre-selected), Privacy, and Performance. All three share a floor:
+Do Not Track, third-party cookies blocked, no search-engine collection from
+visited sites, Client Hints stripped, Memory Saver on. They differ in what they
+trade away:
+
+  - Recommended keeps page preloading off and search suggestions on, and leaves
+    Battery Saver on battery power. It is deliberately the boring one: nothing
+    in it should ever make a site misbehave.
+
+  - Privacy adds delete-on-exit, turns search suggestions off so nothing typed
+    in the address bar leaves the browser at all, and switches on the
+    fingerprinting-noise / reduced-system-info / punycode / incognito-quota
+    flags. Every one of those is a real tradeoff, which is why it is a separate
+    choice rather than the default.
+
+  - Performance turns page preloading on (kStandard), enables parallel
+    downloading and switches Battery Saver off so nothing is throttled when
+    unplugged. Memory Saver stays on: releasing idle tabs helps responsiveness
+    rather than hurting it. The privacy floor is unchanged - none of it costs
+    measurable speed.
+
+Every pref is written from C++ against the real PrefService, so the
+settingsPrivate allowlist in prefs_util.cc is not involved (that gate only
+applies to chrome://settings, which reaches prefs through the extension API).
+Each was checked to exist and to be registered at 151.0.7922.71:
+
+  enable_do_not_track                            bool, profile
+      chrome/common/pref_names.h, registered in browser_ui_prefs.cc
+  profile.cookie_controls_mode                   int, profile
+      components/content_settings/core/common/pref_names.h, registered by
+      content_settings::CookieSettings::RegisterProfilePrefs.
+      CookieControlsMode: kOff=0, kBlockThirdParty=1, kIncognitoOnly=2
+  net.network_prediction_options                 int, profile
+      registered by prefetch::RegisterPredictionOptionsProfilePrefs.
+      NetworkPredictionOptions: kStandard=0, kWifiOnlyDeprecated=1,
+      kDisabled=2, kExtended=3
+  browser.clear_data.aerium_clear_on_exit        bool, profile
+      added by aerium-clear-browsing-data-on-exit.patch, registered through
+      browsing_data::prefs::RegisterBrowserUserPrefs
+  search.suggest_enabled                         bool, profile
+  performance_tuning.high_efficiency_mode.state  int, LOCAL STATE
+      MemorySaverModeState: kDisabled=0, kDeprecated=1, kEnabled=2
+  performance_tuning.battery_saver_mode.state    int, LOCAL STATE
+      BatterySaverModeState: kDisabled=0, kEnabledBelowThreshold=1,
+      kEnabledOnBattery=2, kEnabled=3
+
+The two performance prefs are browser-wide, not per profile - they come from
+RegisterLocalStatePrefs, not RegisterProfilePrefs - so they are written to
+g_browser_process->local_state() like the existing Secure DNS handler does.
+
+No fingerprinting-protection pref is set. There is no stock Chromium pref for
+it at this revision; what Aerium can actually offer is the Bromite-derived
+canvas/client-rects noise flags, and those are what the Privacy preset turns
+on. Nothing is promised in the UI that the browser cannot deliver.
+
+Flags
+-----
+Preset flags are appended to the local-state list about_flags reads at startup
+(browser.enabled_labs_experiments, the same list default-flags.patch seeds
+"extension-mime-request-handling@2" into). Existing entries are preserved and
+duplicates skipped, so applying a preset never clobbers a hand-set flag. Entry
+syntax follows FeatureEntry::NameForOption(): SINGLE_VALUE_TYPE entries are
+stored under their bare internal name, FEATURE_VALUE_TYPE entries have three
+options and "@1" is Enabled. Each flag was confirmed to exist at this revision:
+
+  disable-search-engine-collection      SINGLE_VALUE   ungoogled
+  force-punycode-hostnames              SINGLE_VALUE   ungoogled
+  fingerprinting-canvas-image-data-noise    SINGLE_VALUE   bromite
+  fingerprinting-canvas-measuretext-noise   SINGLE_VALUE   bromite
+  fingerprinting-client-rects-noise         SINGLE_VALUE   bromite
+  remove-client-hints                   FEATURE_VALUE  ungoogled
+  reduced-system-info                   FEATURE_VALUE  ungoogled
+  increase-incognito-storage-quota      FEATURE_VALUE  ungoogled
+  enable-parallel-downloading           FEATURE_VALUE  upstream about_flags.cc
+
+Flags only take effect after a restart, unlike the prefs, and the status line
+says so.
+
+While auditing that list: chrome://flags/#remove-tabsearch-button, which the
+page has been recommending, does not exist. It is in neither about_flags.cc nor
+any ungoogled-chromium/bromite flag header at this revision, so the bullet is
+removed rather than left pointing at nothing.
+
+Import
+------
+No new import code. The link opens chrome://settings/importData, which is the
+route people_page.ts already watches to show <settings-import-data-dialog> -
+the same dialog the Settings "Import bookmarks and settings" row opens. That
+row is exactly why aerium-remove-google-services-section.patch kept
+importDataDialogTrigger while deleting everything around it.
+--- a/chrome/browser/ui/webui/ungoogled_first_run.h
++++ b/chrome/browser/ui/webui/ungoogled_first_run.h
+@@ -1,6 +1,9 @@
+ #ifndef CHROME_BROWSER_UI_WEBUI_UNGOOGLED_FIRST_RUN_H_
+ #define CHROME_BROWSER_UI_WEBUI_UNGOOGLED_FIRST_RUN_H_
+ 
++#include <string>
++#include <vector>
++
+ #include "base/functional/bind.h"
+ #include "base/memory/ref_counted_memory.h"
+ #include "base/values.h"
+@@ -63,6 +66,15 @@
+    background:#1967d2; color:white; font-size:.95em; cursor:pointer}
+  #dnsApply:hover{background:#1a56b0}
+  #dnsStatus{padding:0 2em 1em; font-size:.9em; color:#188038; min-height:1.2em}
++ .preset{display:block; cursor:pointer}
++ .preset h3{display:flex; align-items:center; gap:.5em}
++ .preset ul{margin:0; padding-left:1.2em; font-size:.85em; color:#5f6368; line-height:1.5em}
++ .preset:has(input:checked){border-color:#1967d2; border-width:.125em}
++ #presetApply{margin:1em 2em 0; padding:.5em 1.2em; border-radius:1.2em; border:none;
++   background:#1967d2; color:white; font-size:.95em; cursor:pointer}
++ #presetApply:hover{background:#1a56b0}
++ #presetStatus{padding:.6em 2em 1em; font-size:.9em; color:#188038; min-height:1.2em}
++ #importRow{border-top:none; padding-top:0}
+  @media(prefers-color-scheme:dark){
+   html{color:#e8eaed; background:#202124}
+   a{color:#8ab4f8}
+@@ -78,6 +90,9 @@
+   .dns-options{border-top:.063em solid #3f4042}
+   .dns-option span{color:#9aa0a6}
+   #dnsStatus{color:#81c995}
++  .preset ul{color:#9aa0a6}
++  .preset:has(input:checked){border-color:#8ab4f8}
++  #presetStatus{color:#81c995}
+  }
+ </style>
+ <base target="_blank">
+@@ -89,6 +104,60 @@
+  This page can always be reopened at <a href="chrome://aerium-first-run">chrome://aerium-first-run</a>.
+ </section>
+ <section>
++ <h2>Set up Aerium</h2><p>
++ Pick a starting point. Every item below is an ordinary setting or chrome://flags entry &mdash; nothing is
++ locked down, and you can change any of it afterwards in <a href="chrome://settings">chrome://settings</a>
++ and <a href="chrome://flags">chrome://flags</a>.
++ <div class="cards">
++  <label class="card preset" for="preset-recommended">
++   <span class="card-badge">Default</span>
++   <h3><input type="radio" name="preset" id="preset-recommended" value="recommended" checked> Recommended</h3>
++   <p>Balanced. Everything here is standard in privacy-minded browsers and rarely gets in a site's way.</p>
++   <ul>
++    <li>Do Not Track sent with requests</li>
++    <li>Third-party cookies blocked</li>
++    <li>Page preloading off</li>
++    <li>Search engines not collected from the sites you visit</li>
++    <li>Client Hints headers stripped</li>
++    <li>Memory Saver on, Battery Saver on battery power</li>
++   </ul>
++  </label>
++  <label class="card preset" for="preset-privacy">
++   <h3><input type="radio" name="preset" id="preset-privacy" value="privacy"> Privacy</h3>
++   <p>Everything in Recommended, plus the tradeoffs worth making if you would rather sign in again than
++    be recognised. Expect to make exceptions for the odd site.</p>
++   <ul>
++    <li>Browsing data deleted every time you close Aerium</li>
++    <li>Search suggestions off &mdash; what you type in the address bar stays in the browser</li>
++    <li>Canvas, getClientRects and measureText fingerprinting noise</li>
++    <li>Reduced system info, and two CPU cores reported regardless of the real count</li>
++    <li>Internationalized domain names always shown as punycode</li>
++    <li>Incognito storage quota raised, so sites cannot spot Incognito by its quota</li>
++   </ul>
++  </label>
++  <label class="card preset" for="preset-performance">
++   <h3><input type="radio" name="preset" id="preset-performance" value="performance"> Performance</h3>
++   <p>The same privacy floor as Recommended, tuned for speed rather than for battery life.</p>
++   <ul>
++    <li>Page preloading on (standard)</li>
++    <li>Parallel downloading for large files</li>
++    <li>Memory Saver on &mdash; idle tabs release their memory</li>
++    <li>Battery Saver off &mdash; no throttling when unplugged</li>
++   </ul>
++  </label>
++ </div>
++ <button id="presetApply">Apply</button>
++ <div id="presetStatus"></div>
++</section>
++<section>
++ <h2>Bring your bookmarks over</h2><p>
++ Import bookmarks, history, saved passwords and search engines from another browser installed on this
++ computer. This opens Aerium's own import dialog &mdash; everything is read from the other browser's
++ local profile, nothing is uploaded anywhere.
++ <p id="importRow">
++ <a class="card-cta" href="chrome://settings/importData">Import bookmarks &amp; settings</a>
++</section>
++<section>
+  <h2>Recommended, free and open-source</h2><p>
+  None of these are installed automatically &mdash; they're just tools we think are worth knowing about.
+  Every one is free, open-source, and independently maintained.
+@@ -226,8 +295,8 @@
+ </section>
+ <section>
+  <h2>More privacy flags to consider</h2><p>
+- These aren't on by default &mdash; each is a deliberate tradeoff, so Aerium leaves them for you to opt into
+- individually at <a href="chrome://flags">chrome://flags</a>.
++ The presets above switch some of these on. The rest are each a deliberate tradeoff, so Aerium leaves
++ them for you to opt into individually at <a href="chrome://flags">chrome://flags</a>.
+  <ul>
+   <li><code>chrome://flags/#disable-search-engine-collection</code> &mdash; stop Chromium from scraping search engines it notices on visited pages.</li>
+   <li><code>chrome://flags/#enable-parallel-downloading</code> &mdash; split downloads into multiple simultaneous requests for faster large files.</li>
+@@ -239,7 +308,6 @@
+   <li><code>chrome://flags/#popups-to-tabs</code> &mdash; open popup windows as new tabs instead.</li>
+   <li><code>chrome://flags/#reduced-system-info</code> &mdash; reduce system info exposed via headers/JS, and report two CPU cores regardless of the real count.</li>
+   <li><code>chrome://flags/#remove-client-hints</code> &mdash; strip Client Hints headers (detailed system info sent to servers).</li>
+-  <li><code>chrome://flags/#remove-tabsearch-button</code> &mdash; remove the tab-search button from the tab strip.</li>
+   <li><code>chrome://flags/#show-avatar-button</code> &mdash; control when the profile avatar button appears (always, only in Incognito/Guest, or never).</li>
+   <li><code>chrome://flags/#spoof-webgl-info</code> &mdash; return generic WebGL renderer/vendor strings instead of your real GPU info.</li>
+  </ul>
+@@ -275,6 +343,19 @@
+   }
+   status.textContent = "Applied.";
+  };
++
++ document.getElementById("presetApply").onclick = function(){
++  var choice = document.querySelector('input[name="preset"]:checked').value;
++  var status = document.getElementById("presetStatus");
++  if (!window.chrome || !window.chrome.send) {
++   status.textContent = "Could not reach the browser to apply this.";
++   status.style.color = "#d93025";
++   return;
++  }
++  window.chrome.send("aeriumApplyPreset", [choice]);
++  status.textContent = "Applied. The settings take effect straight away; the chrome://flags entries " +
++   "need a restart.";
++ };
+ </script>
+ )";
+     std::move(callback).Run(base::MakeRefCounted<base::RefCountedString>(std::move(source)));
+@@ -295,6 +376,10 @@
+         "aeriumSetSecureDns",
+         base::BindRepeating(&UngoogledFirstRun::HandleSetSecureDns,
+                             base::Unretained(this)));
++    web_ui->RegisterMessageCallback(
++        "aeriumApplyPreset",
++        base::BindRepeating(&UngoogledFirstRun::HandleApplyPreset,
++                            base::Unretained(this)));
+   }
+   UngoogledFirstRun(const UngoogledFirstRun&) = delete;
+   UngoogledFirstRun& operator=(const UngoogledFirstRun&) = delete;
+@@ -313,6 +398,83 @@
+     local_state->SetString(prefs::kDnsOverHttpsMode, mode);
+     local_state->SetString(prefs::kDnsOverHttpsTemplates, args[1].GetString());
+   }
++
++  // Adds chrome://flags entries to the local-state list about_flags reads at
++  // startup, leaving anything already in it (including the seed from
++  // default-flags.patch) alone. Entry syntax comes from
++  // FeatureEntry::NameForOption(): a SINGLE_VALUE_TYPE entry is stored under
++  // its bare internal name, while FEATURE_VALUE_TYPE has three options and
++  // "@1" means Enabled.
++  static void SeedFlags(PrefService* local_state,
++                        const std::vector<std::string>& entries) {
++    // flags_ui::prefs::kAboutFlagsEntries.
++    static constexpr char kAboutFlagsEntries[] =
++        "browser.enabled_labs_experiments";
++    base::ListValue list = local_state->GetList(kAboutFlagsEntries).Clone();
++    for (const std::string& entry : entries) {
++      if (!list.contains(entry))
++        list.Append(entry);
++    }
++    local_state->SetList(kAboutFlagsEntries, std::move(list));
++  }
++
++  // Applies one of the first-run presets. Pref paths are spelled out rather
++  // than pulled in through half a dozen headers; every one is registered at
++  // 151 and the patch header records where each is declared. Integer prefs
++  // use literal values with the enumerator named in a comment, for the same
++  // reason.
++  void HandleApplyPreset(const base::ListValue& args) {
++    if (args.size() != 1 || !args[0].is_string())
++      return;
++    const std::string& preset = args[0].GetString();
++    if (preset != "recommended" && preset != "privacy" &&
++        preset != "performance")
++      return;
++
++    Profile* profile = Profile::FromWebUI(web_ui());
++    if (!profile)
++      return;
++    PrefService* prefs = profile->GetPrefs();
++    PrefService* local_state = g_browser_process->local_state();
++    if (!prefs || !local_state)
++      return;
++
++    const bool privacy = preset == "privacy";
++    const bool performance = preset == "performance";
++
++    // Profile prefs.
++    prefs->SetBoolean("enable_do_not_track", true);
++    // content_settings::CookieControlsMode::kBlockThirdParty.
++    prefs->SetInteger("profile.cookie_controls_mode", 1);
++    // prefetch::NetworkPredictionOptions: kStandard = 0, kDisabled = 2.
++    prefs->SetInteger("net.network_prediction_options", performance ? 0 : 2);
++    prefs->SetBoolean("browser.clear_data.aerium_clear_on_exit", privacy);
++    prefs->SetBoolean("search.suggest_enabled", !privacy);
++
++    // Memory and battery saver are local-state prefs - they are browser-wide,
++    // not per profile.
++    // performance_manager MemorySaverModeState::kEnabled = 2.
++    local_state->SetInteger("performance_tuning.high_efficiency_mode.state", 2);
++    // BatterySaverModeState: kDisabled = 0, kEnabledOnBattery = 2.
++    local_state->SetInteger("performance_tuning.battery_saver_mode.state",
++                            performance ? 0 : 2);
++
++    std::vector<std::string> flags{
++        "disable-search-engine-collection",  // SINGLE_VALUE_TYPE
++        "remove-client-hints@1",             // FEATURE_VALUE_TYPE, Enabled
++    };
++    if (privacy) {
++      flags.push_back("fingerprinting-canvas-image-data-noise");
++      flags.push_back("fingerprinting-canvas-measuretext-noise");
++      flags.push_back("fingerprinting-client-rects-noise");
++      flags.push_back("force-punycode-hostnames");
++      flags.push_back("reduced-system-info@1");
++      flags.push_back("increase-incognito-storage-quota@1");
++    }
++    if (performance)
++      flags.push_back("enable-parallel-downloading@1");
++    SeedFlags(local_state, flags);
++  }
+ };
+ 
+ #endif  // CHROME_BROWSER_UI_WEBUI_UNGOOGLED_FIRST_RUN_H_

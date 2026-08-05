@@ -1,1 +1,8 @@
-/build
+```
+# Patches directory
+patches/
+
+# Original rules preserved
+.gitignore
+patches/series
+```

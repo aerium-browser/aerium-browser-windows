@@ -1,0 +1,661 @@
+Let the delete-on-exit toggle keep a list of sites, and clear everything else.
+
+aerium-clear-browsing-data-on-exit.patch made the shutdown deletion a Settings
+toggle with eight per-type checkboxes. This adds the other half of what people
+actually ask for: a "never delete data for these sites" list, so signing back
+into a handful of sites is not the price of a clean slate everywhere else.
+It is the Cookie AutoDelete whitelist model - clear all sites except these -
+rather than a second allowlist of sites to clear.
+
+How the exclusion is applied
+----------------------------
+BrowsingDataRemover already supports this directly. content::
+BrowsingDataFilterBuilder has a Mode::kPreserve, meaning "delete every origin
+EXCEPT the ones added", and RemoveWithFilterAndReply() takes such a builder.
+The exclusion list is turned into a kPreserve filter and the toggle's removal
+goes through that instead of the unfiltered RemoveAndReply().
+
+Entries are added with AddRegisterableDomain(). That method DCHECKs that what
+it is handed is an eTLD+1, an IP address or an internal hostname - a bare
+subdomain like www.example.com is rejected - so every entry is folded through
+net::registry_controlled_domains::GetDomainAndRegistry() first, falling back
+to the entry itself when that returns nothing (IP literals, single-label
+hostnames such as "localhost"). This is the same normalisation
+StartScheduledBrowsingDataRemoval() a few lines below already applies to the
+URLs it protects, so the two protection mechanisms agree on what a "site" is.
+
+Folding to eTLD+1 also fixes the granularity: listing example.com keeps
+www.example.com and every other subdomain with it. That is what people mean
+when they type a site into a "never clear these" box, and it is what Cookie
+AutoDelete does.
+
+Which data types the list can actually protect
+----------------------------------------------
+Not every data type can be deleted per origin, and getting this wrong is not
+a cosmetic bug: ChromeBrowsingDataRemoverDelegate::RemoveEmbedderData() opens
+with a CHECK - not a DCHECK, so it aborts release builds too - that the remove
+mask is a subset of chrome_browsing_data_remover::FILTERABLE_DATA_TYPES
+whenever the filter does not match all origins and domains. Handing it a
+preserve filter together with, say, DATA_TYPE_HISTORY would crash the browser
+on every shutdown.
+
+FILTERABLE_DATA_TYPES at this revision is SITE_DATA | CACHE | DOWNLOADS |
+RELATED_WEBSITE_SETS_PERMISSIONS | PREFETCH_CACHE | PRERENDER_CACHE. Of the
+eight categories the toggle offers, that covers four:
+
+  download history                 DATA_TYPE_DOWNLOADS        filterable
+  cookies and other site data      DATA_TYPE_SITE_DATA        filterable
+  cached images and files          DATA_TYPE_CACHE            filterable
+  hosted app data                  DATA_TYPE_SITE_DATA        filterable
+
+and leaves four that are not:
+
+  browsing history                 DATA_TYPE_HISTORY          not filterable
+  autofill form data               DATA_TYPE_FORM_DATA        not filterable
+  saved passwords                  DATA_TYPE_PASSWORDS        not filterable
+  site settings                    DATA_TYPE_CONTENT_SETTINGS not filterable
+
+Those four are not filterable because their backends ignore the filter and
+delete by time range only - the delegate is dotted with "TODO: Support all
+backends with filter (crbug.com/40152186)" over exactly these code paths.
+This is a real limitation of the browser at 151, not a shortcut taken here.
+
+So the removal is split in two, the same way StartScheduledBrowsingDataRemoval()
+below already splits its own mask on FILTERABLE_DATA_TYPES: the filterable
+half goes through RemoveWithFilterAndReply() with the preserve filter, and the
+unfilterable half goes through the ordinary RemoveAndReply() and is deleted
+for every site.
+
+Deleting the unfilterable half wholly, rather than skipping it whenever the
+list is non-empty, is the deliberate choice. A checkbox the user ticked has to
+delete what its label says; silently turning "delete my browsing history" into
+"delete none of it, because you excluded one site" would be the worse
+surprise, and it would leave history behind that the user believes is gone.
+The Settings UI says plainly which four categories the list cannot protect
+rather than leaving it to be discovered.
+
+Scope: user toggle only
+-----------------------
+The exclusion list is applied to the Settings toggle's mask alone. The
+enterprise ClearBrowsingDataOnExit policy and ungoogled-chromium's
+#clear-data-on-exit flag keep their existing all-or-nothing semantics - a list
+the user can edit must not be able to carve holes in managed configuration,
+and the flag's whole point is that it wipes everything. When the list is
+empty, which is the default, the code takes a single unfiltered
+RemoveAndReply() that is byte for byte what it did before, so nothing changes
+for profiles that never open the list.
+
+The list-pref UI
+----------------
+One list pref, browser.clear_data.aerium_on_exit.excluded_sites. settingsPrivate
+exposes list prefs as PrefType::kList, which neither settings-toggle-button nor
+settings-checkbox can bind to - the trap the header of
+aerium-clear-browsing-data-on-exit.patch describes, and the reason the eight
+per-type prefs are booleans rather than a list.
+
+Nothing is hand-rolled here to work around that. PrefsMixin already carries
+appendPrefListItem()/deletePrefListItem() for precisely this case, and Chromium
+already ships a site-exception list bound to a list pref -
+performance_page/tab_discard/, the "always keep these sites active" list on the
+Performance page. The new settings-clear-on-exit-sites element follows that
+shape: a cr-row header with an Add button, a list-frame of rows with a clear
+button each, and a cr-dialog with a cr-input for adding one. It composes
+PrefsMixin, and privacy_page.ts already composed PrefsMixin too, so the
+writable controls work.
+
+Input handling is deliberately forgiving: a pasted URL, a bare hostname and a
+content-settings style "[*.]example.com" pattern all resolve to the same
+hostname, via the URL parser rather than a hand-written regex, so IDN, IPv6
+literals and ports behave the way they do everywhere else in the browser.
+Duplicates are rejected with a message instead of silently doing nothing.
+
+The pref is added to the settingsPrivate allowlist in prefs_util.cc as
+PrefType::kList; PrefsUtil::SetPref() handles base::Value::Type::LIST, so the
+round trip works. A pref missing from that allowlist is refused with no error
+at all and the control just does nothing.
+
+Defaults are unchanged: the list starts empty, and passwords, site settings
+and hosted app data are still off.
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -2190,6 +2190,27 @@
+     <message name="IDS_SETTINGS_CLEAR_BROWSING_DATA_ON_EXIT_DESC" desc="Description for a toggle that deletes browsing data every time the browser is closed. The user picks which categories are deleted from the checkboxes revealed below the toggle.">
+       Choose what gets deleted every time you close the browser. Anything you don't select, and your bookmarks, are kept.
+     </message>
++    <message name="IDS_SETTINGS_CLEAR_ON_EXIT_SITES_HEADER" desc="Header for a list of websites whose data is never deleted when the browser closes. Everything not on the list is deleted.">
++      Never delete data for these sites
++    </message>
++    <message name="IDS_SETTINGS_CLEAR_ON_EXIT_SITES_DESC" desc="Description of the list of websites whose data is never deleted when the browser closes. It explains that subdomains are covered too, and which of the categories above the list cannot protect.">
++      Everything else you selected above gets deleted. Adding a site covers its subdomains too. Browsing history, autofill form data, passwords and site settings can only be deleted for every site at once, so this list does not keep those.
++    </message>
++    <message name="IDS_SETTINGS_CLEAR_ON_EXIT_SITES_ADD_TITLE" desc="Title of the dialog for adding a website to the list of sites whose data is never deleted when the browser closes.">
++      Add a site to keep
++    </message>
++    <message name="IDS_SETTINGS_CLEAR_ON_EXIT_SITES_ADD_ARIA_LABEL" desc="Accessibility label for the button that opens the dialog for adding a website to the list of sites whose data is never deleted when the browser closes.">
++      Add a site whose data is never deleted
++    </message>
++    <message name="IDS_SETTINGS_CLEAR_ON_EXIT_SITES_PLACEHOLDER" desc="Placeholder text in the text field for typing a website address, showing the expected format.">
++      example.com
++    </message>
++    <message name="IDS_SETTINGS_CLEAR_ON_EXIT_SITES_INVALID" desc="Error shown when the text typed into the add-a-site field is not a website address.">
++      Enter a site, for example example.com
++    </message>
++    <message name="IDS_SETTINGS_CLEAR_ON_EXIT_SITES_DUPLICATE" desc="Error shown when the website typed into the add-a-site field is already in the list.">
++      This site is already on the list
++    </message>
+     <message name="IDS_SETTINGS_TITLE_AND_COUNT" desc="The title of a section in the settings page with a count of the total number of items in the section">
+       <ph name="TITLE">$1<ex>Block</ex></ph> - <ph name="COUNT">$2<ex>42</ex></ph>
+     </message>
+--- a/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc
++++ b/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc
+@@ -215,6 +215,41 @@
+   return result;
+ }
+ 
++// Aerium: the sites the user listed as never-cleared, folded to the
++// registrable domains BrowsingDataFilterBuilder accepts.
++//
++// AddRegisterableDomain() DCHECKs that what it is given is an eTLD+1, an IP
++// address or an internal hostname - a bare subdomain such as www.example.com
++// is rejected - so each entry is run through GetDomainAndRegistry() first,
++// falling back to the entry itself when that returns nothing (IP literals and
++// single-label hostnames like "localhost"). This is the same normalisation
++// StartScheduledBrowsingDataRemoval() below applies to the URLs it protects.
++//
++// Folding to eTLD+1 also defines the granularity of the feature: excluding
++// example.com keeps www.example.com and every other subdomain with it, which
++// is how Cookie AutoDelete's whitelist behaves and what people expect when
++// they type a site into a "never clear these" box.
++std::vector<std::string> AeriumOnExitPreservedDomains(PrefService* prefs) {
++  std::vector<std::string> result;
++  for (const auto& entry :
++       prefs->GetList(browsing_data::prefs::kAeriumClearOnExitExcludedSites)) {
++    if (!entry.is_string()) {
++      continue;
++    }
++    const std::string& host = entry.GetString();
++    if (host.empty()) {
++      continue;
++    }
++    std::string domain = net::registry_controlled_domains::GetDomainAndRegistry(
++        host, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
++    if (domain.empty()) {
++      domain = host;  // IP address or internal hostname.
++    }
++    result.push_back(std::move(domain));
++  }
++  return result;
++}
++
+ uint64_t GetOriginTypeMask(const base::ListValue& data_types) {
+   uint64_t result = 0;
+   for (const auto& data_type : data_types) {
+@@ -409,6 +444,14 @@
+           ? AeriumOnExitRemoveMask(aerium_prefs)
+           : 0;
+   const bool aerium_cdoe = aerium_remove_mask != 0;
++  // Aerium: the sites the user asked to keep. Deliberately scoped to the
++  // Settings toggle only - the enterprise ClearBrowsingDataOnExit policy and
++  // the #clear-data-on-exit flag keep their existing all-or-nothing
++  // semantics, because a list the user can edit must not be able to carve
++  // holes in managed configuration.
++  const std::vector<std::string> preserved_domains =
++      aerium_cdoe ? AeriumOnExitPreservedDomains(aerium_prefs)
++                  : std::vector<std::string>();
+   if (cdoe || aerium_cdoe || (!data_types.empty() &&
+       IsConditionSatisfiedForBrowsingDataRemoval(GetSyncTypesForPolicyPref(
+           profile_, browsing_data::prefs::kClearBrowsingDataOnExitList)))) {
+@@ -421,19 +464,75 @@
+     if (browser_shutdown::HasShutdownStarted())
+       DCHECK(keep_browser_alive);
+ #endif
+-    remover->RemoveAndReply(base::Time(), base::Time::Max(),
+-                            cdoe ? AllRemoveMask()
+-                                 : (GetRemoveMask(data_types) |
+-                                    aerium_remove_mask),
+-                            cdoe ? AllOriginTypeMask()
+-                                 : (GetOriginTypeMask(data_types) |
+-                                    (aerium_cdoe
+-                                         ? AeriumOnExitOriginTypeMask(
+-                                               aerium_prefs)
+-                                         : 0)),
+-                            BrowsingDataRemoverObserver::Create(
+-                                remover, /*filterable_deletion=*/true, profile_,
+-                                keep_browser_alive));
++    const uint64_t policy_remove_mask =
++        cdoe ? AllRemoveMask() : GetRemoveMask(data_types);
++    const uint64_t policy_origin_type_mask =
++        cdoe ? AllOriginTypeMask() : GetOriginTypeMask(data_types);
++    const uint64_t aerium_origin_type_mask =
++        aerium_cdoe ? AeriumOnExitOriginTypeMask(aerium_prefs) : 0;
++
++    if (preserved_domains.empty()) {
++      // Nothing to keep: one unfiltered removal, byte for byte what this code
++      // did before the exclusion list existed.
++      remover->RemoveAndReply(base::Time(), base::Time::Max(),
++                              policy_remove_mask | aerium_remove_mask,
++                              policy_origin_type_mask | aerium_origin_type_mask,
++                              BrowsingDataRemoverObserver::Create(
++                                  remover, /*filterable_deletion=*/true,
++                                  profile_, keep_browser_alive));
++      return;
++    }
++
++    // Aerium: with an exclusion list the removal has to be split in two,
++    // because only some data types can be deleted per origin/domain.
++    // ChromeBrowsingDataRemoverDelegate::RemoveEmbedderData() CHECKs - not
++    // DCHECKs, so this would abort release builds too - that the mask is a
++    // subset of FILTERABLE_DATA_TYPES whenever the filter does not match all
++    // origins and domains.
++    //
++    // Of the eight types the toggle offers, four are filterable: download
++    // history, cookies and other site data, cached images and files, and
++    // hosted app data. Those get a kPreserve filter built from the exclusion
++    // list, so everything except the listed sites is deleted.
++    //
++    // The other four - browsing history, autofill form data, saved passwords
++    // and site settings - are not origin-filterable at this revision (their
++    // backends ignore the filter; see the "Support all backends with filter"
++    // TODOs on crbug.com/40152186 in the delegate), so they are deleted
++    // wholly, as the scheduled BrowsingDataLifetime removal below already
++    // does for its own unfilterable half. Deleting them wholly rather than
++    // skipping them keeps the checkbox honest: a box the user ticked always
++    // deletes what it says it deletes. The Settings UI says plainly which
++    // categories the exclusion list cannot protect.
++    const uint64_t filtered_remove_mask =
++        aerium_remove_mask &
++        chrome_browsing_data_remover::FILTERABLE_DATA_TYPES;
++    const uint64_t unfiltered_remove_mask =
++        policy_remove_mask | (aerium_remove_mask &
++                              ~chrome_browsing_data_remover::
++                                  FILTERABLE_DATA_TYPES);
++
++    if (filtered_remove_mask) {
++      auto filter_builder = content::BrowsingDataFilterBuilder::Create(
++          content::BrowsingDataFilterBuilder::Mode::kPreserve);
++      for (const std::string& domain : preserved_domains) {
++        filter_builder->AddRegisterableDomain(domain);
++      }
++      remover->RemoveWithFilterAndReply(
++          base::Time(), base::Time::Max(), filtered_remove_mask,
++          aerium_origin_type_mask, std::move(filter_builder),
++          BrowsingDataRemoverObserver::Create(remover,
++                                              /*filterable_deletion=*/true,
++                                              profile_, keep_browser_alive));
++    }
++    if (unfiltered_remove_mask) {
++      remover->RemoveAndReply(
++          base::Time(), base::Time::Max(), unfiltered_remove_mask,
++          policy_origin_type_mask | aerium_origin_type_mask,
++          BrowsingDataRemoverObserver::Create(remover,
++                                              /*filterable_deletion=*/false,
++                                              profile_, keep_browser_alive));
++    }
+   } else {
+     profile_->GetPrefs()->ClearPref(
+         browsing_data::prefs::kClearBrowsingDataOnExitDeletionPending);
+--- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
++++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
+@@ -603,6 +603,12 @@
+       settings_api::PrefType::kBoolean;
+   (*s_allowlist)[browsing_data::prefs::kAeriumClearOnExitHostedAppData] =
+       settings_api::PrefType::kBoolean;
++  // Aerium: the never-clear list. A list pref, so no settings-toggle-button or
++  // settings-checkbox can bind to it; settings-clear-on-exit-sites reads and
++  // writes it through PrefsMixin's appendPrefListItem/deletePrefListItem
++  // instead, which is what that helper pair exists for.
++  (*s_allowlist)[browsing_data::prefs::kAeriumClearOnExitExcludedSites] =
++      settings_api::PrefType::kList;
+   (*s_allowlist)[browsing_data::prefs::kDeleteTimePeriod] =
+       settings_api::PrefType::kNumber;
+ 
+--- a/chrome/browser/resources/settings/BUILD.gn
++++ b/chrome/browser/resources/settings/BUILD.gn
+@@ -129,6 +129,7 @@
+     "performance_page/tab_discard/exception_entry.ts",
+     "performance_page/tab_discard/exception_list.ts",
+     "performance_page/tab_discard/exception_tabbed_add_dialog.ts",
++    "privacy_page/clear_on_exit_sites.ts",
+     "privacy_page/cookies_page.ts",
+     "privacy_page/do_not_track_toggle.ts",
+     "privacy_page/personalization_options.ts",
+--- /dev/null
++++ b/chrome/browser/resources/settings/privacy_page/clear_on_exit_sites.html
+@@ -0,0 +1,58 @@
++<style include="cr-shared-style cr-icons settings-shared">
++  .list-frame {
++    padding-inline-start: var(--cr-section-indent-width);
++  }
++
++  #sites > .list-item:not(:first-of-type) {
++    border-top: var(--cr-separator-line);
++  }
++
++  .cr-padded-text {
++    flex: 1;
++  }
++</style>
++<div class="cr-row continuation">
++  <div class="cr-padded-text">
++    $i18n{clearOnExitSitesHeader}
++    <div class="secondary">$i18n{clearOnExitSitesDesc}</div>
++  </div>
++  <cr-button id="addButton" on-click="onAddClick_"
++      aria-label="$i18n{clearOnExitSitesAddAriaLabel}">
++    $i18n{add}
++  </cr-button>
++</div>
++<div id="noSites" class="list-frame" hidden$="[[hasSites_(sites_.*)]]">
++  <div class="list-item secondary">$i18n{noSitesAdded}</div>
++</div>
++<div id="sites" class="list-frame" role="list"
++    hidden$="[[!hasSites_(sites_.*)]]">
++  <template is="dom-repeat" items="[[sites_]]">
++    <div class="list-item" role="listitem">
++      <div class="start text-elide">[[item]]</div>
++      <cr-icon-button class="icon-clear" data-site$="[[item]]"
++          on-click="onRemoveClick_" title="$i18n{remove}"
++          aria-label="$i18n{remove}">
++      </cr-icon-button>
++    </div>
++  </template>
++</div>
++<cr-dialog id="addDialog" close-text="$i18n{close}">
++  <div slot="title">$i18n{clearOnExitSitesAddTitle}</div>
++  <div slot="body">
++    <cr-input id="siteInput" label="$i18n{addSite}"
++        placeholder="$i18n{clearOnExitSitesPlaceholder}"
++        value="{{newSite_}}" on-input="validate_"
++        invalid="[[inputInvalid_]]" error-message="[[errorMessage_]]"
++        spellcheck="false" autofocus>
++    </cr-input>
++  </div>
++  <div slot="button-container">
++    <cr-button class="cancel-button" on-click="onCancelClick_">
++      $i18n{cancel}
++    </cr-button>
++    <cr-button id="addSiteButton" class="action-button" on-click="onSubmit_"
++        disabled="[[addDisabled_]]">
++      $i18n{add}
++    </cr-button>
++  </div>
++</cr-dialog>
+--- /dev/null
++++ b/chrome/browser/resources/settings/privacy_page/clear_on_exit_sites.ts
+@@ -0,0 +1,208 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++/**
++ * @fileoverview
++ * 'settings-clear-on-exit-sites' is the "never delete data for these sites"
++ * list that turns delete-on-exit into "clear everything except these",
++ * modelled on the Cookie AutoDelete whitelist.
++ *
++ * The list is a single list pref. settingsPrivate exposes list prefs as
++ * PrefType.LIST, which neither settings-toggle-button nor settings-checkbox
++ * can bind to, so this element goes through PrefsMixin's
++ * appendPrefListItem()/deletePrefListItem() helpers instead - which is what
++ * that pair of helpers exists for - and renders the same site-row plus
++ * add-site-dialog shape Chromium already uses for its own list-pref site
++ * exceptions under performance_page/tab_discard/.
++ *
++ * Entries are stored as bare hostnames. The browser folds each one to its
++ * registrable domain (eTLD+1) when it builds the deletion filter, so
++ * example.com covers www.example.com too; normalising here as well keeps the
++ * list free of duplicates that would look different but behave identically.
++ */
++import 'chrome://resources/cr_elements/cr_button/cr_button.js';
++import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
++import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
++import 'chrome://resources/cr_elements/cr_input/cr_input.js';
++import 'chrome://resources/cr_elements/cr_shared_style.css.js';
++import 'chrome://resources/cr_elements/icons.html.js';
++import '../settings_shared.css.js';
++
++import type {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
++import type {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
++import type {CrInputElement} from 'chrome://resources/cr_elements/cr_input/cr_input.js';
++import type {PrefsMixinInterface} from '/shared/settings/prefs/prefs_mixin.js';
++import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
++import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
++
++import {loadTimeData} from '../i18n_setup.js';
++
++import {getTemplate} from './clear_on_exit_sites.html.js';
++
++export const CLEAR_ON_EXIT_EXCLUDED_SITES_PREF: string =
++    'browser.clear_data.aerium_on_exit.excluded_sites';
++
++export interface ClearOnExitSitesElement {
++  $: {
++    addButton: CrButtonElement,
++    addDialog: CrDialogElement,
++    addSiteButton: CrButtonElement,
++    siteInput: CrInputElement,
++  };
++}
++
++type Constructor<T> = new (...args: any[]) => T;
++const ClearOnExitSitesElementBase = PrefsMixin(PolymerElement) as
++    Constructor<PrefsMixinInterface&PolymerElement>;
++
++export class ClearOnExitSitesElement extends ClearOnExitSitesElementBase {
++  static get is() {
++    return 'settings-clear-on-exit-sites';
++  }
++
++  static get template() {
++    return getTemplate();
++  }
++
++  static get properties() {
++    return {
++      sites_: {
++        type: Array,
++        value: () => [],
++      },
++
++      newSite_: {
++        type: String,
++        value: '',
++      },
++
++      addDisabled_: {
++        type: Boolean,
++        value: true,
++      },
++
++      inputInvalid_: {
++        type: Boolean,
++        value: false,
++      },
++
++      errorMessage_: {
++        type: String,
++        value: '',
++      },
++    };
++  }
++
++  static get observers() {
++    return [
++      `onPrefChanged_(prefs.${CLEAR_ON_EXIT_EXCLUDED_SITES_PREF}.value.*)`,
++    ];
++  }
++
++  declare private sites_: string[];
++  declare private newSite_: string;
++  declare private addDisabled_: boolean;
++  declare private inputInvalid_: boolean;
++  declare private errorMessage_: string;
++
++  private onPrefChanged_() {
++    this.sites_ =
++        this.getPref<string[]>(CLEAR_ON_EXIT_EXCLUDED_SITES_PREF).value.slice();
++  }
++
++  private hasSites_(): boolean {
++    return this.sites_.length > 0;
++  }
++
++  /**
++   * Turns whatever the user typed into a bare hostname, or null if it cannot
++   * be one. Accepts a pasted URL and a content-settings style "[*.]example.com"
++   * pattern as well as a plain hostname, because people will type all three.
++   * The URL parser does the actual work, so IDN, IPv6 literals and ports are
++   * handled the same way the browser handles them everywhere else.
++   */
++  private normalizeSite_(input: string): string|null {
++    const trimmed = input.trim();
++    if (!trimmed) {
++      return null;
++    }
++    let candidate = trimmed.replace(/^\[\*\.\]/, '').replace(/^\*\./, '');
++    if (!candidate.includes('://')) {
++      candidate = 'https://' + candidate;
++    }
++    let url: URL;
++    try {
++      url = new URL(candidate);
++    } catch (e) {
++      return null;
++    }
++    return url.hostname || null;
++  }
++
++  private validate_() {
++    if (this.newSite_.trim() === '') {
++      // Empty input disables the action button without shouting at the user.
++      this.inputInvalid_ = false;
++      this.addDisabled_ = true;
++      this.errorMessage_ = '';
++      return;
++    }
++
++    const site = this.normalizeSite_(this.newSite_);
++    if (site === null) {
++      this.inputInvalid_ = true;
++      this.addDisabled_ = true;
++      this.errorMessage_ = loadTimeData.getString('clearOnExitSitesInvalid');
++      return;
++    }
++
++    if (this.sites_.includes(site)) {
++      this.inputInvalid_ = true;
++      this.addDisabled_ = true;
++      this.errorMessage_ = loadTimeData.getString('clearOnExitSitesDuplicate');
++      return;
++    }
++
++    this.inputInvalid_ = false;
++    this.addDisabled_ = false;
++    this.errorMessage_ = '';
++  }
++
++  private onAddClick_() {
++    this.newSite_ = '';
++    this.inputInvalid_ = false;
++    this.addDisabled_ = true;
++    this.errorMessage_ = '';
++    this.$.addDialog.showModal();
++  }
++
++  private onCancelClick_() {
++    this.$.addDialog.cancel();
++  }
++
++  private onSubmit_() {
++    const site = this.normalizeSite_(this.newSite_);
++    if (site === null || this.sites_.includes(site)) {
++      return;
++    }
++    this.appendPrefListItem(CLEAR_ON_EXIT_EXCLUDED_SITES_PREF, site);
++    this.$.addDialog.close();
++  }
++
++  private onRemoveClick_(e: Event) {
++    const site = (e.currentTarget as HTMLElement).dataset['site'];
++    if (site === undefined) {
++      return;
++    }
++    this.deletePrefListItem(CLEAR_ON_EXIT_EXCLUDED_SITES_PREF, site);
++  }
++}
++
++declare global {
++  interface HTMLElementTagNameMap {
++    'settings-clear-on-exit-sites': ClearOnExitSitesElement;
++  }
++}
++
++customElements.define(ClearOnExitSitesElement.is, ClearOnExitSitesElement);
+--- a/chrome/browser/resources/settings/privacy_page/privacy_page.html
++++ b/chrome/browser/resources/settings/privacy_page/privacy_page.html
+@@ -57,6 +57,8 @@
+             label="$i18n{clearHostedAppData}">
+         </settings-checkbox>
+       </div>
++      <settings-clear-on-exit-sites id="clearOnExitSites" prefs="{{prefs}}">
++      </settings-clear-on-exit-sites>
+     </cr-collapse>
+     <cr-link-row id="thirdPartyCookiesLinkRow"
+         start-icon="privacy:cookie"
+--- a/chrome/browser/resources/settings/privacy_page/privacy_page.ts
++++ b/chrome/browser/resources/settings/privacy_page/privacy_page.ts
+@@ -19,6 +19,7 @@
+ import '../privacy_icons.html.js';
+ import '../settings_page/settings_section.js';
+ import '../settings_shared.css.js';
++import './clear_on_exit_sites.js';
+ import './privacy_guide/privacy_guide_dialog.js';
+ 
+ import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+--- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
++++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+@@ -2425,6 +2425,15 @@
+        IDS_SETTINGS_CLEAR_BROWSING_DATA_ON_EXIT_LABEL},
+       {"clearBrowsingDataOnExitDesc",
+        IDS_SETTINGS_CLEAR_BROWSING_DATA_ON_EXIT_DESC},
++      {"clearOnExitSitesHeader", IDS_SETTINGS_CLEAR_ON_EXIT_SITES_HEADER},
++      {"clearOnExitSitesDesc", IDS_SETTINGS_CLEAR_ON_EXIT_SITES_DESC},
++      {"clearOnExitSitesAddTitle", IDS_SETTINGS_CLEAR_ON_EXIT_SITES_ADD_TITLE},
++      {"clearOnExitSitesAddAriaLabel",
++       IDS_SETTINGS_CLEAR_ON_EXIT_SITES_ADD_ARIA_LABEL},
++      {"clearOnExitSitesPlaceholder",
++       IDS_SETTINGS_CLEAR_ON_EXIT_SITES_PLACEHOLDER},
++      {"clearOnExitSitesInvalid", IDS_SETTINGS_CLEAR_ON_EXIT_SITES_INVALID},
++      {"clearOnExitSitesDuplicate", IDS_SETTINGS_CLEAR_ON_EXIT_SITES_DUPLICATE},
+       {"titleAndCount", IDS_SETTINGS_TITLE_AND_COUNT},
+       {"safeBrowsingEnableExtendedReportingDesc",
+        IDS_SETTINGS_SAFEBROWSING_ENABLE_REPORTING_DESC},
+--- a/components/browsing_data/core/pref_names.cc
++++ b/components/browsing_data/core/pref_names.cc
+@@ -56,6 +56,9 @@
+   registry->RegisterBooleanPref(kAeriumClearOnExitPasswords, false);
+   registry->RegisterBooleanPref(kAeriumClearOnExitSiteSettings, false);
+   registry->RegisterBooleanPref(kAeriumClearOnExitHostedAppData, false);
++  // Aerium: empty exclusion list by default, i.e. nothing is kept and the
++  // toggle behaves exactly as it did before the list existed.
++  registry->RegisterListPref(kAeriumClearOnExitExcludedSites);
+   // TODO(crbug.com/471197613): When MaybeMigrateToQuickDeletePrefValues is
+   // removed, set default value in iOS for the `kDeleteTimePeriod` pref to 15
+   // minutes.
+--- a/components/browsing_data/core/pref_names.h
++++ b/components/browsing_data/core/pref_names.h
+@@ -61,6 +61,14 @@
+ inline constexpr char kAeriumClearOnExitHostedAppData[] =
+     "browser.clear_data.aerium_on_exit.hosted_apps_data";
+ 
++// Aerium: sites that the delete-on-exit toggle never clears - everything else
++// is cleared. Modelled on the Cookie AutoDelete whitelist: "clear all sites
++// except these". A list of hostnames as typed by the user; they are folded to
++// their registrable domain (eTLD+1) at deletion time, so listing example.com
++// also keeps www.example.com and any other subdomain.
++inline constexpr char kAeriumClearOnExitExcludedSites[] =
++    "browser.clear_data.aerium_on_exit.excluded_sites";
++
+ // Clear browsing data deletion time period.
+ inline constexpr char kDeleteTimePeriod[] = "browser.clear_data.time_period";
+ 

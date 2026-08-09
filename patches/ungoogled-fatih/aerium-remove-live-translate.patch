@@ -1,0 +1,89 @@
+Remove Live Translate from chrome://settings/accessibility.
+
+Live Translate is the machine-translation layer on top of Live Caption: it
+sends recognised caption text to Google's translation backend. ungoogled-
+chromium already neuters translation (core/ungoogled-chromium/
+toggle-translation-via-switch.patch disables it unless the
+--translate-script-url switch is passed) and Aerium already drops the
+"Google Translate" card from chrome://settings/languages, so the toggle is
+dead UI for a service the browser never talks to.
+
+Contrary to what its name suggests, the section does not live in
+a11y_page.html in Chromium 151 - it is the standalone
+<settings-live-translate> element, instantiated from live_caption.html
+behind the enableLiveTranslate_ flag. That single instantiation is the only
+reference to it anywhere in the settings bundle, which is why removing it
+plus the property that gates it plus the module import is enough to take
+the whole subsection (master toggle and target-language dropdown) out of
+both places <settings-live-caption> appears: inlined on
+chrome://settings/accessibility (Windows, macOS) and on the
+chrome://settings/captions subpage (Linux).
+
+live_translate.ts is dropped from web_component_files so it stops being
+compiled into the bundle at all. The source files themselves are left in
+the tree unreferenced, the same way this series leaves translate_page.*
+after aerium-remove-translate-settings.patch - deleting sources from a
+patch buys nothing once nothing builds them, and keeps the patch trivially
+reversible on a Chromium rebase.
+
+The Live Translate loadTimeData strings (captionsEnableLiveTranslate*,
+captionsLiveTranslateTargetLanguage*) and the enableLiveTranslate boolean
+are deliberately left registered. They are inert data once nothing reads
+them, and they are emitted from the *shared* captions strings provider that
+also feeds the Live Caption UI we keep, so stripping them there would risk
+the captions subpage for no user-visible gain.
+
+--- a/chrome/browser/resources/settings/BUILD.gn
++++ b/chrome/browser/resources/settings/BUILD.gn
+@@ -273,7 +273,6 @@
+   if (!is_chromeos) {
+     web_component_files += [
+       "a11y_page/live_caption.ts",
+-      "a11y_page/live_translate.ts",
+       "clear_browsing_data_dialog/clear_browsing_data_account_indicator.ts",
+       "default_browser_page/default_browser_page.ts",
+       "languages_page/add_languages_dialog.ts",
+--- a/chrome/browser/resources/settings/a11y_page/live_caption.html
++++ b/chrome/browser/resources/settings/a11y_page/live_caption.html
+@@ -89,9 +89,6 @@
+         label="$i18n{captionsMaskOffensiveWordsTitle}">
+     </settings-toggle-button>
+   </cr-collapse>
+-  <template is="dom-if" if="[[enableLiveTranslate_]]">
+-    <settings-live-translate prefs="{{prefs}}"></settings-live-translate>
+-  </template>
+ </template>
+ <template is="dom-if" if="[[showAddLanguagesDialog_]]" restamp>
+   <settings-add-languages-dialog id="addLanguagesDialog"
+--- a/chrome/browser/resources/settings/a11y_page/live_caption.ts
++++ b/chrome/browser/resources/settings/a11y_page/live_caption.ts
+@@ -36,7 +36,6 @@
+ import type {CrActionMenuElement} from '//resources/cr_elements/cr_action_menu/cr_action_menu.js';
+ import type {CrLazyRenderElement} from 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.js';
+ 
+-import './live_translate.js';
+ import '../languages_page/add_languages_dialog.js';
+ 
+ import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
+@@ -92,13 +91,6 @@
+       },
+ 
+       // <if expr="not is_chromeos">
+-      enableLiveTranslate_: {
+-        type: Boolean,
+-        value: function() {
+-          return loadTimeData.getBoolean('enableLiveTranslate');
+-        },
+-      },
+-
+       installedLanguagePacks_: {
+         type: Array,
+         value: () => [],
+@@ -120,7 +112,6 @@
+   }
+ 
+   // <if expr="not is_chromeos">
+-  declare private enableLiveTranslate_: boolean;
+   declare private installedLanguagePacks_: LiveCaptionLanguageList;
+   declare private availableLanguagePacks_: LiveCaptionLanguageList;
+   declare private detailLanguage_?: LiveCaptionLanguage;

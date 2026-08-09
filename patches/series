@@ -40,3 +40,4 @@ ungoogled-fatih/aerium-about-page-project-url.patch
 ungoogled-fatih/aerium-remove-google-services-section.patch
 ungoogled-fatih/aerium-first-run-setup.patch
 ungoogled-fatih/aerium-https-first-balanced-auto-enable.patch
+ungoogled-fatih/aerium-remove-live-translate.patch

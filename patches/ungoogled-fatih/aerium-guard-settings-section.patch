@@ -338,7 +338,7 @@ them against the real PrefService.
 +    this.addWebUiListener('aerium-guard-preset-changed', (preset: string) => {
 +      this.activePreset_ = preset;
 +    });
-+    sendWithPromise('aeriumGuardGetActivePreset').then((preset: string) => {
++    sendWithPromise<string>('aeriumGuardGetActivePreset').then(preset => {
 +      this.activePreset_ = preset;
 +    });
 +  }

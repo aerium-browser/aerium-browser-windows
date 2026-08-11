@@ -2,14 +2,20 @@ Add an Aerium Guard section to Settings, sharing the first-run presets.
 
 chrome://settings gets a new top-level entry, above Performance in the left
 menu: Aerium Guard. It offers the same three setup modes the first-run screen
-offers - Recommended, Privacy, Performance - and hosts the delete-on-exit
-settings, including the never-delete site list.
+offers - Recommended, Privacy, Performance - and nothing else.
 
 The point is that the first-run screen is seen exactly once, usually before
 anyone has any idea what the tradeoffs mean, and there was no way back to it
-short of typing chrome://aerium-first-run from memory. Everything it can set is
-now reachable from ordinary Settings, and Settings can also tell you which mode
-you are actually on.
+short of typing chrome://aerium-first-run from memory. The modes are now
+reachable from ordinary Settings, and Settings can also tell you which mode you
+are actually on.
+
+The page is about modes only. The individual settings a mode is a shortcut for
+stay on the pages they belong to - Privacy and security, Performance, Search -
+and are not mirrored here. A pref-bound control shown in two places is two
+switches for one setting, with nothing to tell the user which one they last
+touched, and the delete-on-exit block in particular reads as a per-page setting
+when it is a per-profile one.
 
 One definition of the presets
 -----------------------------
@@ -69,15 +75,14 @@ TypeScript keeps the list of prefs a preset covers in one place with the rest of
 the definition. The profile prefs and the two local-state performance prefs get
 one registrar each.
 
-The delete-on-exit block, shared rather than copied
----------------------------------------------------
-Two pages now show the delete-on-exit toggle, its eight per-type checkboxes and
-the never-delete site list. Forty lines of pref-bound markup copied into two
-templates is forty lines that eventually disagree with themselves, so the whole
-block moved into a new settings-clear-on-exit element and both pages use that.
-privacy_page.html's copy is replaced by the element and its now-unused
-cr-collapse / settings-checkbox / settings-toggle-button imports are dropped
-from privacy_page.ts.
+The delete-on-exit block, extracted but still single-homed
+----------------------------------------------------------
+The delete-on-exit toggle, its eight per-type checkboxes and the never-delete
+site list move out of privacy_page.html into their own settings-clear-on-exit
+element. Privacy and security remains their only host - they are ordinary prefs
+and belong on one page - but they are a self-contained unit of forty lines in a
+template that is already long, and privacy_page.ts sheds its now-unused
+cr-collapse / settings-checkbox / settings-toggle-button imports as a result.
 
 New settings page mechanics
 ---------------------------
@@ -99,29 +104,26 @@ missed:
     cr-icon draws nothing at all for an iconset:id pair that does not resolve.
     The AI entry two rows down already uses settings20:magic, so a 20px icon
     among the 24px ones is the menu's own existing practice.
-  - Sixteen new IDS_ strings in settings_strings.grdp with their mappings in
+  - Fourteen new IDS_ strings in settings_strings.grdp with their mappings in
     settings_localized_strings_provider.cc, including aeriumGuardPageTitle,
     which route.ts reads through loadTimeData at module load.
 
-The page composes PrefsMixin. It has to: settings-clear-on-exit inside it writes
-prefs, and a page hosting writable controls without PrefsMixin fails silently -
-the same trap that broke search_page.ts. The pattern is copied from
-privacy_page.ts, which already does it. It also implements SettingsPlugin's
+The page hosts no writable controls, so it composes no PrefsMixin and
+settings_main.html passes it no prefs - the same shape as settings-reset-page
+and settings-default-browser-page. It does implement SettingsPlugin's
 searchContents(), which every top-level view is required to have or the Settings
 search box throws when it reaches this section.
 
-No new prefs are introduced, so nothing needs adding to the settingsPrivate
-allowlist in prefs_util.cc: everything the page reads or writes through
-settingsPrivate was allowlisted by the two delete-on-exit patches, and the seven
-preset prefs never travel through settingsPrivate at all - the handler writes
-them against the real PrefService.
+Nothing needs adding to the settingsPrivate allowlist in prefs_util.cc. The page
+does not touch settingsPrivate at all: everything on it goes through the handler,
+and the preset prefs are written against the real PrefService.
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
-@@ -2211,6 +2211,54 @@
+@@ -2211,6 +2211,48 @@
      <message name="IDS_SETTINGS_CLEAR_ON_EXIT_SITES_DUPLICATE" desc="Error shown when the website typed into the add-a-site field is already in the list.">
        This site is already on the list
      </message>
-+    <message name="IDS_SETTINGS_AERIUM_GUARD_PAGE_TITLE" desc="Title of a top-level settings section, named after the browser, that collects the browser's privacy and performance setup modes and its delete-on-exit settings.">
++    <message name="IDS_SETTINGS_AERIUM_GUARD_PAGE_TITLE" desc="Title of a top-level settings section, named after the browser, that offers the browser's privacy and performance setup modes.">
 +      Aerium Guard
 +    </message>
 +    <message name="IDS_SETTINGS_AERIUM_GUARD_MODES_HEADER" desc="Header above a list of three setup modes the user can switch between.">
@@ -163,12 +165,6 @@ them against the real PrefService.
 +    <message name="IDS_SETTINGS_AERIUM_GUARD_RESTART_NOTE" desc="Note explaining that part of what a setup mode changes only applies after the browser restarts.">
 +      Settings apply straight away. The chrome://flags entries a mode switches on need a restart, and are never switched off again, so a mode you leave keeps any flags it turned on.
 +    </message>
-+    <message name="IDS_SETTINGS_AERIUM_GUARD_ON_EXIT_HEADER" desc="Header above the settings that delete browsing data when the browser is closed.">
-+      When you close Aerium
-+    </message>
-+    <message name="IDS_SETTINGS_AERIUM_GUARD_ON_EXIT_DESC" desc="Description of the settings that delete browsing data when the browser is closed. These are the same controls that appear on the Privacy and security page.">
-+      The same controls as on the Privacy and security page.
-+    </message>
      <message name="IDS_SETTINGS_TITLE_AND_COUNT" desc="The title of a section in the settings page with a count of the total number of items in the section">
        <ph name="TITLE">$1<ex>Block</ex></ph> - <ph name="COUNT">$2<ex>42</ex></ph>
      </message>
@@ -192,7 +188,7 @@ them against the real PrefService.
      "privacy_page/do_not_track_toggle.ts",
 --- /dev/null
 +++ b/chrome/browser/resources/settings/aerium_guard_page/aerium_guard_page.html
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,36 @@
 +<style include="cr-shared-style settings-shared"></style>
 +<settings-section page-title="$i18n{aeriumGuardPageTitle}"
 +    class="cr-centered-card-container">
@@ -228,21 +224,10 @@ them against the real PrefService.
 +      $i18n{aeriumGuardRestartNote}
 +    </div>
 +  </div>
-+
-+  <div class="cr-row">
-+    <div class="flex cr-padded-text">
-+      <div id="onExitHeader">$i18n{aeriumGuardOnExitHeader}</div>
-+      <div class="secondary" id="onExitDescription">
-+        $i18n{aeriumGuardOnExitDesc}
-+      </div>
-+    </div>
-+  </div>
-+  <settings-clear-on-exit id="clearOnExit" prefs="{{prefs}}">
-+  </settings-clear-on-exit>
 +</settings-section>
 --- /dev/null
 +++ b/chrome/browser/resources/settings/aerium_guard_page/aerium_guard_page.ts
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,145 @@
 +// Copyright 2026 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -250,9 +235,14 @@ them against the real PrefService.
 +/**
 + * @fileoverview
 + * 'settings-aerium-guard-page' is the Aerium Guard section of chrome://settings.
-+ * It offers the same three setup modes as the first-run screen - Recommended,
-+ * Privacy and Performance - and hosts the delete-on-exit settings, including
-+ * the never-delete site list.
++ * It is about modes, and nothing else: the same three setup modes the first-run
++ * screen offers - Recommended, Privacy and Performance.
++ *
++ * The individual settings a mode is a shortcut for stay where they already
++ * lived. The delete-on-exit block in particular belongs to Privacy and
++ * security and is hosted only there; showing the same pref-bound controls in
++ * two places gives the user two switches for one setting and no way to tell
++ * which one they last touched.
 + *
 + * The modes are not a pref, and this page deliberately does not know what any
 + * of them contains. Applying one and working out which one is currently in
@@ -261,16 +251,14 @@ them against the real PrefService.
 + * send a name and render the answer that comes back, including "Custom" when
 + * the current settings match no preset.
 + *
-+ * Composes PrefsMixin because settings-clear-on-exit below writes prefs; a page
-+ * hosting writable controls without it silently does nothing.
++ * It therefore hosts no writable controls and needs no PrefsMixin, which is
++ * why settings_main.html passes it no prefs.
 + */
 +import 'chrome://resources/cr_elements/cr_button/cr_button.js';
 +import 'chrome://resources/cr_elements/cr_shared_style.css.js';
-+import '../privacy_page/clear_on_exit.js';
 +import '../settings_page/settings_section.js';
 +import '../settings_shared.css.js';
 +
-+import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
 +import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
 +import {sendWithPromise} from 'chrome://resources/js/cr.js';
 +import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
@@ -287,8 +275,7 @@ them against the real PrefService.
 +  description: string;
 +}
 +
-+const SettingsAeriumGuardPageElementBase =
-+    WebUiListenerMixin(PrefsMixin(PolymerElement));
++const SettingsAeriumGuardPageElementBase = WebUiListenerMixin(PolymerElement);
 +
 +export class SettingsAeriumGuardPageElement extends
 +    SettingsAeriumGuardPageElementBase implements SettingsPlugin {
@@ -436,7 +423,7 @@ them against the real PrefService.
 +</cr-collapse>
 --- /dev/null
 +++ b/chrome/browser/resources/settings/privacy_page/clear_on_exit.ts
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,52 @@
 +// Copyright 2026 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -447,10 +434,12 @@ them against the real PrefService.
 + * toggle, the eight per-type checkboxes it reveals, and the never-delete site
 + * list.
 + *
-+ * It exists as its own element because two pages show it - Privacy and
-+ * security, where it has always lived, and Aerium Guard - and a block of forty
-+ * lines of pref-bound markup copied into two templates is a block that
-+ * eventually disagrees with itself.
++ * Privacy and security is its only host, and deliberately so: these are
++ * ordinary prefs, and a pref-bound control shown on two pages is two switches
++ * for one setting. It is a separate element rather than forty lines inline in
++ * privacy_page.html because it is a self-contained unit - a master toggle, the
++ * eight checkboxes it reveals and the site list - and privacy_page.html is
++ * already long.
 + *
 + * Composes PrefsMixin, since every control in it writes a pref.
 + */
@@ -587,15 +576,14 @@ them against the real PrefService.
    AI: Route;
 --- a/chrome/browser/resources/settings/settings_main/settings_main.html
 +++ b/chrome/browser/resources/settings/settings_main/settings_main.html
-@@ -78,6 +78,14 @@
+@@ -78,6 +78,13 @@
      </div>
    </template>
  
 +  <div slot="view" id="aeriumGuard">
 +    <template is="dom-if" if="[[renderPlugin_(
 +        routes_.AERIUM_GUARD, lastRoute_, inSearchMode_)]]">
-+      <settings-aerium-guard-page prefs="{{prefs}}">
-+      </settings-aerium-guard-page>
++      <settings-aerium-guard-page></settings-aerium-guard-page>
 +    </template>
 +  </div>
 +
@@ -988,7 +976,7 @@ them against the real PrefService.
 +#endif  // CHROME_BROWSER_UI_WEBUI_SETTINGS_AERIUM_GUARD_HANDLER_H_
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
-@@ -2425,6 +2425,25 @@
+@@ -2425,6 +2425,23 @@
         IDS_SETTINGS_CLEAR_BROWSING_DATA_ON_EXIT_LABEL},
        {"clearBrowsingDataOnExitDesc",
         IDS_SETTINGS_CLEAR_BROWSING_DATA_ON_EXIT_DESC},
@@ -1009,8 +997,6 @@ them against the real PrefService.
 +       IDS_SETTINGS_AERIUM_GUARD_PERFORMANCE_LABEL},
 +      {"aeriumGuardPerformanceDesc", IDS_SETTINGS_AERIUM_GUARD_PERFORMANCE_DESC},
 +      {"aeriumGuardRestartNote", IDS_SETTINGS_AERIUM_GUARD_RESTART_NOTE},
-+      {"aeriumGuardOnExitHeader", IDS_SETTINGS_AERIUM_GUARD_ON_EXIT_HEADER},
-+      {"aeriumGuardOnExitDesc", IDS_SETTINGS_AERIUM_GUARD_ON_EXIT_DESC},
        {"clearOnExitSitesHeader", IDS_SETTINGS_CLEAR_ON_EXIT_SITES_HEADER},
        {"clearOnExitSitesDesc", IDS_SETTINGS_CLEAR_ON_EXIT_SITES_DESC},
        {"clearOnExitSitesAddTitle", IDS_SETTINGS_CLEAR_ON_EXIT_SITES_ADD_TITLE},

@@ -43,3 +43,4 @@ ungoogled-fatih/aerium-https-first-balanced-auto-enable.patch
 ungoogled-fatih/aerium-remove-live-translate.patch
 ungoogled-fatih/aerium-clear-on-exit-site-exclusions.patch
 ungoogled-fatih/aerium-guard-settings-section.patch
+ungoogled-fatih/aerium-guard-location-bar-button.patch

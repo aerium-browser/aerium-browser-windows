@@ -1,0 +1,622 @@
+Add an Aerium Guard button to the address bar.
+
+The three setup modes were reachable from two places, both of which have to be
+gone looking for: the first-run screen, seen once and usually before anyone
+knows what the tradeoffs mean, and chrome://settings/aeriumGuard. This adds a
+third that is simply always there - a shield in the address bar that names the
+mode currently in force and switches to another one in two clicks. It is the
+same idea as Brave's shield button, minus the per-site part: Aerium's modes are
+browser-wide, and the bubble says so rather than pretending otherwise.
+
+Nothing about what a mode contains lives here
+---------------------------------------------
+The bubble calls aerium_presets::ApplyPreset() and aerium_presets::DetectPreset(),
+the same two functions the settings page's handler and the first-run screen call,
+from the same chrome/browser/ui/webui/aerium_presets.h. There is no second copy
+of the pref list, and the prefs the button observes are exactly the fifteen named
+in PresetValues, split between the profile PrefService and local state the way
+that header splits them - getting that split wrong is a CHECK failure inside
+PrefService, not a silent no-op.
+
+The mode names in the bubble are the same messages the settings page shows,
+IDS_SETTINGS_AERIUM_GUARD_*_LABEL. That is possible because settings_strings.grdp
+is a <part> of generated_resources.grd, so everything in it ends up in the same
+chrome/grit/generated_resources.h the browser UI reads. Wording, prefs and flags
+therefore cannot drift between the two places by construction.
+
+Off-the-record windows act on the profile they were opened from, not on the
+incognito overlay, whose writes are discarded when the last such window closes.
+chrome://settings behaves the same way, and a button that silently forgot what it
+was told would be worse than no button.
+
+Why this is not a page action
+-----------------------------
+At this revision the location bar has two page action frameworks side by side:
+the legacy PageActionIconController, still holding the cookie controls, memory
+saver, zoom and bookmark star icons, and the newer page_actions framework with
+its per-tab PageActionController, ActionItem registration and
+PageActionPropertiesProvider. Both exist because a migration is half done.
+
+This button belongs to neither. A page action says something about the page in
+the current tab; that is what the per-tab controllers, the ephemeral visibility
+and the PageActionIconType-keyed CTR histograms are all built around. The Aerium
+Guard button says nothing about the page. It is browser-wide and always shown, so
+registering it as a page action would mean inventing a PageActionIconType and
+threading it through IsPageActionMigrated(), the properties provider and the page
+action histogram enums to buy behaviour it does not want.
+
+Instead AeriumGuardIconView derives from PageActionIconView, which is what gives
+an address-bar icon its size, insets, ink drop, focus behaviour and bubble
+anchoring, and LocationBarView owns it directly, exactly as it already owns
+IntentChipButton. It is laid out as one more trailing decoration, added after
+both containers so it sits to their left and leaves the bookmark star as the
+right-most thing in the bar, and its Update() is driven from
+RefreshPageActionIconViews() so that it hides and reappears together with the
+icons beside it while the user is typing in the omnibox.
+
+The first BUILD.gn source list this patch set touches
+----------------------------------------------------
+Every earlier Aerium C++ addition was header-only, specifically so that no
+BUILD.gn source list had to change. That trick does not work for a view: it needs
+a .cc. So aerium_guard_icon_view.h joins the public list of
+source_set("location_bar") and aerium_guard_icon_view.cc joins the sources of
+source_set("impl"), in chrome/browser/ui/views/location_bar/BUILD.gn. Those are
+the two halves of the target that already builds location_bar_view.{h,cc} and
+star_view.{h,cc}, so the new file lands in the same translation unit set as the
+code that instantiates it, with the same visibility and the same dependency set.
+
+One dep is added, //components/vector_icons, for the shield glyph. Every other
+header the new file includes is one that location_bar_view.cc or star_view.cc in
+the same target already includes: browser_process.h, profile.h, the two
+components/prefs headers, generated_resources.h and web_contents.h.
+ui/base/mojom/dialog_button.mojom.h comes in through //ui/views, which lists
+//ui/base/mojom in its public_deps. aerium_presets.h is in no target's source
+list at all, so gn check has nothing to say about it, which is the same reason
+settings_ui.cc can include it today.
+
+The icon
+--------
+components/vector_icons/shield.icon exists at 151.0.7922.108 and is already in
+the sources list of aggregate_vector_icons("components_vector_icons"), so it is
+already generated into vector_icons::kShieldIcon and costs nothing to use. No new
+.icon file, and no new entry in any icon list.
+
+Strings
+-------
+Three new messages, in chrome/app/settings_strings.grdp beside the existing
+Aerium Guard block: the button's tooltip, the bubble's one-line description, and
+the line shown when the current settings match no mode. Everything else the
+bubble displays - its title, the three mode names, the note about flags needing a
+restart - reuses the messages the settings page already defines.
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -2253,6 +2253,22 @@
+     <message name="IDS_SETTINGS_AERIUM_GUARD_RESTART_NOTE" desc="Note explaining that part of what a setup mode changes only applies after the browser restarts.">
+       Settings apply straight away. The chrome://flags entries a mode switches on need a restart, and are never switched off again, so a mode you leave keeps any flags it turned on.
+     </message>
++    <!-- The three strings below belong to the address-bar button rather than to
++         the settings page. They live here because this file is a <part> of
++         generated_resources.grd, so everything in it lands in the same
++         chrome/grit/generated_resources.h the browser UI reads, and because the
++         button reuses the mode names and the restart note above verbatim -
++         keeping all of the Aerium Guard wording in one place is the whole point.
++         -->
++    <message name="IDS_SETTINGS_AERIUM_GUARD_ICON_TOOLTIP" desc="Tooltip of the address-bar button that opens the Aerium Guard setup modes. The placeholder is the name of the mode currently in force.">
++      Aerium Guard: <ph name="MODE">$1<ex>Recommended</ex></ph>
++    </message>
++    <message name="IDS_SETTINGS_AERIUM_GUARD_BUBBLE_DESC" desc="Line under the title of the address-bar bubble, explaining that the modes it offers apply to the whole browser rather than to the site being shown.">
++      These modes apply to the whole browser, not just this site.
++    </message>
++    <message name="IDS_SETTINGS_AERIUM_GUARD_BUBBLE_CUSTOM_NOTE" desc="Note shown in the address-bar bubble when the current settings match none of the three modes, so none of them is selected.">
++      Your settings match none of these modes. Picking one replaces them.
++    </message>
+     <message name="IDS_SETTINGS_TITLE_AND_COUNT" desc="The title of a section in the settings page with a count of the total number of items in the section">
+       <ph name="TITLE">$1<ex>Block</ex></ph> - <ph name="COUNT">$2<ex>42</ex></ph>
+     </message>
+--- a/chrome/browser/ui/views/location_bar/BUILD.gn
++++ b/chrome/browser/ui/views/location_bar/BUILD.gn
+@@ -12,6 +12,7 @@
+ 
+   if (toolkit_views) {
+     public += [
++      "aerium_guard_icon_view.h",
+       "ai_mode_page_action_icon_view.h",
+       "content_setting_image_view.h",
+       "custom_tab_bar_view.h",
+@@ -80,6 +81,7 @@
+ 
+   if (toolkit_views) {
+     sources += [
++      "aerium_guard_icon_view.cc",
+       "ai_mode_page_action_icon_view.cc",
+       "content_setting_image_view.cc",
+       "custom_tab_bar_view.cc",
+@@ -179,6 +181,7 @@
+       "//components/security_state/core",
+       "//components/strings:components_strings",
+       "//components/user_education/common",
++      "//components/vector_icons",
+       "//components/zoom",
+       "//extensions:extensions_browser_resources",
+       "//extensions/browser",
+--- /dev/null
++++ b/chrome/browser/ui/views/location_bar/aerium_guard_icon_view.h
+@@ -0,0 +1,100 @@
++#ifndef CHROME_BROWSER_UI_VIEWS_LOCATION_BAR_AERIUM_GUARD_ICON_VIEW_H_
++#define CHROME_BROWSER_UI_VIEWS_LOCATION_BAR_AERIUM_GUARD_ICON_VIEW_H_
++
++#include <string>
++
++#include "base/memory/raw_ptr.h"
++#include "chrome/browser/ui/views/page_action/page_action_icon_view.h"
++#include "components/prefs/pref_change_registrar.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/views/view_observer.h"
++
++class AeriumGuardBubbleView;
++class Profile;
++
++namespace gfx {
++struct VectorIcon;
++}
++
++namespace views {
++class BubbleDialogDelegate;
++}
++
++// The Aerium Guard button in the address bar.
++//
++// It is a shortcut to the three setup modes that chrome://settings/aeriumGuard
++// offers: clicking it opens a small bubble that names the mode currently in
++// force and lets the user switch to another one, without going to Settings.
++// Both places apply the same definitions from
++// chrome/browser/ui/webui/aerium_presets.h, so neither can drift from the
++// other.
++//
++// Unlike every other icon in this directory, this one is not registered with
++// PageActionIconController and has no PageActionIconType. That is deliberate:
++//
++//   - the controller's icons are page actions - they say something about the
++//     page in the current tab, and the framework's whole model (per-tab
++//     PageActionController, ephemeral visibility, CTR histograms keyed by
++//     PageActionIconType) is built around that. This button says nothing about
++//     the page: it is browser-wide and always shown, exactly like Brave's
++//     shield button;
++//   - a new PageActionIconType would have to be threaded through
++//     IsPageActionMigrated(), the properties provider and the page-action
++//     histogram enums, which is a lot of surface to disturb for a button that
++//     needs none of it.
++//
++// It still derives from PageActionIconView because that is what gives an
++// address-bar icon its size, insets, ink drop, focus behaviour and bubble
++// anchoring; LocationBarView owns it directly, lays it out as one more trailing
++// decoration and drives its Update() alongside the real page actions, which is
++// what makes it disappear while the user is typing in the omnibox like the
++// others do.
++class AeriumGuardIconView : public PageActionIconView,
++                            public views::ViewObserver {
++  METADATA_HEADER(AeriumGuardIconView, PageActionIconView)
++
++ public:
++  AeriumGuardIconView(Profile* profile,
++                      IconLabelBubbleView::Delegate* icon_label_bubble_delegate,
++                      PageActionIconView::Delegate* page_action_icon_delegate);
++  AeriumGuardIconView(const AeriumGuardIconView&) = delete;
++  AeriumGuardIconView& operator=(const AeriumGuardIconView&) = delete;
++  ~AeriumGuardIconView() override;
++
++  // views::ViewObserver:
++  void OnViewIsDeleting(views::View* observed_view) override;
++
++ protected:
++  // PageActionIconView:
++  void UpdateImpl() override;
++  void OnExecuting(PageActionIconView::ExecuteSource execute_source) override;
++  views::BubbleDialogDelegate* GetBubble() const override;
++  const gfx::VectorIcon& GetVectorIcon() const override;
++  std::u16string GetTextForTooltipAndAccessibleName() const override;
++
++ private:
++  // Re-reads the active mode and refreshes the tooltip. Bound to every pref a
++  // mode writes, so the tooltip is right even when the change came from
++  // somewhere else entirely - a settings page in another window, say.
++  void OnPresetPrefChanged();
++
++  // The profile whose prefs the modes are read from and written to. Always a
++  // regular profile: an off-the-record window shows and changes the modes of
++  // the profile it was opened from, which is what chrome://settings does too,
++  // rather than writing to an overlay that is thrown away on close.
++  const raw_ptr<Profile> profile_;
++
++  // Split the same way aerium_presets.h splits them: the eleven profile prefs
++  // on the profile's PrefService, the three performance prefs and
++  // background_mode.enabled on local state. Reaching for the wrong PrefService
++  // is a CHECK failure inside PrefService, not a silent no-op.
++  PrefChangeRegistrar profile_registrar_;
++  PrefChangeRegistrar local_state_registrar_;
++
++  // The open bubble, or null. Cleared through ViewObserver when it goes away;
++  // PageActionIconView::IsBubbleShowing() reads it to toggle the bubble shut
++  // when the button is clicked a second time.
++  raw_ptr<AeriumGuardBubbleView> bubble_ = nullptr;
++};
++
++#endif  // CHROME_BROWSER_UI_VIEWS_LOCATION_BAR_AERIUM_GUARD_ICON_VIEW_H_
+--- /dev/null
++++ b/chrome/browser/ui/views/location_bar/aerium_guard_icon_view.cc
+@@ -0,0 +1,270 @@
++#include "chrome/browser/ui/views/location_bar/aerium_guard_icon_view.h"
++
++#include <memory>
++#include <optional>
++#include <string>
++#include <string_view>
++#include <utility>
++
++#include "base/functional/bind.h"
++#include "chrome/browser/browser_process.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/views/location_bar/location_bar_bubble_delegate_view.h"
++#include "chrome/browser/ui/webui/aerium_presets.h"
++#include "chrome/grit/generated_resources.h"
++#include "components/prefs/pref_service.h"
++#include "components/vector_icons/vector_icons.h"
++#include "content/public/browser/web_contents.h"
++#include "ui/base/l10n/l10n_util.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
++#include "ui/base/mojom/dialog_button.mojom.h"
++#include "ui/gfx/geometry/insets.h"
++#include "ui/views/accessibility/view_accessibility.h"
++#include "ui/views/bubble/bubble_dialog_delegate_view.h"
++#include "ui/views/controls/button/radio_button.h"
++#include "ui/views/controls/label.h"
++#include "ui/views/layout/box_layout.h"
++#include "ui/views/layout/layout_provider.h"
++#include "ui/views/style/typography.h"
++#include "ui/views/widget/widget.h"
++
++namespace {
++
++// The profile whose prefs a mode is read from and written to. Off-the-record
++// profiles get an overlay PrefService whose writes are discarded when the last
++// incognito window closes, which would make the button silently forget what it
++// was told; chrome://settings has the same problem and solves it the same way,
++// by working on the profile the window was opened from.
++Profile* PrefProfile(Profile* profile) {
++  return profile ? profile->GetOriginalProfile() : nullptr;
++}
++
++PrefService* ProfilePrefsOf(Profile* profile) {
++  return profile ? profile->GetPrefs() : nullptr;
++}
++
++PrefService* LocalState() {
++  return g_browser_process ? g_browser_process->local_state() : nullptr;
++}
++
++std::string ActivePreset(Profile* profile) {
++  return aerium_presets::DetectPreset(ProfilePrefsOf(profile), LocalState());
++}
++
++// The mode names the bubble shows are the ones the Aerium Guard settings page
++// shows, taken from the same messages. settings_strings.grdp is a <part> of
++// generated_resources.grd, so these IDS_SETTINGS_* symbols are in the same
++// generated header the rest of the browser UI uses.
++int ModeLabelId(std::string_view preset) {
++  if (preset == aerium_presets::kPrivacy) {
++    return IDS_SETTINGS_AERIUM_GUARD_PRIVACY_LABEL;
++  }
++  if (preset == aerium_presets::kPerformance) {
++    return IDS_SETTINGS_AERIUM_GUARD_PERFORMANCE_LABEL;
++  }
++  if (preset == aerium_presets::kRecommended) {
++    return IDS_SETTINGS_AERIUM_GUARD_RECOMMENDED_LABEL;
++  }
++  return IDS_SETTINGS_AERIUM_GUARD_CUSTOM_LABEL;
++}
++
++}  // namespace
++
++// The bubble the button opens: the three modes as a radio group, the note about
++// flags needing a restart, and - only when the current settings match no mode -
++// a line saying so. Picking a mode applies it straight away through
++// aerium_presets::ApplyPreset(), the same call the settings page's handler
++// makes, so the two cannot disagree about what a mode is.
++//
++// Deliberately not offered here: any way to edit an individual setting. This is
++// a shortcut for switching modes, and the settings page remains the place where
++// the pieces are.
++class AeriumGuardBubbleView : public LocationBarBubbleDelegateView {
++  METADATA_HEADER(AeriumGuardBubbleView, LocationBarBubbleDelegateView)
++
++ public:
++  AeriumGuardBubbleView(views::View* anchor_view,
++                        content::WebContents* web_contents,
++                        Profile* profile);
++  AeriumGuardBubbleView(const AeriumGuardBubbleView&) = delete;
++  AeriumGuardBubbleView& operator=(const AeriumGuardBubbleView&) = delete;
++  ~AeriumGuardBubbleView() override;
++
++ private:
++  void OnModePicked(const char* preset);
++  void SyncToActivePreset();
++
++  const raw_ptr<Profile> profile_;
++  raw_ptr<views::Label> custom_note_ = nullptr;
++  raw_ptr<views::RadioButton> recommended_ = nullptr;
++  raw_ptr<views::RadioButton> privacy_ = nullptr;
++  raw_ptr<views::RadioButton> performance_ = nullptr;
++};
++
++AeriumGuardBubbleView::AeriumGuardBubbleView(
++    views::View* anchor_view,
++    content::WebContents* web_contents,
++    Profile* profile)
++    : LocationBarBubbleDelegateView(anchor_view,
++                                    web_contents,
++                                    /*autosize=*/true),
++      profile_(profile) {
++  SetShowCloseButton(true);
++  SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
++  SetTitle(IDS_SETTINGS_AERIUM_GUARD_PAGE_TITLE);
++
++  views::LayoutProvider* const provider = views::LayoutProvider::Get();
++  set_fixed_width(
++      provider->GetDistanceMetric(views::DISTANCE_BUBBLE_PREFERRED_WIDTH));
++  SetLayoutManager(std::make_unique<views::BoxLayout>(
++      views::BoxLayout::Orientation::kVertical, gfx::Insets(),
++      provider->GetDistanceMetric(views::DISTANCE_RELATED_CONTROL_VERTICAL)));
++
++  auto add_note = [this](int message_id) {
++    auto label = std::make_unique<views::Label>(
++        l10n_util::GetStringUTF16(message_id), views::style::CONTEXT_LABEL,
++        views::style::STYLE_SECONDARY);
++    label->SetMultiLine(true);
++    label->SetHorizontalAlignment(gfx::ALIGN_TO_HEAD);
++    return AddChildView(std::move(label));
++  };
++  auto add_mode = [this](int label_id, const char* preset) {
++    auto radio = std::make_unique<views::RadioButton>(
++        l10n_util::GetStringUTF16(label_id), /*group_id=*/0);
++    radio->SetCallback(base::BindRepeating(
++        &AeriumGuardBubbleView::OnModePicked, base::Unretained(this), preset));
++    return AddChildView(std::move(radio));
++  };
++
++  add_note(IDS_SETTINGS_AERIUM_GUARD_BUBBLE_DESC);
++  custom_note_ = add_note(IDS_SETTINGS_AERIUM_GUARD_BUBBLE_CUSTOM_NOTE);
++  recommended_ = add_mode(IDS_SETTINGS_AERIUM_GUARD_RECOMMENDED_LABEL,
++                          aerium_presets::kRecommended);
++  privacy_ = add_mode(IDS_SETTINGS_AERIUM_GUARD_PRIVACY_LABEL,
++                      aerium_presets::kPrivacy);
++  performance_ = add_mode(IDS_SETTINGS_AERIUM_GUARD_PERFORMANCE_LABEL,
++                          aerium_presets::kPerformance);
++  add_note(IDS_SETTINGS_AERIUM_GUARD_RESTART_NOTE);
++
++  SyncToActivePreset();
++}
++
++AeriumGuardBubbleView::~AeriumGuardBubbleView() = default;
++
++void AeriumGuardBubbleView::OnModePicked(const char* preset) {
++  aerium_presets::ApplyPreset(preset, ProfilePrefsOf(profile_), LocalState());
++  // Re-read rather than trusting the click: ApplyPreset() refuses to do
++  // anything without both PrefServices, and the radio group has already drawn
++  // itself as selected by the time the callback runs.
++  SyncToActivePreset();
++}
++
++void AeriumGuardBubbleView::SyncToActivePreset() {
++  const std::string active = ActivePreset(profile_);
++  recommended_->SetChecked(active == aerium_presets::kRecommended);
++  privacy_->SetChecked(active == aerium_presets::kPrivacy);
++  performance_->SetChecked(active == aerium_presets::kPerformance);
++  custom_note_->SetVisible(active == aerium_presets::kCustom);
++}
++
++BEGIN_METADATA(AeriumGuardBubbleView)
++END_METADATA
++
++AeriumGuardIconView::AeriumGuardIconView(
++    Profile* profile,
++    IconLabelBubbleView::Delegate* icon_label_bubble_delegate,
++    PageActionIconView::Delegate* page_action_icon_delegate)
++    : PageActionIconView(/*command_updater=*/nullptr,
++                         /*command_id=*/0,
++                         icon_label_bubble_delegate,
++                         page_action_icon_delegate,
++                         /*name_for_histograms=*/"AeriumGuard",
++                         /*action_id=*/std::nullopt,
++                         /*browser=*/nullptr,
++                         /*ephemeral=*/false),
++      profile_(PrefProfile(profile)) {
++  auto notify = base::BindRepeating(&AeriumGuardIconView::OnPresetPrefChanged,
++                                    base::Unretained(this));
++  if (PrefService* profile_prefs = ProfilePrefsOf(profile_)) {
++    profile_registrar_.Init(profile_prefs);
++    profile_registrar_.AddMultiple({aerium_presets::kDoNotTrack,
++                                    aerium_presets::kCookieControlsMode,
++                                    aerium_presets::kNetworkPredictionOptions,
++                                    aerium_presets::kClearDataOnExit,
++                                    aerium_presets::kSearchSuggestEnabled,
++                                    aerium_presets::kHttpsOnlyMode,
++                                    aerium_presets::kHttpsFirstBalancedMode,
++                                    aerium_presets::kWebRtcIpHandlingPolicy,
++                                    aerium_presets::kHyperlinkAuditing,
++                                    aerium_presets::kAlternateErrorPages,
++                                    aerium_presets::kCanMakePayment},
++                                   notify);
++  }
++  if (PrefService* local_state = LocalState()) {
++    local_state_registrar_.Init(local_state);
++    local_state_registrar_.AddMultiple(
++        {aerium_presets::kMemorySaverModeState,
++         aerium_presets::kMemorySaverAggressiveness,
++         aerium_presets::kBatterySaverModeState,
++         aerium_presets::kBackgroundModeEnabled},
++        notify);
++  }
++  GetViewAccessibility().SetName(GetTextForTooltipAndAccessibleName());
++}
++
++AeriumGuardIconView::~AeriumGuardIconView() {
++  if (bubble_) {
++    bubble_->View::RemoveObserver(this);
++  }
++}
++
++void AeriumGuardIconView::OnViewIsDeleting(views::View* observed_view) {
++  bubble_ = nullptr;
++  // The tooltip is suppressed while the bubble is up; put it back now that it
++  // is not.
++  UpdateTooltipText();
++}
++
++void AeriumGuardIconView::UpdateImpl() {
++  // Always shown, unlike a page action: a mode is always in force, so there is
++  // always something to say. The delegate still gets to hide it while the user
++  // is typing in the omnibox, which is what keeps it in step with the icons
++  // next to it.
++  SetVisible(!delegate()->ShouldHidePageActionIcon(this));
++}
++
++void AeriumGuardIconView::OnExecuting(
++    PageActionIconView::ExecuteSource execute_source) {
++  if (bubble_) {
++    return;
++  }
++  auto bubble = std::make_unique<AeriumGuardBubbleView>(
++      this, delegate()->GetWebContentsForPageActionIconView(), profile_);
++  bubble_ = bubble.get();
++  // Both LocationBarBubbleDelegateView and views::View declare AddObserver, so
++  // the base class has to be named.
++  bubble_->View::AddObserver(this);
++  views::BubbleDialogDelegateView::CreateBubble(std::move(bubble))->Show();
++}
++
++views::BubbleDialogDelegate* AeriumGuardIconView::GetBubble() const {
++  return bubble_.get();
++}
++
++const gfx::VectorIcon& AeriumGuardIconView::GetVectorIcon() const {
++  return vector_icons::kShieldIcon;
++}
++
++std::u16string AeriumGuardIconView::GetTextForTooltipAndAccessibleName() const {
++  return l10n_util::GetStringFUTF16(
++      IDS_SETTINGS_AERIUM_GUARD_ICON_TOOLTIP,
++      l10n_util::GetStringUTF16(ModeLabelId(ActivePreset(profile_))));
++}
++
++void AeriumGuardIconView::OnPresetPrefChanged() {
++  GetViewAccessibility().SetName(GetTextForTooltipAndAccessibleName());
++  UpdateTooltipText();
++}
++
++BEGIN_METADATA(AeriumGuardIconView)
++END_METADATA
+--- a/chrome/browser/ui/views/location_bar/location_bar_view.cc
++++ b/chrome/browser/ui/views/location_bar/location_bar_view.cc
+@@ -68,6 +68,7 @@
+ #include "chrome/browser/ui/views/chrome_layout_provider.h"
+ #include "chrome/browser/ui/views/chrome_typography.h"
+ #include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/location_bar/aerium_guard_icon_view.h"
+ #include "chrome/browser/ui/views/location_bar/content_setting_image_view.h"
+ #include "chrome/browser/ui/views/location_bar/intent_chip_button.h"
+ #include "chrome/browser/ui/views/location_bar/location_bar_layout.h"
+@@ -593,6 +594,23 @@
+            "action.";
+   }
+ 
++  // Aerium: the Aerium Guard button. It is not a page action - it says nothing
++  // about the page, it is browser-wide and always shown - so it is not put in
++  // either page action container and gets no PageActionIconType; see
++  // aerium_guard_icon_view.h. It still needs the same delegates, colour and
++  // font as the icons beside it so that it looks like one of them.
++  if (browser_ && !is_popup_mode_) {
++    aerium_guard_icon_ = AddChildView(std::make_unique<AeriumGuardIconView>(
++        profile_, /*icon_label_bubble_delegate=*/this,
++        /*page_action_icon_delegate=*/this));
++    aerium_guard_icon_->SetIconColor(
++        color_provider->GetColor(kColorOmniboxActionIcon));
++    aerium_guard_icon_->SetFontList(page_action_font_list);
++    // Shown by the RefreshPageActionIconViews() that the Update(nullptr) at the
++    // end of Init() reaches, the same way the icons in the containers are.
++    aerium_guard_icon_->SetVisible(false);
++  }
++
+   auto clear_all_button = views::CreateVectorImageButton(base::BindRepeating(
+       static_cast<void (OmniboxView::*)(const std::u16string&)>(
+           &OmniboxView::SetUserText),
+@@ -994,6 +1012,14 @@
+   add_trailing_decoration(page_action_container_,
+                           /*intra_item_padding=*/0,
+                           /*edge_padding=*/trailing_decorations_edge_padding);
++  // Aerium: added after both page action containers, so it sits to their left -
++  // the bookmark star stays the right-most thing in the location bar.
++  if (aerium_guard_icon_) {
++    add_trailing_decoration(
++        aerium_guard_icon_,
++        /*intra_item_padding=*/kContentSettingIntraItemPadding,
++        /*edge_padding=*/trailing_decorations_edge_padding);
++  }
+   add_trailing_decoration(ai_mode_hint_label_, /*intra_item_padding=*/0,
+                           /*edge_padding=*/trailing_decorations_edge_padding);
+   for (ContentSettingImageView* view : base::Reversed(content_setting_views_)) {
+@@ -1123,6 +1149,9 @@
+   for (ContentSettingImageView* image_view : content_setting_views_) {
+     image_view->SetIconColor(icon_color);
+   }
++  if (aerium_guard_icon_) {
++    aerium_guard_icon_->SetIconColor(icon_color);
++  }
+ 
+   RefreshBackground();
+   RefreshClearAllButtonIcon();
+@@ -1519,7 +1548,8 @@
+ 
+ int LocationBarView::GetMinimumTrailingWidth() const {
+   int trailing_width = IncrementalMinimumWidth(page_action_icon_container_) +
+-                       IncrementalMinimumWidth(page_action_container_);
++                       IncrementalMinimumWidth(page_action_container_) +
++                       IncrementalMinimumWidth(aerium_guard_icon_);
+ 
+   for (ContentSettingImageView* content_setting_view : content_setting_views_) {
+     trailing_width += IncrementalMinimumWidth(content_setting_view);
+@@ -1662,6 +1692,12 @@
+   }
+ 
+   page_action_icon_controller_->UpdateAll();
++
++  // Aerium: driven from here rather than by the controller, which does not know
++  // about it, so that it hides and comes back with the icons beside it.
++  if (aerium_guard_icon_) {
++    aerium_guard_icon_->Update();
++  }
+ }
+ 
+ void LocationBarView::RefreshAiModePageActionIconView() {
+--- a/chrome/browser/ui/views/location_bar/location_bar_view.h
++++ b/chrome/browser/ui/views/location_bar/location_bar_view.h
+@@ -21,6 +21,7 @@
+ #include "chrome/browser/ui/location_bar/location_bar.h"
+ #include "chrome/browser/ui/omnibox/omnibox_popup_state_manager.h"
+ #include "chrome/browser/ui/page_action/page_action_icon_type.h"
++#include "chrome/browser/ui/views/location_bar/aerium_guard_icon_view.h"
+ #include "chrome/browser/ui/views/location_bar/content_setting_image_view.h"
+ #include "chrome/browser/ui/views/location_bar/location_icon_view.h"
+ #include "chrome/browser/ui/views/omnibox/omnibox_popup_presenter_delegate.h"
+@@ -593,6 +594,12 @@
+   // The content setting views.
+   ContentSettingViews content_setting_views_;
+ 
++  // Aerium: the Aerium Guard button. Owned directly rather than by either page
++  // action container because it is not a page action - see
++  // aerium_guard_icon_view.h. Null in popup windows and in the location bars
++  // that have no Browser.
++  raw_ptr<AeriumGuardIconView> aerium_guard_icon_ = nullptr;
++
+   // The controller for page action icons.
+   raw_ptr<PageActionIconController> page_action_icon_controller_ = nullptr;
+ 

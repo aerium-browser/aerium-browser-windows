@@ -8,33 +8,68 @@ across.
 Presets
 -------
 Recommended (pre-selected), Privacy, and Performance. All three share a floor:
-Do Not Track, third-party cookies blocked, no search-engine collection from
-visited sites, Client Hints stripped, Memory Saver on. They differ in what they
-trade away:
+Do Not Track, third-party cookies blocked, hyperlink auditing pings never sent,
+failed navigations never handed to an error-resolution web service, sites unable
+to probe whether a payment method is saved, HTTPS-First in its balanced
+configuration, WebRTC confined to the public interface, no search-engine
+collection from visited sites, Client Hints stripped, Memory Saver on, and no
+background process left behind after the last window closes. They differ in what
+they trade away:
 
   - Recommended keeps page preloading off and search suggestions on, and leaves
     Battery Saver on battery power. It is deliberately the boring one: nothing
     in it should ever make a site misbehave.
 
   - Privacy adds delete-on-exit, turns search suggestions off so nothing typed
-    in the address bar leaves the browser at all, and switches on the
-    fingerprinting-noise / reduced-system-info / punycode / incognito-quota
-    flags. Every one of those is a real tradeoff, which is why it is a separate
-    choice rather than the default.
+    in the address bar leaves the browser at all, moves HTTPS-First from
+    balanced to strict, refuses non-proxied UDP for WebRTC, and switches on the
+    referrer-stripping, fingerprinting-noise, WebGL-spoofing,
+    reduced-system-info, punycode and incognito-quota flags. Every one of those
+    is a real tradeoff, which is why it is a separate choice rather than the
+    default.
 
   - Performance turns page preloading on (kStandard), enables parallel
-    downloading and switches Battery Saver off so nothing is throttled when
-    unplugged. Memory Saver stays on: releasing idle tabs helps responsiveness
-    rather than hurting it. The privacy floor is unchanged - none of it costs
-    measurable speed.
+    downloading, raises the per-host connection ceiling from 6 to 15, makes
+    Memory Saver aggressive so idle tabs give their memory back sooner, and
+    switches Battery Saver off so nothing is throttled when unplugged. The
+    privacy floor is unchanged - none of it costs measurable speed.
 
+Why strict HTTPS-First is Privacy-only
+--------------------------------------
+aerium-https-first-balanced-auto-enable.patch already makes the case: strict
+mode (kHttpsOnlyModeEnabled) also warns on private and local hosts - router
+admin pages, localhost, NAS boxes, printers, intranet names - which cannot hold
+a publicly trusted certificate and so become an interstitial on every visit.
+That is the wrong default, and precisely the sort of deliberate tradeoff the
+Privacy preset exists to hold.
+
+All three presets write kHttpsFirstBalancedMode explicitly, which is also what
+makes balanced mode actually take effect: IsBalancedModeEnabled() in
+chrome/browser/ssl/https_upgrades_util.cc only consults the pref once
+HasPrefPath() is true, and before that falls through to
+kHttpsFirstBalancedModeAutoEnable. Writing the pref moves the decision from a
+feature flag to the user's own setting, which is where it belongs.
+
+WebRTC IP handling
+------------------
+ungoogled-chromium ships disable_non_proxied_udp, which is the strongest
+setting and also the one that breaks voice and video calls whenever no TURN
+relay is reachable. Recommended and Performance write
+default_public_interface_only instead: local interface addresses - the actual
+deanonymisation vector, and the thing the flag exists for - are still never
+enumerated, and calls still connect. Privacy keeps disable_non_proxied_udp,
+because a proxy or VPN that UDP walks straight past is not a proxy.
+
+Prefs
+-----
 Every pref is written from C++ against the real PrefService, so the
 settingsPrivate allowlist in prefs_util.cc is not involved (that gate only
 applies to chrome://settings, which reaches prefs through the extension API).
-Each was checked to exist and to be registered at 151.0.7922.71:
+Each was checked to exist and to be registered at 151.0.7922.108:
 
   enable_do_not_track                            bool, profile
-      chrome/common/pref_names.h, registered in browser_ui_prefs.cc
+      chrome/common/pref_names.h, registered by RegisterBrowserUserPrefs in
+      chrome/browser/ui/browser_ui_prefs.cc
   profile.cookie_controls_mode                   int, profile
       components/content_settings/core/common/pref_names.h, registered by
       content_settings::CookieSettings::RegisterProfilePrefs.
@@ -47,20 +82,59 @@ Each was checked to exist and to be registered at 151.0.7922.71:
       added by aerium-clear-browsing-data-on-exit.patch, registered through
       browsing_data::prefs::RegisterBrowserUserPrefs
   search.suggest_enabled                         bool, profile
-  performance_tuning.high_efficiency_mode.state  int, LOCAL STATE
+      chrome/common/pref_names.h, registered by Profile::RegisterProfilePrefs
+  https_only_mode_enabled                        bool, profile
+      chrome/common/pref_names.h (kHttpsOnlyModeEnabled), registered by
+      RegisterBrowserUserPrefs
+  https_first_balanced_mode_enabled              bool, profile
+      chrome/common/pref_names.h (kHttpsFirstBalancedMode), registered by
+      RegisterBrowserUserPrefs; aerium-https-first-balanced.patch changes its
+      registered default to true
+  webrtc.ip_handling_policy                      string, profile
+      chrome/common/pref_names.h (kWebRTCIPHandlingPolicy), registered by
+      RegisterBrowserUserPrefs. The four legal values are the
+      blink::kWebRTCIPHandling* constants in
+      third_party/blink/common/peerconnection/webrtc_ip_handling_policy.cc:
+      "default", "default_public_and_private_interfaces",
+      "default_public_interface_only", "disable_non_proxied_udp"
+  enable_a_ping                                  bool, profile
+      chrome/common/pref_names.h (kEnableHyperlinkAuditing), registered by
+      ChromeContentBrowserClient::RegisterProfilePrefs
+  alternate_error_pages.enabled                  bool, profile
+      components/embedder_support/pref_names.h, registered by
+      ProfileNetworkContextService::RegisterProfilePrefs
+  payments.can_make_payment_enabled              bool, profile
+      components/payments/core/payment_prefs.h, registered by
+      payments::RegisterProfilePrefs from RegisterProfilePrefs in
+      chrome/browser/prefs/browser_prefs.cc
+  performance_tuning.high_efficiency_mode.state           int, LOCAL STATE
       MemorySaverModeState: kDisabled=0, kDeprecated=1, kEnabled=2
-  performance_tuning.battery_saver_mode.state    int, LOCAL STATE
+  performance_tuning.high_efficiency_mode.aggressiveness  int, LOCAL STATE
+      MemorySaverModeAggressiveness: kConservative=0, kMedium=1, kAggressive=2
+  performance_tuning.battery_saver_mode.state             int, LOCAL STATE
       BatterySaverModeState: kDisabled=0, kEnabledBelowThreshold=1,
       kEnabledOnBattery=2, kEnabled=3
+      All three are declared in
+      components/performance_manager/public/user_tuning/prefs.h and registered
+      by its RegisterLocalStatePrefs - not by its RegisterProfilePrefs, which
+      only registers the tab-discard exception lists.
+  background_mode.enabled                                 bool, LOCAL STATE
+      chrome/common/pref_names.h (kBackgroundModeEnabled), registered by
+      BackgroundModeManager::RegisterPrefs under
+      BUILDFLAG(ENABLE_BACKGROUND_MODE), which chrome/common/features.gni
+      defines as !is_android && !is_chromeos - true for both desktop targets.
 
-The two performance prefs are browser-wide, not per profile - they come from
-RegisterLocalStatePrefs, not RegisterProfilePrefs - so they are written to
-g_browser_process->local_state() like the existing Secure DNS handler does.
+The performance prefs and background_mode.enabled are browser-wide, not per
+profile - they come from RegisterLocalStatePrefs, not RegisterProfilePrefs - so
+they are written to g_browser_process->local_state() like the existing Secure
+DNS handler does. Getting that distinction wrong is a CHECK failure inside
+PrefService, not a silent no-op.
 
 No fingerprinting-protection pref is set. There is no stock Chromium pref for
 it at this revision; what Aerium can actually offer is the Bromite-derived
-canvas/client-rects noise flags, and those are what the Privacy preset turns
-on. Nothing is promised in the UI that the browser cannot deliver.
+canvas/client-rects noise flags and ungoogled's WebGL spoofing, and those are
+what the Privacy preset turns on. Nothing is promised in the UI that the
+browser cannot deliver.
 
 Flags
 -----
@@ -68,27 +142,54 @@ Preset flags are appended to the local-state list about_flags reads at startup
 (browser.enabled_labs_experiments, the same list default-flags.patch seeds
 "extension-mime-request-handling@2" into). Existing entries are preserved and
 duplicates skipped, so applying a preset never clobbers a hand-set flag. Entry
-syntax follows FeatureEntry::NameForOption(): SINGLE_VALUE_TYPE entries are
-stored under their bare internal name, FEATURE_VALUE_TYPE entries have three
-options and "@1" is Enabled. Each flag was confirmed to exist at this revision:
+syntax follows FeatureEntry::NameForOption(): the option index is appended
+after an "@", and which index means what depends on the entry type -
+SINGLE_VALUE_TYPE has no options and is stored under its bare internal name;
+ENABLE_DISABLE_VALUE_TYPE and FEATURE_VALUE_TYPE have three options, so "@1" is
+Enabled; MULTI_VALUE_TYPE has one option per Choice; and
+FEATURE_WITH_PARAMS_VALUE_TYPE has 3 + variations options, where "@1" is
+Enabled with the feature's own default params. Each flag was confirmed to exist
+at this revision:
 
-  disable-search-engine-collection      SINGLE_VALUE   ungoogled
-  force-punycode-hostnames              SINGLE_VALUE   ungoogled
-  fingerprinting-canvas-image-data-noise    SINGLE_VALUE   bromite
-  fingerprinting-canvas-measuretext-noise   SINGLE_VALUE   bromite
-  fingerprinting-client-rects-noise         SINGLE_VALUE   bromite
-  remove-client-hints                   FEATURE_VALUE  ungoogled
-  reduced-system-info                   FEATURE_VALUE  ungoogled
-  increase-incognito-storage-quota      FEATURE_VALUE  ungoogled
-  enable-parallel-downloading           FEATURE_VALUE  upstream about_flags.cc
+  disable-search-engine-collection      SINGLE_VALUE          ungoogled
+  force-punycode-hostnames              SINGLE_VALUE          ungoogled
+  fingerprinting-canvas-image-data-noise     SINGLE_VALUE     bromite
+  fingerprinting-canvas-measuretext-noise    SINGLE_VALUE     bromite
+  fingerprinting-client-rects-noise          SINGLE_VALUE     bromite
+  remove-client-hints                   FEATURE_VALUE         ungoogled
+  reduced-system-info                   FEATURE_VALUE         ungoogled
+  minimal-referrers                     FEATURE_VALUE         ungoogled
+  increase-incognito-storage-quota      FEATURE_VALUE         ungoogled
+  spoof-webgl-info                      FEATURE_WITH_PARAMS   ungoogled
+  enable-parallel-downloading           FEATURE_VALUE         upstream about_flags.cc
+  max-connections-per-host              MULTI_VALUE           bromite
 
-Flags only take effect after a restart, unlike the prefs, and the status line
-says so.
+Two of those need their index spelled out:
+
+  spoof-webgl-info@1 is Enabled with no variation, so blink's
+  kSpoofWebGLRendererParam and kSpoofWebGLVendorParam keep the defaults they are
+  declared with in third_party/blink/common/features.cc - both " " - which is
+  the same blank renderer and vendor the "Blank" variation would set. Picking
+  the plain Enabled option rather than a named GPU is deliberate: claiming to be
+  a specific card is a fingerprint of its own if few other users claim it.
+
+  max-connections-per-host@1 is the second and last entry of
+  kMaxConnectionsPerHostChoices in chrome/browser/bromite_flag_choices.h, which
+  passes --max-connections-per-host=15. Index 0 is the Default choice.
+
+Rejected while auditing the list: chrome://flags/#disable-top-sites exists as a
+flag entry, but nothing at this revision reads the --disable-top-sites switch it
+sets, so it would be a promise the browser does not keep. #no-pings is real, but
+the enable_a_ping pref covers the same ground and takes effect without a
+restart, so the pref is used instead.
 
 While auditing that list: chrome://flags/#remove-tabsearch-button, which the
 page has been recommending, does not exist. It is in neither about_flags.cc nor
 any ungoogled-chromium/bromite flag header at this revision, so the bullet is
 removed rather than left pointing at nothing.
+
+Flags only take effect after a restart, unlike the prefs, and the status line
+says so.
 
 Import
 ------
@@ -135,7 +236,7 @@ importDataDialogTrigger while deleting everything around it.
   }
  </style>
  <base target="_blank">
-@@ -89,6 +104,60 @@
+@@ -89,6 +104,71 @@
   This page can always be reopened at <a href="chrome://aerium-first-run">chrome://aerium-first-run</a>.
  </section>
  <section>
@@ -154,7 +255,12 @@ importDataDialogTrigger while deleting everything around it.
 +    <li>Page preloading off</li>
 +    <li>Search engines not collected from the sites you visit</li>
 +    <li>Client Hints headers stripped</li>
-+    <li>Memory Saver on, Battery Saver on battery power</li>
++    <li>Hyperlink auditing pings never sent</li>
++    <li>Failed page loads never sent to a navigation-error service</li>
++    <li>Sites cannot probe whether you have a payment method saved</li>
++    <li>WebRTC restricted to your public interface, so calls cannot read your local network addresses</li>
++    <li>HTTPS-First balanced &mdash; public sites upgraded to HTTPS, with a warning if that fails</li>
++    <li>Memory Saver on, Battery Saver on battery power, no background process after you quit</li>
 +   </ul>
 +  </label>
 +  <label class="card preset" for="preset-privacy">
@@ -164,7 +270,12 @@ importDataDialogTrigger while deleting everything around it.
 +   <ul>
 +    <li>Browsing data deleted every time you close Aerium</li>
 +    <li>Search suggestions off &mdash; what you type in the address bar stays in the browser</li>
++    <li>HTTPS-First strict &mdash; every plaintext page warns first, including your router and other local
++     devices, which cannot hold a public certificate</li>
++    <li>WebRTC never uses non-proxied UDP, so a call cannot reveal an address your proxy or VPN hides</li>
++    <li>Cross-origin referrers removed, and same-origin ones cut down to the bare origin</li>
 +    <li>Canvas, getClientRects and measureText fingerprinting noise</li>
++    <li>WebGL reports a blank renderer and vendor instead of your real GPU</li>
 +    <li>Reduced system info, and two CPU cores reported regardless of the real count</li>
 +    <li>Internationalized domain names always shown as punycode</li>
 +    <li>Incognito storage quota raised, so sites cannot spot Incognito by its quota</li>
@@ -176,7 +287,8 @@ importDataDialogTrigger while deleting everything around it.
 +   <ul>
 +    <li>Page preloading on (standard)</li>
 +    <li>Parallel downloading for large files</li>
-+    <li>Memory Saver on &mdash; idle tabs release their memory</li>
++    <li>Up to 15 simultaneous connections per host instead of 6</li>
++    <li>Memory Saver on and aggressive &mdash; idle tabs release their memory sooner</li>
 +    <li>Battery Saver off &mdash; no throttling when unplugged</li>
 +   </ul>
 +  </label>
@@ -196,7 +308,19 @@ importDataDialogTrigger while deleting everything around it.
   <h2>Recommended, free and open-source</h2><p>
   None of these are installed automatically &mdash; they're just tools we think are worth knowing about.
   Every one is free, open-source, and independently maintained.
-@@ -226,8 +295,8 @@
+@@ -220,14 +300,17 @@
+  Aerium is built on <a href="https://github.com/ungoogled-software/ungoogled-chromium">ungoogled-chromium</a>,
+  which has its own <a href="https://github.com/ungoogled-software/ungoogled-chromium/blob/master/docs/default_settings.md">
+  default settings documentation</a> covering changes shared with every ungoogled-chromium build.<p>
+- One to know about: WebRTC's IP handling defaults to not exposing your local network address to sites.
+- If a voice or video call app misbehaves because of this, change it at
+- <code>chrome://flags/#webrtc-ip-handling-policy</code>.
++ One to know about: WebRTC's IP handling. Recommended and Performance keep calls on your public
++ interface only, which hides your local network address without getting in a call's way; Privacy goes
++ further and refuses non-proxied UDP entirely, which is what a proxy or VPN needs in order not to be
++ bypassed, and is also what occasionally breaks a call. Either can be overridden per profile at
++ <code>chrome://settings</code> &mdash; the pref is <code>webrtc.ip_handling_policy</code> &mdash; or for a
++ single launch at <code>chrome://flags/#webrtc-ip-handling-policy</code>.
  </section>
  <section>
   <h2>More privacy flags to consider</h2><p>
@@ -207,7 +331,12 @@ importDataDialogTrigger while deleting everything around it.
   <ul>
    <li><code>chrome://flags/#disable-search-engine-collection</code> &mdash; stop Chromium from scraping search engines it notices on visited pages.</li>
    <li><code>chrome://flags/#enable-parallel-downloading</code> &mdash; split downloads into multiple simultaneous requests for faster large files.</li>
-@@ -239,7 +308,6 @@
+@@ -236,10 +319,11 @@
+   <li><code>chrome://flags/#fingerprinting-client-rects-noise</code> &mdash; add tiny random noise to getClientRects()/getBoundingClientRect().</li>
+   <li><code>chrome://flags/#force-punycode-hostnames</code> &mdash; always show internationalized domain names as punycode, closing a homograph-spoofing vector.</li>
+   <li><code>chrome://flags/#increase-incognito-storage-quota</code> &mdash; raise the storage quota for Incognito and Guest profiles.</li>
++  <li><code>chrome://flags/#max-connections-per-host</code> &mdash; allow up to 15 simultaneous connections to one host instead of 6.</li>
++  <li><code>chrome://flags/#minimal-referrers</code> &mdash; drop cross-origin referrers entirely and cut same-origin ones down to the origin.</li>
    <li><code>chrome://flags/#popups-to-tabs</code> &mdash; open popup windows as new tabs instead.</li>
    <li><code>chrome://flags/#reduced-system-info</code> &mdash; reduce system info exposed via headers/JS, and report two CPU cores regardless of the real count.</li>
    <li><code>chrome://flags/#remove-client-hints</code> &mdash; strip Client Hints headers (detailed system info sent to servers).</li>
@@ -215,7 +344,7 @@ importDataDialogTrigger while deleting everything around it.
    <li><code>chrome://flags/#show-avatar-button</code> &mdash; control when the profile avatar button appears (always, only in Incognito/Guest, or never).</li>
    <li><code>chrome://flags/#spoof-webgl-info</code> &mdash; return generic WebGL renderer/vendor strings instead of your real GPU info.</li>
   </ul>
-@@ -275,6 +343,19 @@
+@@ -275,6 +359,19 @@
    }
    status.textContent = "Applied.";
   };
@@ -235,7 +364,7 @@ importDataDialogTrigger while deleting everything around it.
  </script>
  )";
      std::move(callback).Run(base::MakeRefCounted<base::RefCountedString>(std::move(source)));
-@@ -295,6 +376,10 @@
+@@ -295,6 +392,10 @@
          "aeriumSetSecureDns",
          base::BindRepeating(&UngoogledFirstRun::HandleSetSecureDns,
                              base::Unretained(this)));
@@ -246,7 +375,7 @@ importDataDialogTrigger while deleting everything around it.
    }
    UngoogledFirstRun(const UngoogledFirstRun&) = delete;
    UngoogledFirstRun& operator=(const UngoogledFirstRun&) = delete;
-@@ -313,6 +398,83 @@
+@@ -313,6 +414,116 @@
      local_state->SetString(prefs::kDnsOverHttpsMode, mode);
      local_state->SetString(prefs::kDnsOverHttpsTemplates, args[1].GetString());
    }
@@ -254,9 +383,11 @@ importDataDialogTrigger while deleting everything around it.
 +  // Adds chrome://flags entries to the local-state list about_flags reads at
 +  // startup, leaving anything already in it (including the seed from
 +  // default-flags.patch) alone. Entry syntax comes from
-+  // FeatureEntry::NameForOption(): a SINGLE_VALUE_TYPE entry is stored under
-+  // its bare internal name, while FEATURE_VALUE_TYPE has three options and
-+  // "@1" means Enabled.
++  // FeatureEntry::NameForOption(): the option index is appended after an "@",
++  // and a SINGLE_VALUE_TYPE entry has no options at all, so it is stored under
++  // its bare internal name. FEATURE_VALUE_TYPE has three options and "@1" is
++  // Enabled; MULTI_VALUE_TYPE has one per Choice; FEATURE_WITH_PARAMS_VALUE_TYPE
++  // has 3 + variations, where "@1" is Enabled with the feature's own defaults.
 +  static void SeedFlags(PrefService* local_state,
 +                        const std::vector<std::string>& entries) {
 +    // flags_ui::prefs::kAboutFlagsEntries.
@@ -294,22 +425,49 @@ importDataDialogTrigger while deleting everything around it.
 +    const bool privacy = preset == "privacy";
 +    const bool performance = preset == "performance";
 +
-+    // Profile prefs.
++    // Profile prefs every preset shares - the floor.
 +    prefs->SetBoolean("enable_do_not_track", true);
 +    // content_settings::CookieControlsMode::kBlockThirdParty.
 +    prefs->SetInteger("profile.cookie_controls_mode", 1);
++    // <a ping> hyperlink auditing. Nothing legitimate reads these.
++    prefs->SetBoolean("enable_a_ping", false);
++    // Never hand a failed navigation's URL to an error-resolution service.
++    prefs->SetBoolean("alternate_error_pages.enabled", false);
++    // Stop sites probing whether a payment method is saved.
++    prefs->SetBoolean("payments.can_make_payment_enabled", false);
++    // Writing this explicitly is what makes balanced mode take effect:
++    // IsBalancedModeEnabled() only reads the pref once HasPrefPath() is true.
++    prefs->SetBoolean("https_first_balanced_mode_enabled", true);
++
++    // Profile prefs the presets disagree about.
 +    // prefetch::NetworkPredictionOptions: kStandard = 0, kDisabled = 2.
 +    prefs->SetInteger("net.network_prediction_options", performance ? 0 : 2);
 +    prefs->SetBoolean("browser.clear_data.aerium_clear_on_exit", privacy);
 +    prefs->SetBoolean("search.suggest_enabled", !privacy);
++    // Strict HTTPS-First also warns on local hosts that cannot hold a public
++    // certificate, so only Privacy takes it.
++    prefs->SetBoolean("https_only_mode_enabled", privacy);
++    // blink::kWebRTCIPHandlingDisableNonProxiedUdp /
++    // blink::kWebRTCIPHandlingDefaultPublicInterfaceOnly. Both keep local
++    // interface addresses off the wire; only the first also refuses UDP that
++    // would walk past a proxy, at the cost of some calls.
++    prefs->SetString("webrtc.ip_handling_policy",
++                     privacy ? "disable_non_proxied_udp"
++                             : "default_public_interface_only");
 +
-+    // Memory and battery saver are local-state prefs - they are browser-wide,
-+    // not per profile.
++    // Memory saver, battery saver and background mode are local-state prefs -
++    // they are browser-wide, not per profile.
 +    // performance_manager MemorySaverModeState::kEnabled = 2.
 +    local_state->SetInteger("performance_tuning.high_efficiency_mode.state", 2);
++    // MemorySaverModeAggressiveness: kMedium = 1, kAggressive = 2.
++    local_state->SetInteger(
++        "performance_tuning.high_efficiency_mode.aggressiveness",
++        performance ? 2 : 1);
 +    // BatterySaverModeState: kDisabled = 0, kEnabledOnBattery = 2.
 +    local_state->SetInteger("performance_tuning.battery_saver_mode.state",
 +                            performance ? 0 : 2);
++    // Do not keep a process alive once the last window closes.
++    local_state->SetBoolean("background_mode.enabled", false);
 +
 +    std::vector<std::string> flags{
 +        "disable-search-engine-collection",  // SINGLE_VALUE_TYPE
@@ -320,11 +478,15 @@ importDataDialogTrigger while deleting everything around it.
 +      flags.push_back("fingerprinting-canvas-measuretext-noise");
 +      flags.push_back("fingerprinting-client-rects-noise");
 +      flags.push_back("force-punycode-hostnames");
++      flags.push_back("spoof-webgl-info@1");   // FEATURE_WITH_PARAMS, Enabled
 +      flags.push_back("reduced-system-info@1");
++      flags.push_back("minimal-referrers@1");
 +      flags.push_back("increase-incognito-storage-quota@1");
 +    }
-+    if (performance)
++    if (performance) {
 +      flags.push_back("enable-parallel-downloading@1");
++      flags.push_back("max-connections-per-host@1");  // MULTI_VALUE, "15"
++    }
 +    SeedFlags(local_state, flags);
 +  }
  };

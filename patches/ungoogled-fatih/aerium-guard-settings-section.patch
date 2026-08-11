@@ -39,14 +39,55 @@ lists that must agree is exactly the shape of bug this avoids.
 aerium_presets.h is header-only and entirely inline, so it needs no BUILD.gn
 entry - the same reason ungoogled_first_run.h is a header.
 
+What the modes contain
+----------------------
+All three share a privacy floor: Do Not Track, third-party cookies blocked, no
+<a ping> hyperlink auditing, no navigation-error web service, no payment-method
+probing, HTTPS-First in its balanced configuration, WebRTC held to the public
+interface so a call cannot enumerate local network addresses, no search-engine
+collection from visited sites, Client Hints stripped, Memory Saver on, and no
+background process kept alive after the last window closes. None of it costs
+measurable speed, so Performance keeps all of it.
+
+Privacy adds delete-on-exit and turns search suggestions off, moves HTTPS-First
+from balanced to strict, refuses non-proxied UDP for WebRTC, and switches on the
+referrer-stripping, fingerprinting-noise, WebGL-spoofing, reduced-system-info,
+punycode and incognito-quota flags. Those last two pref changes are the kind
+that get noticed: strict HTTPS-First warns on routers, NAS boxes and other local
+hosts that cannot hold a publicly trusted certificate, and refusing non-proxied
+UDP is what breaks a video call when no TURN relay is reachable. That is
+precisely why they belong to the preset whose premise is accepting tradeoffs
+rather than to the floor - the reasoning
+aerium-https-first-balanced-auto-enable.patch already set out for not making
+strict mode the default.
+
+Performance turns page preloading on, raises the per-host connection ceiling
+from 6 to 15, makes Memory Saver aggressive so idle tabs give their memory back
+sooner, adds parallel downloading, and switches Battery Saver off so nothing is
+throttled when unplugged.
+
+Every pref path and flag name was checked against the source at 151.0.7922.108
+before being added; aerium_presets.h records where each pref is declared and
+registered, which PrefService it belongs to, and what each integer literal
+means. Two candidates were dropped for failing that check: chrome://flags has a
+#disable-top-sites entry, but nothing at this revision reads the
+--disable-top-sites switch it sets; and #no-pings is real but duplicates the
+enable_a_ping pref, which takes effect without a restart.
+
 Custom
 ------
-DetectPreset() compares the seven prefs a preset writes and returns "custom"
-when they match none of the three. The page shows "Current: Custom" and no mode
-is marked active, which is the honest answer the moment anyone changes one of
-these settings by hand - and they can, from the Privacy, Performance and Search
-pages, which is the whole point of a preset being a shortcut rather than a mode
-the browser is locked into.
+DetectPreset() compares every pref a preset writes and returns "custom" when
+they match none of the three. The page shows "Current: Custom" and no mode is
+marked active, which is the honest answer the moment anyone changes one of these
+settings by hand - and they can, from the Privacy, Performance and Search pages,
+which is the whole point of a preset being a shortcut rather than a mode the
+browser is locked into.
+
+Adding a pref to a preset therefore changes detection, which is why ApplyPreset()
+and DetectPreset() both iterate the same PresetValues struct rather than two
+hand-kept lists: a field that is written but not compared cannot exist. The same
+goes for the PrefChangeRegistrars in the handler, which observe exactly the
+prefs PresetValues names.
 
 Flags are deliberately not part of detection. SeedFlags() only ever adds entries
 and never removes one, precisely so applying a preset cannot undo a flag the
@@ -58,22 +99,24 @@ so rather than leaving it to be discovered.
 Why the presets need a browser-side handler
 -------------------------------------------
 The individual settings on the page are ordinary settingsPrivate prefs and need
-no handler. The mode presets do: applying one writes seven prefs plus a set of
-chrome://flags entries, and browser.enabled_labs_experiments is a local-state
-pref that has no business being exposed to the settings WebUI at all. So
-AeriumGuardHandler applies and detects in the browser, which is also what keeps
-the definitions shared.
+no handler. The mode presets do: applying one writes fifteen prefs plus a set of
+chrome://flags entries, four of those prefs are local state rather than profile
+prefs, and browser.enabled_labs_experiments is a local-state pref that has no
+business being exposed to the settings WebUI at all. So AeriumGuardHandler
+applies and detects in the browser, which is also what keeps the definitions
+shared.
 
 It is a SettingsPageUIHandler, registered in settings_ui.cc next to the other
 handlers, and is header-only for the same reason as aerium_presets.h.
 
-It also observes the seven prefs with PrefChangeRegistrar and fires
+It also observes every one of those prefs with PrefChangeRegistrar and fires
 "aerium-guard-preset-changed" when any of them moves, so the displayed mode
 updates when the user changes one of these settings somewhere else - which is
 precisely when the answer becomes Custom. Observing them here rather than in
 TypeScript keeps the list of prefs a preset covers in one place with the rest of
-the definition. The profile prefs and the two local-state performance prefs get
-one registrar each.
+the definition. The eleven profile prefs and the four local-state prefs get one
+registrar each; mixing them would be a CHECK failure inside PrefService rather
+than a silent no-op.
 
 The delete-on-exit block, extracted but still single-homed
 ----------------------------------------------------------
@@ -116,7 +159,12 @@ search box throws when it reaches this section.
 
 Nothing needs adding to the settingsPrivate allowlist in prefs_util.cc. The page
 does not touch settingsPrivate at all: everything on it goes through the handler,
-and the preset prefs are written against the real PrefService.
+and the preset prefs are written against the real PrefService. That gate only
+applies to prefs a WebUI reads or writes through the settingsPrivate extension
+API, which none of these are from here. Some of them - the two HTTPS-First prefs
+in particular - are separately exposed to chrome://settings by upstream because
+the Privacy page binds a control to them, which is a bonus rather than a
+requirement: those controls follow along when a mode is applied.
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
 @@ -2211,6 +2211,48 @@
@@ -148,19 +196,19 @@ and the preset prefs are written against the real PrefService.
 +      Recommended
 +    </message>
 +    <message name="IDS_SETTINGS_AERIUM_GUARD_RECOMMENDED_DESC" desc="Description of the balanced, default setup mode.">
-+      Balanced. Do Not Track, third-party cookies blocked, no page preloading, search engines not collected from the sites you visit, Client Hints stripped, Memory Saver on and Battery Saver on battery power. Nothing here should get in a site's way.
++      Balanced. Do Not Track, third-party cookies blocked, no page preloading, no hyperlink auditing pings, failed page loads never sent to an error-resolution service, sites unable to probe for a saved payment method, HTTPS-First in its balanced configuration, WebRTC held to your public interface so calls cannot read your local network addresses, search engines not collected from the sites you visit, Client Hints stripped, Memory Saver on, Battery Saver on battery power, and no background process left running after you quit. Nothing here should get in a site's way.
 +    </message>
 +    <message name="IDS_SETTINGS_AERIUM_GUARD_PRIVACY_LABEL" desc="Name of the privacy-focused setup mode.">
 +      Privacy
 +    </message>
 +    <message name="IDS_SETTINGS_AERIUM_GUARD_PRIVACY_DESC" desc="Description of the privacy-focused setup mode.">
-+      Everything in Recommended, plus browsing data deleted when you close the browser, search suggestions off, fingerprinting noise, reduced system info, punycode hostnames and a raised Incognito storage quota. Expect to make exceptions for the odd site.
++      Everything in Recommended, plus browsing data deleted when you close the browser, search suggestions off, strict HTTPS-First, WebRTC refusing non-proxied UDP, cross-origin referrers removed, fingerprinting noise, a blank WebGL renderer and vendor, reduced system info, punycode hostnames and a raised Incognito storage quota. Strict HTTPS-First also warns on routers and other local devices, which cannot hold a public certificate, so expect to make exceptions for the odd site.
 +    </message>
 +    <message name="IDS_SETTINGS_AERIUM_GUARD_PERFORMANCE_LABEL" desc="Name of the speed-focused setup mode.">
 +      Performance
 +    </message>
 +    <message name="IDS_SETTINGS_AERIUM_GUARD_PERFORMANCE_DESC" desc="Description of the speed-focused setup mode.">
-+      The same privacy floor as Recommended, tuned for speed: page preloading on, parallel downloading, Memory Saver on and Battery Saver off so nothing is throttled when unplugged.
++      The same privacy floor as Recommended, tuned for speed: page preloading on, parallel downloading, up to 15 simultaneous connections per host instead of 6, Memory Saver on and set to release idle tabs sooner, and Battery Saver off so nothing is throttled when unplugged.
 +    </message>
 +    <message name="IDS_SETTINGS_AERIUM_GUARD_RESTART_NOTE" desc="Note explaining that part of what a setup mode changes only applies after the browser restarts.">
 +      Settings apply straight away. The chrome://flags entries a mode switches on need a restart, and are never switched off again, so a mode you leave keeps any flags it turned on.
@@ -617,7 +665,7 @@ and the preset prefs are written against the real PrefService.
              hidden="[[!pageVisibility_.performance]]">
 --- /dev/null
 +++ b/chrome/browser/ui/webui/aerium_presets.h
-@@ -0,0 +1,233 @@
+@@ -0,0 +1,375 @@
 +#ifndef CHROME_BROWSER_UI_WEBUI_AERIUM_PRESETS_H_
 +#define CHROME_BROWSER_UI_WEBUI_AERIUM_PRESETS_H_
 +
@@ -645,7 +693,8 @@ and the preset prefs are written against the real PrefService.
 +// comment. Every one was checked to exist and be registered at 151.0.7922.108:
 +//
 +//   enable_do_not_track                            bool, profile
-+//       chrome/common/pref_names.h, registered in browser_ui_prefs.cc
++//       chrome/common/pref_names.h, registered by RegisterBrowserUserPrefs in
++//       chrome/browser/ui/browser_ui_prefs.cc
 +//   profile.cookie_controls_mode                   int, profile
 +//       components/content_settings/core/common/pref_names.h, registered by
 +//       content_settings::CookieSettings::RegisterProfilePrefs.
@@ -658,15 +707,51 @@ and the preset prefs are written against the real PrefService.
 +//       added by aerium-clear-browsing-data-on-exit.patch, registered through
 +//       browsing_data::prefs::RegisterBrowserUserPrefs
 +//   search.suggest_enabled                         bool, profile
-+//   performance_tuning.high_efficiency_mode.state  int, LOCAL STATE
++//       chrome/common/pref_names.h, registered by Profile::RegisterProfilePrefs
++//   https_only_mode_enabled                        bool, profile
++//       chrome/common/pref_names.h (kHttpsOnlyModeEnabled), registered by
++//       RegisterBrowserUserPrefs
++//   https_first_balanced_mode_enabled              bool, profile
++//       chrome/common/pref_names.h (kHttpsFirstBalancedMode), registered by
++//       RegisterBrowserUserPrefs; aerium-https-first-balanced.patch changes
++//       its registered default to true
++//   webrtc.ip_handling_policy                      string, profile
++//       chrome/common/pref_names.h (kWebRTCIPHandlingPolicy), registered by
++//       RegisterBrowserUserPrefs. The legal values are the
++//       blink::kWebRTCIPHandling* constants in
++//       third_party/blink/common/peerconnection/webrtc_ip_handling_policy.cc
++//   enable_a_ping                                  bool, profile
++//       chrome/common/pref_names.h (kEnableHyperlinkAuditing), registered by
++//       ChromeContentBrowserClient::RegisterProfilePrefs
++//   alternate_error_pages.enabled                  bool, profile
++//       components/embedder_support/pref_names.h, registered by
++//       ProfileNetworkContextService::RegisterProfilePrefs
++//   payments.can_make_payment_enabled              bool, profile
++//       components/payments/core/payment_prefs.h, registered by
++//       payments::RegisterProfilePrefs
++//   performance_tuning.high_efficiency_mode.state           int, LOCAL STATE
 +//       MemorySaverModeState: kDisabled=0, kDeprecated=1, kEnabled=2
-+//   performance_tuning.battery_saver_mode.state    int, LOCAL STATE
++//   performance_tuning.high_efficiency_mode.aggressiveness  int, LOCAL STATE
++//       MemorySaverModeAggressiveness: kConservative=0, kMedium=1,
++//       kAggressive=2
++//   performance_tuning.battery_saver_mode.state             int, LOCAL STATE
 +//       BatterySaverModeState: kDisabled=0, kEnabledBelowThreshold=1,
 +//       kEnabledOnBattery=2, kEnabled=3
++//       All three are declared in
++//       components/performance_manager/public/user_tuning/prefs.h and come
++//       from its RegisterLocalStatePrefs, not its RegisterProfilePrefs.
++//   background_mode.enabled                                 bool, LOCAL STATE
++//       chrome/common/pref_names.h (kBackgroundModeEnabled), registered by
++//       BackgroundModeManager::RegisterPrefs under
++//       BUILDFLAG(ENABLE_BACKGROUND_MODE), which chrome/common/features.gni
++//       defines as !is_android && !is_chromeos - true for both desktop targets
 +//
-+// The two performance prefs are browser-wide, not per profile - they come from
-+// RegisterLocalStatePrefs, not RegisterProfilePrefs - so they are read from and
-+// written to g_browser_process->local_state().
++// The performance prefs and background_mode.enabled are browser-wide, not per
++// profile - they come from RegisterLocalStatePrefs, not RegisterProfilePrefs -
++// so they are read from and written to g_browser_process->local_state().
++// Reaching for the wrong PrefService is a CHECK failure inside PrefService, not
++// a silent no-op, which is why each constant below says which one it belongs
++// to.
 +namespace aerium_presets {
 +
 +// Preset names, as they travel over chrome.send() and appear in the UI.
@@ -685,24 +770,51 @@ and the preset prefs are written against the real PrefService.
 +inline constexpr char kClearDataOnExit[] =
 +    "browser.clear_data.aerium_clear_on_exit";
 +inline constexpr char kSearchSuggestEnabled[] = "search.suggest_enabled";
++inline constexpr char kHttpsOnlyMode[] = "https_only_mode_enabled";
++inline constexpr char kHttpsFirstBalancedMode[] =
++    "https_first_balanced_mode_enabled";
++inline constexpr char kWebRtcIpHandlingPolicy[] = "webrtc.ip_handling_policy";
++inline constexpr char kHyperlinkAuditing[] = "enable_a_ping";
++inline constexpr char kAlternateErrorPages[] = "alternate_error_pages.enabled";
++inline constexpr char kCanMakePayment[] = "payments.can_make_payment_enabled";
++
++// Values for kWebRtcIpHandlingPolicy, spelled the way
++// blink::kWebRTCIPHandlingDefaultPublicInterfaceOnly and
++// blink::kWebRTCIPHandlingDisableNonProxiedUdp spell them.
++inline constexpr char kWebRtcPublicInterfaceOnly[] =
++    "default_public_interface_only";
++inline constexpr char kWebRtcDisableNonProxiedUdp[] = "disable_non_proxied_udp";
 +
 +// Local-state prefs a preset writes.
 +inline constexpr char kMemorySaverModeState[] =
 +    "performance_tuning.high_efficiency_mode.state";
++inline constexpr char kMemorySaverAggressiveness[] =
++    "performance_tuning.high_efficiency_mode.aggressiveness";
 +inline constexpr char kBatterySaverModeState[] =
 +    "performance_tuning.battery_saver_mode.state";
++inline constexpr char kBackgroundModeEnabled[] = "background_mode.enabled";
 +// flags_ui::prefs::kAboutFlagsEntries - the list about_flags reads at startup.
 +inline constexpr char kAboutFlagsEntries[] = "browser.enabled_labs_experiments";
 +
 +// What a preset sets each pref to.
 +struct PresetValues {
++  // Profile prefs.
 +  bool do_not_track;
 +  int cookie_controls_mode;
 +  int network_prediction_options;
 +  bool clear_data_on_exit;
 +  bool search_suggest_enabled;
++  bool https_only_mode;
++  bool https_first_balanced_mode;
++  const char* webrtc_ip_handling_policy;
++  bool hyperlink_auditing;
++  bool alternate_error_pages;
++  bool can_make_payment;
++  // Local-state prefs.
 +  int memory_saver_mode_state;
++  int memory_saver_aggressiveness;
 +  int battery_saver_mode_state;
++  bool background_mode_enabled;
 +};
 +
 +inline bool IsApplicablePreset(std::string_view preset) {
@@ -710,20 +822,32 @@ and the preset prefs are written against the real PrefService.
 +         preset == kPerformance;
 +}
 +
-+// All three presets share a privacy floor - Do Not Track, third-party cookies
-+// blocked, Memory Saver on - and differ only in what they trade away.
++// All three presets share a privacy floor and differ only in what they trade
++// away for it.
++//
++// The floor: Do Not Track, third-party cookies blocked, no <a ping> hyperlink
++// auditing, no navigation-error web service, no payment-method probing,
++// HTTPS-First in its balanced configuration, WebRTC held to the public
++// interface so a call cannot enumerate local network addresses, Memory Saver
++// on, and no background process kept alive after the last window closes. None
++// of that costs measurable speed, so Performance keeps all of it.
 +//
 +//   Recommended keeps page preloading off and search suggestions on, and leaves
 +//   Battery Saver on battery power. It is deliberately the boring one: nothing
 +//   in it should ever make a site misbehave.
 +//
-+//   Privacy adds delete-on-exit and turns search suggestions off, so nothing
-+//   typed in the address bar leaves the browser at all.
++//   Privacy adds delete-on-exit, turns search suggestions off so nothing typed
++//   in the address bar leaves the browser at all, moves HTTPS-First from
++//   balanced to strict, and refuses non-proxied UDP for WebRTC. Both of those
++//   last two are real tradeoffs - strict mode warns on local hosts that cannot
++//   hold a public certificate, and refusing non-proxied UDP is what breaks a
++//   call when no TURN relay is reachable - which is exactly why they belong to
++//   the preset whose whole premise is accepting tradeoffs.
 +//
-+//   Performance turns page preloading on (kStandard) and switches Battery Saver
-+//   off so nothing is throttled when unplugged. Memory Saver stays on:
-+//   releasing idle tabs helps responsiveness rather than hurting it. The
-+//   privacy floor is unchanged - none of it costs measurable speed.
++//   Performance turns page preloading on (kStandard), makes Memory Saver
++//   aggressive so idle tabs give their memory back sooner, and switches Battery
++//   Saver off so nothing is throttled when unplugged. Memory Saver itself stays
++//   on: releasing idle tabs helps responsiveness rather than hurting it.
 +inline std::optional<PresetValues> GetPresetValues(std::string_view preset) {
 +  if (!IsApplicablePreset(preset)) {
 +    return std::nullopt;
@@ -732,24 +856,46 @@ and the preset prefs are written against the real PrefService.
 +  const bool performance = preset == kPerformance;
 +
 +  PresetValues values;
++
++  // The floor, identical in all three.
 +  values.do_not_track = true;
 +  // content_settings::CookieControlsMode::kBlockThirdParty.
 +  values.cookie_controls_mode = 1;
++  values.hyperlink_auditing = false;
++  values.alternate_error_pages = false;
++  values.can_make_payment = false;
++  // Written explicitly rather than left to the registered default because
++  // IsBalancedModeEnabled() in chrome/browser/ssl/https_upgrades_util.cc only
++  // consults the pref once HasPrefPath() is true, and falls through to the
++  // kHttpsFirstBalancedModeAutoEnable feature before that.
++  values.https_first_balanced_mode = true;
++  // performance_manager MemorySaverModeState::kEnabled = 2.
++  values.memory_saver_mode_state = 2;
++  values.background_mode_enabled = false;
++
++  // Where the presets disagree.
 +  // prefetch::NetworkPredictionOptions: kStandard = 0, kDisabled = 2.
 +  values.network_prediction_options = performance ? 0 : 2;
 +  values.clear_data_on_exit = privacy;
 +  values.search_suggest_enabled = !privacy;
-+  // performance_manager MemorySaverModeState::kEnabled = 2.
-+  values.memory_saver_mode_state = 2;
++  values.https_only_mode = privacy;
++  values.webrtc_ip_handling_policy =
++      privacy ? kWebRtcDisableNonProxiedUdp : kWebRtcPublicInterfaceOnly;
++  // MemorySaverModeAggressiveness: kMedium = 1, kAggressive = 2.
++  values.memory_saver_aggressiveness = performance ? 2 : 1;
 +  // BatterySaverModeState: kDisabled = 0, kEnabledOnBattery = 2.
 +  values.battery_saver_mode_state = performance ? 0 : 2;
 +  return values;
 +}
 +
 +// chrome://flags entries a preset switches on. Entry syntax follows
-+// FeatureEntry::NameForOption(): a SINGLE_VALUE_TYPE entry is stored under its
-+// bare internal name, a FEATURE_VALUE_TYPE entry has three options and "@1"
-+// means Enabled. Each flag was confirmed to exist at this revision.
++// FeatureEntry::NameForOption(): the option index is appended after an "@", and
++// which index means what depends on the entry type. A SINGLE_VALUE_TYPE entry
++// has no options at all and is stored under its bare internal name;
++// FEATURE_VALUE_TYPE has three options, so "@1" is Enabled; MULTI_VALUE_TYPE
++// has one option per Choice; and FEATURE_WITH_PARAMS_VALUE_TYPE has
++// 3 + variations options, where "@1" is Enabled with the feature's own default
++// params. Each flag was confirmed to exist at this revision.
 +inline std::vector<std::string> GetPresetFlags(std::string_view preset) {
 +  std::vector<std::string> flags;
 +  if (!IsApplicablePreset(preset)) {
@@ -762,11 +908,23 @@ and the preset prefs are written against the real PrefService.
 +    flags.push_back("fingerprinting-canvas-measuretext-noise");  // bromite
 +    flags.push_back("fingerprinting-client-rects-noise");        // bromite
 +    flags.push_back("force-punycode-hostnames");                 // ungoogled
++    // FEATURE_WITH_PARAMS; "@1" is Enabled with kSpoofWebGLRendererParam and
++    // kSpoofWebGLVendorParam at the " " defaults they are declared with, which
++    // is the same blank renderer and vendor the "Blank" variation sets.
++    // Claiming a specific card instead would be a fingerprint of its own.
++    flags.push_back("spoof-webgl-info@1");                       // ungoogled
 +    flags.push_back("reduced-system-info@1");                    // ungoogled
++    // Drops cross-origin referrers entirely and cuts same-origin ones down to
++    // the origin. A site that checks Referer for its own forms still sees one.
++    flags.push_back("minimal-referrers@1");                      // ungoogled
 +    flags.push_back("increase-incognito-storage-quota@1");       // ungoogled
 +  }
 +  if (preset == kPerformance) {
 +    flags.push_back("enable-parallel-downloading@1");  // upstream about_flags
++    // MULTI_VALUE; index 1 is the second and last entry of
++    // kMaxConnectionsPerHostChoices, which passes
++    // --max-connections-per-host=15 in place of the default 6.
++    flags.push_back("max-connections-per-host@1");     // bromite
 +  }
 +  return flags;
 +}
@@ -803,11 +961,24 @@ and the preset prefs are written against the real PrefService.
 +  profile_prefs->SetBoolean(kClearDataOnExit, values->clear_data_on_exit);
 +  profile_prefs->SetBoolean(kSearchSuggestEnabled,
 +                            values->search_suggest_enabled);
++  profile_prefs->SetBoolean(kHttpsOnlyMode, values->https_only_mode);
++  profile_prefs->SetBoolean(kHttpsFirstBalancedMode,
++                            values->https_first_balanced_mode);
++  profile_prefs->SetString(kWebRtcIpHandlingPolicy,
++                           values->webrtc_ip_handling_policy);
++  profile_prefs->SetBoolean(kHyperlinkAuditing, values->hyperlink_auditing);
++  profile_prefs->SetBoolean(kAlternateErrorPages,
++                            values->alternate_error_pages);
++  profile_prefs->SetBoolean(kCanMakePayment, values->can_make_payment);
 +
 +  local_state->SetInteger(kMemorySaverModeState,
 +                          values->memory_saver_mode_state);
++  local_state->SetInteger(kMemorySaverAggressiveness,
++                          values->memory_saver_aggressiveness);
 +  local_state->SetInteger(kBatterySaverModeState,
 +                          values->battery_saver_mode_state);
++  local_state->SetBoolean(kBackgroundModeEnabled,
++                          values->background_mode_enabled);
 +
 +  SeedFlags(local_state, GetPresetFlags(preset));
 +  return true;
@@ -816,6 +987,11 @@ and the preset prefs are written against the real PrefService.
 +// Returns the preset the current settings correspond to, or kCustom when they
 +// match none of them - which is the honest answer as soon as the user changes
 +// any one of these settings by hand, and is what the Aerium Guard page shows.
++//
++// It compares every pref ApplyPreset() writes and nothing else, so the two stay
++// in step by construction: a pref added to PresetValues is compared here
++// without any further edit, and one that is only written but not compared
++// cannot exist.
 +//
 +// Only the prefs are compared, not the chrome://flags entries. SeedFlags() only
 +// ever adds entries and never removes one, precisely so that a preset cannot
@@ -838,10 +1014,24 @@ and the preset prefs are written against the real PrefService.
 +            values.clear_data_on_exit &&
 +        profile_prefs->GetBoolean(kSearchSuggestEnabled) ==
 +            values.search_suggest_enabled &&
++        profile_prefs->GetBoolean(kHttpsOnlyMode) == values.https_only_mode &&
++        profile_prefs->GetBoolean(kHttpsFirstBalancedMode) ==
++            values.https_first_balanced_mode &&
++        profile_prefs->GetString(kWebRtcIpHandlingPolicy) ==
++            values.webrtc_ip_handling_policy &&
++        profile_prefs->GetBoolean(kHyperlinkAuditing) ==
++            values.hyperlink_auditing &&
++        profile_prefs->GetBoolean(kAlternateErrorPages) ==
++            values.alternate_error_pages &&
++        profile_prefs->GetBoolean(kCanMakePayment) == values.can_make_payment &&
 +        local_state->GetInteger(kMemorySaverModeState) ==
 +            values.memory_saver_mode_state &&
++        local_state->GetInteger(kMemorySaverAggressiveness) ==
++            values.memory_saver_aggressiveness &&
 +        local_state->GetInteger(kBatterySaverModeState) ==
-+            values.battery_saver_mode_state) {
++            values.battery_saver_mode_state &&
++        local_state->GetBoolean(kBackgroundModeEnabled) ==
++            values.background_mode_enabled) {
 +      return preset;
 +    }
 +  }
@@ -853,7 +1043,7 @@ and the preset prefs are written against the real PrefService.
 +#endif  // CHROME_BROWSER_UI_WEBUI_AERIUM_PRESETS_H_
 --- /dev/null
 +++ b/chrome/browser/ui/webui/settings/aerium_guard_handler.h
-@@ -0,0 +1,120 @@
+@@ -0,0 +1,132 @@
 +#ifndef CHROME_BROWSER_UI_WEBUI_SETTINGS_AERIUM_GUARD_HANDLER_H_
 +#define CHROME_BROWSER_UI_WEBUI_SETTINGS_AERIUM_GUARD_HANDLER_H_
 +
@@ -876,11 +1066,12 @@ and the preset prefs are written against the real PrefService.
 +//
 +// The individual prefs on that page are ordinary settingsPrivate prefs and need
 +// no handler. This exists for the mode presets, which are not a pref: applying
-+// one writes seven prefs plus a set of chrome://flags entries, and
++// one writes a dozen-odd prefs plus a set of chrome://flags entries, four of
++// those prefs are local state rather than profile prefs, and
 +// browser.enabled_labs_experiments is local state that has no business being
-+// exposed to the settings WebUI. Both applying and detecting therefore happen
-+// in the browser, against aerium_presets.h - the same definitions the first-run
-+// screen applies, so the two cannot drift.
++// exposed to the settings WebUI at all. Both applying and detecting therefore
++// happen in the browser, against aerium_presets.h - the same definitions the
++// first-run screen applies, so the two cannot drift.
 +//
 +// Header-only for the same reason ungoogled_first_run.h is: it needs no
 +// BUILD.gn entry.
@@ -910,7 +1101,10 @@ and the preset prefs are written against the real PrefService.
 +  // changes - including when it changes because the user edited one of these
 +  // settings somewhere else entirely, which is exactly when the answer becomes
 +  // "Custom". Observing the prefs here rather than in TypeScript keeps the list
-+  // of prefs a preset covers in one place.
++  // of prefs a preset covers in one place. Every pref named in PresetValues is
++  // observed, split between the two registrars the same way aerium_presets.h
++  // splits them: profile prefs on the profile's PrefService, the performance and
++  // background-mode prefs on local state.
 +  void OnJavascriptAllowed() override {
 +    auto notify = base::BindRepeating(&AeriumGuardHandler::NotifyPresetChanged,
 +                                      base::Unretained(this));
@@ -919,13 +1113,21 @@ and the preset prefs are written against the real PrefService.
 +                                    aerium_presets::kCookieControlsMode,
 +                                    aerium_presets::kNetworkPredictionOptions,
 +                                    aerium_presets::kClearDataOnExit,
-+                                    aerium_presets::kSearchSuggestEnabled},
++                                    aerium_presets::kSearchSuggestEnabled,
++                                    aerium_presets::kHttpsOnlyMode,
++                                    aerium_presets::kHttpsFirstBalancedMode,
++                                    aerium_presets::kWebRtcIpHandlingPolicy,
++                                    aerium_presets::kHyperlinkAuditing,
++                                    aerium_presets::kAlternateErrorPages,
++                                    aerium_presets::kCanMakePayment},
 +                                   notify);
 +    if (PrefService* local_state = g_browser_process->local_state()) {
 +      local_state_registrar_.Init(local_state);
 +      local_state_registrar_.AddMultiple(
 +          {aerium_presets::kMemorySaverModeState,
-+           aerium_presets::kBatterySaverModeState},
++           aerium_presets::kMemorySaverAggressiveness,
++           aerium_presets::kBatterySaverModeState,
++           aerium_presets::kBackgroundModeEnabled},
 +          notify);
 +    }
 +  }
@@ -1030,16 +1232,18 @@ and the preset prefs are written against the real PrefService.
  #include "chrome/common/pref_names.h"
  #include "components/prefs/pref_service.h"
  #include "content/public/browser/url_data_source.h"
-@@ -399,81 +400,18 @@
+@@ -415,114 +416,18 @@
      local_state->SetString(prefs::kDnsOverHttpsTemplates, args[1].GetString());
    }
  
 -  // Adds chrome://flags entries to the local-state list about_flags reads at
 -  // startup, leaving anything already in it (including the seed from
 -  // default-flags.patch) alone. Entry syntax comes from
--  // FeatureEntry::NameForOption(): a SINGLE_VALUE_TYPE entry is stored under
--  // its bare internal name, while FEATURE_VALUE_TYPE has three options and
--  // "@1" means Enabled.
+-  // FeatureEntry::NameForOption(): the option index is appended after an "@",
+-  // and a SINGLE_VALUE_TYPE entry has no options at all, so it is stored under
+-  // its bare internal name. FEATURE_VALUE_TYPE has three options and "@1" is
+-  // Enabled; MULTI_VALUE_TYPE has one per Choice; FEATURE_WITH_PARAMS_VALUE_TYPE
+-  // has 3 + variations, where "@1" is Enabled with the feature's own defaults.
 -  static void SeedFlags(PrefService* local_state,
 -                        const std::vector<std::string>& entries) {
 -    // flags_ui::prefs::kAboutFlagsEntries.
@@ -1081,22 +1285,49 @@ and the preset prefs are written against the real PrefService.
 -    const bool privacy = preset == "privacy";
 -    const bool performance = preset == "performance";
 -
--    // Profile prefs.
+-    // Profile prefs every preset shares - the floor.
 -    prefs->SetBoolean("enable_do_not_track", true);
 -    // content_settings::CookieControlsMode::kBlockThirdParty.
 -    prefs->SetInteger("profile.cookie_controls_mode", 1);
+-    // <a ping> hyperlink auditing. Nothing legitimate reads these.
+-    prefs->SetBoolean("enable_a_ping", false);
+-    // Never hand a failed navigation's URL to an error-resolution service.
+-    prefs->SetBoolean("alternate_error_pages.enabled", false);
+-    // Stop sites probing whether a payment method is saved.
+-    prefs->SetBoolean("payments.can_make_payment_enabled", false);
+-    // Writing this explicitly is what makes balanced mode take effect:
+-    // IsBalancedModeEnabled() only reads the pref once HasPrefPath() is true.
+-    prefs->SetBoolean("https_first_balanced_mode_enabled", true);
+-
+-    // Profile prefs the presets disagree about.
 -    // prefetch::NetworkPredictionOptions: kStandard = 0, kDisabled = 2.
 -    prefs->SetInteger("net.network_prediction_options", performance ? 0 : 2);
 -    prefs->SetBoolean("browser.clear_data.aerium_clear_on_exit", privacy);
 -    prefs->SetBoolean("search.suggest_enabled", !privacy);
+-    // Strict HTTPS-First also warns on local hosts that cannot hold a public
+-    // certificate, so only Privacy takes it.
+-    prefs->SetBoolean("https_only_mode_enabled", privacy);
+-    // blink::kWebRTCIPHandlingDisableNonProxiedUdp /
+-    // blink::kWebRTCIPHandlingDefaultPublicInterfaceOnly. Both keep local
+-    // interface addresses off the wire; only the first also refuses UDP that
+-    // would walk past a proxy, at the cost of some calls.
+-    prefs->SetString("webrtc.ip_handling_policy",
+-                     privacy ? "disable_non_proxied_udp"
+-                             : "default_public_interface_only");
 -
--    // Memory and battery saver are local-state prefs - they are browser-wide,
--    // not per profile.
+-    // Memory saver, battery saver and background mode are local-state prefs -
+-    // they are browser-wide, not per profile.
 -    // performance_manager MemorySaverModeState::kEnabled = 2.
 -    local_state->SetInteger("performance_tuning.high_efficiency_mode.state", 2);
+-    // MemorySaverModeAggressiveness: kMedium = 1, kAggressive = 2.
+-    local_state->SetInteger(
+-        "performance_tuning.high_efficiency_mode.aggressiveness",
+-        performance ? 2 : 1);
 -    // BatterySaverModeState: kDisabled = 0, kEnabledOnBattery = 2.
 -    local_state->SetInteger("performance_tuning.battery_saver_mode.state",
 -                            performance ? 0 : 2);
+-    // Do not keep a process alive once the last window closes.
+-    local_state->SetBoolean("background_mode.enabled", false);
 -
 -    std::vector<std::string> flags{
 -        "disable-search-engine-collection",  // SINGLE_VALUE_TYPE
@@ -1107,11 +1338,15 @@ and the preset prefs are written against the real PrefService.
 -      flags.push_back("fingerprinting-canvas-measuretext-noise");
 -      flags.push_back("fingerprinting-client-rects-noise");
 -      flags.push_back("force-punycode-hostnames");
+-      flags.push_back("spoof-webgl-info@1");   // FEATURE_WITH_PARAMS, Enabled
 -      flags.push_back("reduced-system-info@1");
+-      flags.push_back("minimal-referrers@1");
 -      flags.push_back("increase-incognito-storage-quota@1");
 -    }
--    if (performance)
+-    if (performance) {
 -      flags.push_back("enable-parallel-downloading@1");
+-      flags.push_back("max-connections-per-host@1");  // MULTI_VALUE, "15"
+-    }
 -    SeedFlags(local_state, flags);
 +    aerium_presets::ApplyPreset(args[0].GetString(), profile->GetPrefs(),
 +                                g_browser_process->local_state());

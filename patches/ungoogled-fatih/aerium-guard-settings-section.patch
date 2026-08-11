@@ -93,7 +93,12 @@ missed:
   - A <div slot="view" id="aeriumGuard"> in settings_main.html - the id has to
     match the section name passed to createSection(), which is how
     cr-view-manager finds it - and the element imported in settings_main.ts.
-  - The menu item in settings_menu.html, after Privacy and security.
+  - The menu item in settings_menu.html, after Privacy and security. Its icon
+    is <cr-icon icon="settings20:shield">: the shield glyph is declared in the
+    settings20 iconset in settings/icons.html, not in the settings one, and
+    cr-icon draws nothing at all for an iconset:id pair that does not resolve.
+    The AI entry two rows down already uses settings20:magic, so a 20px icon
+    among the 24px ones is the menu's own existing practice.
   - Sixteen new IDS_ strings in settings_strings.grdp with their mappings in
     settings_localized_strings_provider.cc, including aeriumGuardPageTitle,
     which route.ts reads through loadTimeData at module load.
@@ -615,7 +620,7 @@ them against the real PrefService.
          </a>
 +        <a role="menuitem" id="aeriumGuard" href="/aeriumGuard"
 +            class="cr-nav-menu-item">
-+          <cr-icon icon="settings:shield"></cr-icon>
++          <cr-icon icon="settings20:shield"></cr-icon>
 +          $i18n{aeriumGuardPageTitle}
 +          <cr-ripple></cr-ripple>
 +        </a>

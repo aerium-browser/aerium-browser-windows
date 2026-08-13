@@ -141,7 +141,7 @@ restart - reuses the messages the settings page already defines.
        "//extensions/browser",
 --- /dev/null
 +++ b/chrome/browser/ui/views/location_bar/aerium_guard_icon_view.h
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,108 @@
 +#ifndef CHROME_BROWSER_UI_VIEWS_LOCATION_BAR_AERIUM_GUARD_ICON_VIEW_H_
 +#define CHROME_BROWSER_UI_VIEWS_LOCATION_BAR_AERIUM_GUARD_ICON_VIEW_H_
 +
@@ -151,7 +151,7 @@ restart - reuses the messages the settings page already defines.
 +#include "chrome/browser/ui/views/page_action/page_action_icon_view.h"
 +#include "components/prefs/pref_change_registrar.h"
 +#include "ui/base/metadata/metadata_header_macros.h"
-+#include "ui/views/view_observer.h"
++#include "ui/views/widget/widget_observer.h"
 +
 +class AeriumGuardBubbleView;
 +class Profile;
@@ -162,6 +162,7 @@ restart - reuses the messages the settings page already defines.
 +
 +namespace views {
 +class BubbleDialogDelegate;
++class Widget;
 +}
 +
 +// The Aerium Guard button in the address bar.
@@ -194,7 +195,7 @@ restart - reuses the messages the settings page already defines.
 +// what makes it disappear while the user is typing in the omnibox like the
 +// others do.
 +class AeriumGuardIconView : public PageActionIconView,
-+                            public views::ViewObserver {
++                            public views::WidgetObserver {
 +  METADATA_HEADER(AeriumGuardIconView, PageActionIconView)
 +
 + public:
@@ -205,8 +206,8 @@ restart - reuses the messages the settings page already defines.
 +  AeriumGuardIconView& operator=(const AeriumGuardIconView&) = delete;
 +  ~AeriumGuardIconView() override;
 +
-+  // views::ViewObserver:
-+  void OnViewIsDeleting(views::View* observed_view) override;
++  // views::WidgetObserver:
++  void OnWidgetDestroying(views::Widget* widget) override;
 +
 + protected:
 +  // PageActionIconView:
@@ -235,16 +236,23 @@ restart - reuses the messages the settings page already defines.
 +  PrefChangeRegistrar profile_registrar_;
 +  PrefChangeRegistrar local_state_registrar_;
 +
-+  // The open bubble, or null. Cleared through ViewObserver when it goes away;
-+  // PageActionIconView::IsBubbleShowing() reads it to toggle the bubble shut
-+  // when the button is clicked a second time.
++  // The open bubble and the Widget hosting it, or null. Both are cleared
++  // through WidgetObserver when the bubble goes away;
++  // PageActionIconView::IsBubbleShowing() reads GetBubble() to toggle the
++  // bubble shut when the button is clicked a second time.
++  //
++  // The Widget is observed rather than the View: PageActionIconView is
++  // already a views::ViewObserver by way of AnimationDelegateViews, which
++  // declares OnViewIsDeleting() final, so a second ViewObserver base is both
++  // ambiguous and impossible to override.
 +  raw_ptr<AeriumGuardBubbleView> bubble_ = nullptr;
++  raw_ptr<views::Widget> bubble_widget_ = nullptr;
 +};
 +
 +#endif  // CHROME_BROWSER_UI_VIEWS_LOCATION_BAR_AERIUM_GUARD_ICON_VIEW_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/location_bar/aerium_guard_icon_view.cc
-@@ -0,0 +1,270 @@
+@@ -0,0 +1,276 @@
 +#include "chrome/browser/ui/views/location_bar/aerium_guard_icon_view.h"
 +
 +#include <memory>
@@ -460,12 +468,14 @@ restart - reuses the messages the settings page already defines.
 +}
 +
 +AeriumGuardIconView::~AeriumGuardIconView() {
-+  if (bubble_) {
-+    bubble_->View::RemoveObserver(this);
++  if (bubble_widget_) {
++    bubble_widget_->RemoveObserver(this);
 +  }
 +}
 +
-+void AeriumGuardIconView::OnViewIsDeleting(views::View* observed_view) {
++void AeriumGuardIconView::OnWidgetDestroying(views::Widget* widget) {
++  widget->RemoveObserver(this);
++  bubble_widget_ = nullptr;
 +  bubble_ = nullptr;
 +  // The tooltip is suppressed while the bubble is up; put it back now that it
 +  // is not.
@@ -488,10 +498,14 @@ restart - reuses the messages the settings page already defines.
 +  auto bubble = std::make_unique<AeriumGuardBubbleView>(
 +      this, delegate()->GetWebContentsForPageActionIconView(), profile_);
 +  bubble_ = bubble.get();
-+  // Both LocationBarBubbleDelegateView and views::View declare AddObserver, so
-+  // the base class has to be named.
-+  bubble_->View::AddObserver(this);
-+  views::BubbleDialogDelegateView::CreateBubble(std::move(bubble))->Show();
++  // The Widget is what gets observed: PageActionIconView already inherits
++  // views::ViewObserver through AnimationDelegateViews, which declares
++  // OnViewIsDeleting() final, so this class cannot be a ViewObserver of its
++  // own. The bubble delegate is destroyed with its Widget either way.
++  bubble_widget_ =
++      views::BubbleDialogDelegateView::CreateBubble(std::move(bubble));
++  bubble_widget_->AddObserver(this);
++  bubble_widget_->Show();
 +}
 +
 +views::BubbleDialogDelegate* AeriumGuardIconView::GetBubble() const {

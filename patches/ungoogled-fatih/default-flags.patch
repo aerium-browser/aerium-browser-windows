@@ -1,19 +1,28 @@
 --- a/components/webui/flags/pref_service_flags_storage.cc
 +++ b/components/webui/flags/pref_service_flags_storage.cc
-@@ -87,7 +87,17 @@
+@@ -87,7 +87,26 @@
  
  // static
  void PrefServiceFlagsStorage::RegisterPrefs(PrefRegistrySimple* registry) {
 -  registry->RegisterListPref(prefs::kAboutFlagsEntries);
-+  // Silently seed just this one flag by default (it's a security backstop -
-+  // don't silently download-and-run a CRX/user-script MIME type without
-+  // asking first - not really an opt-in "feature" the way the others are).
-+  // The other recommended ungoogled-chromium/bromite flags are intentionally
-+  // NOT pref-seeded here anymore; they're listed as opt-in choices on the
-+  // first-run page (see aerium-first-run-page.patch) instead, so picking
++  // Silently seed the two flags that are not opt-in "features" the way the
++  // rest are. The other recommended ungoogled-chromium/bromite flags are
++  // intentionally NOT pref-seeded here; they're listed as opt-in choices on
++  // the first-run page (see aerium-first-run-page.patch) instead, so picking
 +  // them is a visible decision rather than a silent default.
 +  base::ListValue default_flags;
++  // A security backstop - don't silently download-and-run a CRX/user-script
++  // MIME type without asking first.
 +  default_flags.Append("extension-mime-request-handling@2");
++  // Parallel downloading is a plain speed win with no privacy or security
++  // trade-off to weigh, so there is nothing for a user to decide about it.
++  // The Guard presets seed it too, but only for users who pick a preset;
++  // seeding it here is what makes it the default for everyone else.
++  // SeedFlags() skips entries already present, so the two never collide.
++  // "@1" is the Enabled option: enable-parallel-downloading is a
++  // FEATURE_VALUE_TYPE entry, and FeatureEntry::DescriptionForOption() maps
++  // FEATURE_VALUE index 0/1/2 to Default/Enabled/Disabled.
++  default_flags.Append("enable-parallel-downloading@1");
 +  registry->RegisterListPref(prefs::kAboutFlagsEntries,
 +                             std::move(default_flags));
    registry->RegisterDictionaryPref(prefs::kAboutFlagsOriginLists);

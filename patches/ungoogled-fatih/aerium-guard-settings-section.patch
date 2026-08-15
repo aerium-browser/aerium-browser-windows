@@ -165,6 +165,24 @@ API, which none of these are from here. Some of them - the two HTTPS-First prefs
 in particular - are separately exposed to chrome://settings by upstream because
 the Privacy page binds a control to them, which is a bonus rather than a
 requirement: those controls follow along when a mode is applied.
+
+Privacy page row order: the delete-on-exit block sits ABOVE "Delete browsing
+data", not below it. The on-exit control is the standing policy - it is what
+the browser does on every shutdown from now on - while "Delete browsing data"
+is a one-shot action, so the persistent setting reads first.
+
+The divider bookkeeping moves with it. chrome://settings rows draw their
+separator as a top border via class="hr", and the convention in this section
+is that the first row omits it and every later row carries it. clear_on_exit.html
+previously hardcoded class="hr" on its own toggle, which was only correct while
+something else was above it; now that the block is first, that hardcoded
+divider would draw a stray line across the top of the card. So the "hr" moves
+out of the shared element and onto the clearBrowsingData row that now follows
+it - which also puts the element in line with every other row on the page,
+where the page decides the divider rather than the row deciding it for itself.
+The element is otherwise untouched: same template, same id, same prefs
+binding, same single consumer.
+
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
 @@ -2211,6 +2211,48 @@
@@ -425,7 +443,7 @@ requirement: those controls follow along when a mode is applied.
 +++ b/chrome/browser/resources/settings/privacy_page/clear_on_exit.html
 @@ -0,0 +1,45 @@
 +<style include="cr-shared-style settings-shared"></style>
-+<settings-toggle-button id="clearBrowsingDataOnExit" class="hr"
++<settings-toggle-button id="clearBrowsingDataOnExit"
 +    pref="{{prefs.browser.clear_data.aerium_clear_on_exit}}"
 +    label="$i18n{clearBrowsingDataOnExitLabel}"
 +    sub-label="$i18n{clearBrowsingDataOnExitDesc}">
@@ -526,8 +544,16 @@ requirement: those controls follow along when a mode is applied.
 +    SettingsClearOnExitElement.is, SettingsClearOnExitElement);
 --- a/chrome/browser/resources/settings/privacy_page/privacy_page.html
 +++ b/chrome/browser/resources/settings/privacy_page/privacy_page.html
-@@ -16,50 +16,8 @@
-         label="$i18n{clearBrowsingData}"
+@@ -11,55 +11,13 @@
+           on-close="onPrivacyGuideDialogClosed_">
+       </settings-privacy-guide-dialog>
+     </template>
++    <settings-clear-on-exit id="clearOnExit" prefs="{{prefs}}">
++    </settings-clear-on-exit>
+     <cr-link-row id="clearBrowsingData"
+         start-icon="cr:delete"
+-        label="$i18n{clearBrowsingData}"
++        class="hr" label="$i18n{clearBrowsingData}"
          sub-label="$i18n{clearBrowsingDataDescription}"
          on-click="onClearBrowsingDataClick_"></cr-link-row>
 -    <settings-toggle-button id="clearBrowsingDataOnExit" class="hr"
@@ -574,8 +600,6 @@ requirement: those controls follow along when a mode is applied.
 -      <settings-clear-on-exit-sites id="clearOnExitSites" prefs="{{prefs}}">
 -      </settings-clear-on-exit-sites>
 -    </cr-collapse>
-+    <settings-clear-on-exit id="clearOnExit" prefs="{{prefs}}">
-+    </settings-clear-on-exit>
      <cr-link-row id="thirdPartyCookiesLinkRow"
          start-icon="privacy:cookie"
          class="hr" label="$i18n{thirdPartyCookiesLinkRowLabel}"

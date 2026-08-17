@@ -5,13 +5,28 @@ on:
       - build-x64
     types:
       - completed
+  # A build that auto-resume dispatched finishes WITHOUT emitting any
+  # workflow_run event - GitHub deliberately suppresses those for anything
+  # triggered with GITHUB_TOKEN, which every auto-resume dispatch is. Run
+  # 31993640908 built 151.0.7922.137 successfully on 2026-08-17 and
+  # published nothing for exactly this reason, while the failed
+  # push-triggered run before it did fire the event (and correctly skipped).
+  # Until then no auto-resumed build had ever succeeded, so the gap was
+  # invisible. Manual dispatch is the recovery path for any build whose
+  # event never arrived.
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'build-x64 run ID whose artifacts should be published. Find it in the run URL.'
+        required: true
+        type: string
 
 permissions:
   actions: read
   contents: write
 
 concurrency:
-  group: publish-release-${{ github.event.workflow_run.head_sha }}
+  group: publish-release-${{ github.event.workflow_run.head_sha || inputs.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -19,10 +34,43 @@ jobs:
     # Publish after every successful build-x64 run that came from our own
     # repo (push or manual dispatch), not just tag builds.
     if: >-
-      ${{ github.event.workflow_run.conclusion == 'success' &&
-          github.event.workflow_run.head_repository.full_name == github.repository }}
+      ${{ github.event_name == 'workflow_dispatch' ||
+          (github.event.workflow_run.conclusion == 'success' &&
+           github.event.workflow_run.head_repository.full_name == github.repository) }}
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve source build run
+        id: src
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          INPUT_RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            run_id="$INPUT_RUN_ID"
+            read -r conclusion head_sha run_number < <(gh api "repos/$REPO/actions/runs/$run_id" \
+              --jq '"\(.conclusion) \(.head_sha) \(.run_number)"')
+            # A dispatch names the run explicitly, so the success check the
+            # workflow_run path gets from its `if:` has to happen here
+            # instead - publishing a failed build's partial artifacts would
+            # ship a broken release under a real version tag.
+            if [ "$conclusion" != "success" ]; then
+              echo "Run $run_id concluded '$conclusion' - refusing to publish a build that did not succeed." >&2
+              exit 1
+            fi
+          else
+            run_id='${{ github.event.workflow_run.id }}'
+            head_sha='${{ github.event.workflow_run.head_sha }}'
+            run_number='${{ github.event.workflow_run.run_number }}'
+          fi
+          echo "Publishing from build-x64 run $run_id (#$run_number, $head_sha)"
+          {
+            echo "run_id=$run_id"
+            echo "head_sha=$head_sha"
+            echo "run_number=$run_number"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
@@ -30,7 +78,7 @@ jobs:
           path: artifacts
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.src.outputs.run_id }}
 
       - name: Resolve version and tag
         id: meta
@@ -46,7 +94,7 @@ jobs:
             exit 1
           fi
           version="$(basename "$file" | sed -E 's/^aerium_([0-9.]+)-.*/\1/')"
-          run="${{ github.event.workflow_run.run_number }}"
+          run="${{ steps.src.outputs.run_number }}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v${version}-b${run}" >> "$GITHUB_OUTPUT"
           echo "Resolved version $version, tag v${version}-b${run}"
@@ -63,7 +111,7 @@ jobs:
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: Aerium ${{ steps.meta.outputs.version }} (x64)
-          target_commitish: ${{ github.event.workflow_run.head_sha }}
+          target_commitish: ${{ steps.src.outputs.head_sha }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |

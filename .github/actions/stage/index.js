@@ -5,6 +5,64 @@ import * as fs from 'fs';
 import { DefaultArtifactClient } from '@actions/artifact';
 import * as glob from '@actions/glob';
 
+const BUILD_ROOT = 'C:\\ungoogled-chromium-windows\\build';
+const NINJA_EXE = `${BUILD_ROOT}\\src\\third_party\\ninja\\ninja.exe`;
+const NINJA_OUT = `${BUILD_ROOT}\\src\\out\\Default`;
+
+// The stage log is tail-only (the API hard-caps it around 400 KB) and the
+// checkpoint upload alone emits ~1700 "Uploaded bytes" lines, so anything
+// printed during the compile is gone by the time anyone reads the run. That
+// left "did this stage actually make progress?" answerable only by
+// inference - which is exactly the question that went unanswered for 15
+// stages on the Android repo while a broken checkpoint silently discarded
+// every stage's work. The job summary is never truncated, so it goes there.
+function appendSummary(text) {
+    const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+    if (!summaryPath) {
+        return;
+    }
+    try {
+        fs.appendFileSync(summaryPath, `${text}\n`);
+    } catch (e) {
+        console.log(`could not write job summary (non-fatal): ${e}`);
+    }
+}
+
+// `ninja -n` lists the edges it *would* run without running any of them, so
+// its line count is a cheap exact measure of work remaining. Costs ~1 min
+// (manifest load dominates) against a 3.5h compile budget. Read the pair of
+// numbers as: BEFORE on stage N+1 should be close to AFTER on stage N - if
+// it jumps back up, the checkpoint is not carrying the tree forward and the
+// stages are redoing each other's work.
+async function remainingEdges(label) {
+    if (!fs.existsSync(NINJA_EXE) || !fs.existsSync(NINJA_OUT)) {
+        appendSummary(`- **${label}**: n/a (no build tree yet - first stage)`);
+        return null;
+    }
+    let lines = 0;
+    try {
+        const rc = await exec.exec(
+            NINJA_EXE, ['-C', NINJA_OUT, '-n', 'chrome', 'chromedriver', 'mini_installer'], {
+                ignoreReturnCode: true,
+                silent: true,
+                listeners: {
+                    stdout: data => { lines += (data.toString().match(/\n/g) || []).length; },
+                },
+            });
+        if (rc !== 0) {
+            appendSummary(`- **${label}**: n/a (ninja dry run exited ${rc})`);
+            return null;
+        }
+    } catch (e) {
+        // A diagnostic must never be able to fail the stage it is measuring.
+        appendSummary(`- **${label}**: n/a (${e})`);
+        return null;
+    }
+    console.log(`[stage-diag] ${label}: ${lines} edges remaining`);
+    appendSummary(`- **${label}**: ${lines} edges remaining`);
+    return lines;
+}
+
 async function run() {
     process.on('SIGINT', function() {
     })
@@ -69,14 +127,29 @@ async function run() {
         // (https://ninja-build.org/manual.html#_extra_tools). Cheap
         // insurance against any mtime drift in the archive round-trip; a
         // no-op when the tree is already consistent.
-        const ninjaExe = 'C:\\ungoogled-chromium-windows\\build\\src\\third_party\\ninja\\ninja.exe';
-        if (fs.existsSync(ninjaExe)) {
-            await exec.exec(ninjaExe, ['-C', 'C:\\ungoogled-chromium-windows\\build\\src\\out\\Default',
-                '-t', 'restat'], {ignoreReturnCode: true});
+        if (fs.existsSync(NINJA_EXE)) {
+            await exec.exec(NINJA_EXE, ['-C', NINJA_OUT, '-t', 'restat'], {ignoreReturnCode: true});
         }
     }
 
-    const args = ['build.py', '--ci', '-j', '2']
+    appendSummary(`### Stage diagnostics\n`);
+    const edgesBefore = await remainingEdges('before build');
+
+    // -j 4, not the 2 inherited from upstream (ungoogled-chromium-windows
+    // commit d2625ae). windows-2022 and ubuntu-latest are the same standard
+    // hosted runner - 4 cores, 16 GB - and the Linux repo runs bare `ninja`
+    // with no -j at all, so it self-sizes to cores+2 and keeps all four
+    // busy. At -j 2 this stage was compiling on half the machine, which is
+    // the bulk of why an x64 build needs 8-9 stages where Linux x86_64
+    // finishes in 3 (run 31888806715: 13h28m total, vs 32h+ and unfinished
+    // for run 31887907950).
+    //
+    // Memory is not the constraint it looks like: a clang-cl TU peaks around
+    // 1-2 GB, and the genuinely hungry step - the chrome.dll ThinLTO link -
+    // is serialised by GN's own concurrent_links pool regardless of -j. If a
+    // compile does get OOM-killed, the retry loop below resumes ninja in
+    // place rather than losing the stage.
+    const args = ['build.py', '--ci', '-j', '4']
     if (x86)
         args.push('--x86')
     if (arm)
@@ -131,6 +204,12 @@ async function run() {
     if (retCode !== 0 && buildMinutes < 60) {
         core.setFailed(`build.py failed after only ${buildMinutes.toFixed(1)} minutes (exit ${retCode}) on all ${MAX_FAST_FAIL_ATTEMPTS} attempts - real error, not a stage timeout. Not uploading a checkpoint.`);
         return;
+    }
+    const edgesAfter = await remainingEdges('after build');
+    if (edgesBefore !== null && edgesAfter !== null) {
+        const done = edgesBefore - edgesAfter;
+        appendSummary(`- **completed this stage**: ${done} edges in ${buildMinutes.toFixed(0)} min`
+            + ` (${(done / Math.max(buildMinutes / 60, 0.01)).toFixed(0)} edges/hour)`);
     }
     if (retCode === 0) {
         core.setOutput('finished', true);

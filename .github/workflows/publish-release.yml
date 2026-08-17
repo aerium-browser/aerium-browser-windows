@@ -109,6 +109,16 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
+          # GITHUB_TOKEN's permissions are capped by the enterprise/org/repo
+          # default, and a workflow's own `permissions:` block cannot raise
+          # them past it - so `contents: write` above is a request, not a
+          # guarantee. Runs 32048400682 and 32049844042 both reached this
+          # step with the artifacts downloaded and the tag resolved, and both
+          # got 403 "Resource not accessible by integration" creating the
+          # release. A PAT in a secret is not subject to that cap. Falls back
+          # to GITHUB_TOKEN when the secret is absent, so this is inert until
+          # RELEASE_TOKEN actually exists.
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
           tag_name: ${{ steps.meta.outputs.tag }}
           name: Aerium ${{ steps.meta.outputs.version }} (x64)
           target_commitish: ${{ steps.src.outputs.head_sha }}

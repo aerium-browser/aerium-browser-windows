@@ -90,312 +90,6 @@ is.
    "+chrome/browser/android/customtabs/chrome_origin_verifier.h",
    "+chrome/browser/android/oom_intervention/oom_intervention_decider.h",
    "+chrome/browser/android/search_permissions/search_permissions_service.h",
---- a/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.h
-+++ b/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.h
-@@ -13,12 +13,19 @@
- 
- #include "base/memory/raw_ptr.h"
- #include "base/memory/weak_ptr.h"
-+#include "base/scoped_multi_source_observation.h"
- #include "base/time/time.h"
-+#include "build/build_config.h"
- #include "components/keyed_service/core/keyed_service.h"
- #include "components/prefs/pref_change_registrar.h"
- #include "components/sync/base/user_selectable_type.h"
- #include "content/public/browser/browsing_data_remover.h"
- 
-+#if !BUILDFLAG(IS_ANDROID)
-+#include "chrome/browser/ui/browser_window/public/browser_collection_observer.h"
-+#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
-+#endif
-+
- namespace content {
- class BrowserContext;
- }  // namespace content
-@@ -36,7 +43,19 @@
- }  // namespace browsing_data
- 
- // Controls the lifetime of some browsing data.
-+//
-+// Aerium: this class also drives the ephemeral-sites feature, clearing a
-+// marked site's cookies and storage as soon as its last tab closes. That half
-+// is desktop-only - Android has no TabStripModel and no browser-window
-+// collection, and chrome://settings (which owns the list) is gated by
-+// assert(!is_android) - so on Android the class is exactly what it was.
-+#if !BUILDFLAG(IS_ANDROID)
-+class ChromeBrowsingDataLifetimeManager : public KeyedService,
-+                                          public BrowserCollectionObserver,
-+                                          public TabStripModelObserver {
-+#else
- class ChromeBrowsingDataLifetimeManager : public KeyedService {
-+#endif
-  public:
-   struct ScheduledRemovalSettings {
-     uint64_t remove_mask;
-@@ -55,6 +74,17 @@
-   // KeyedService:
-   void Shutdown() override;
- 
-+#if !BUILDFLAG(IS_ANDROID)
-+  // BrowserCollectionObserver:
-+  void OnBrowserCreated(BrowserWindowInterface* browser) override;
-+  void OnBrowserClosed(BrowserWindowInterface* browser) override;
-+
-+  // TabStripModelObserver:
-+  void OnTabStripModelChanged(TabStripModel* tab_strip_model,
-+                              const TabStripModelChange& change,
-+                              const TabStripSelectionChange& selection) override;
-+#endif
-+
-   // Sets the end time of the period for which data must be deleted, for all
-   // configurations. If this is |end_time_for_testing| has no value, use the
-   // computed end time from each configuration.
-@@ -88,6 +118,22 @@
-   // Deletes data that needs to be deleted, and schedules the next deletion.
-   void StartScheduledBrowsingDataRemoval();
- 
-+#if !BUILDFLAG(IS_ANDROID)
-+  // Aerium: starts observing the tab strip of every window already open for
-+  // this profile. Called from the constructor - the service is created lazily,
-+  // so windows can and do exist before it does.
-+  void AeriumObserveExistingBrowsers();
-+
-+  // Aerium: clears cookies and storage for every ephemeral site that no longer
-+  // has a tab open. Always posted rather than called straight from the
-+  // tab-strip notification, because at the point that fires the closing tab can
-+  // still be reachable from the model and would count itself as open.
-+  void AeriumClearClosedEphemeralSites();
-+
-+  base::ScopedMultiSourceObservation<TabStripModel, TabStripModelObserver>
-+      aerium_tab_strip_observations_{this};
-+#endif
-+
-   std::vector<ScheduledRemovalSettings> scheduled_removals_settings_;
-   PrefChangeRegistrar pref_change_registrar_;
-   raw_ptr<Profile> profile_;
---- a/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc
-+++ b/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc
-@@ -48,6 +48,7 @@
- #if !BUILDFLAG(IS_ANDROID)
- #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"  // nogncheck crbug.com/40147906
- #include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
-+#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
- #include "chrome/browser/ui/tabs/tab_strip_model.h"
- #else
- #include "chrome/browser/android/tab_android.h"
-@@ -313,6 +314,74 @@
-   return scheduled_removals_settings;
- }
- 
-+#if !BUILDFLAG(IS_ANDROID)
-+// Aerium: the registrable domain of every URL currently open in a tab of this
-+// profile. Uses the same window/tab walk as
-+// GetOpenedUrlsAndOngoingDownloads() below, so the two agree on what counts as
-+// open.
-+//
-+// Folded to eTLD+1 because the deletion filter is built with
-+// AddRegisterableDomain(), which DCHECKs on anything that is not an eTLD+1, an
-+// IP literal or a single-label host.
-+std::set<std::string> AeriumOpenRegistrableDomains(Profile* profile) {
-+  std::set<std::string> result;
-+  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
-+      [profile, &result](BrowserWindowInterface* browser) {
-+        if (browser->GetProfile() != profile) {
-+          return true;
-+        }
-+        TabStripModel* const tab_strip_model = browser->GetTabStripModel();
-+        for (int i = 0; i < tab_strip_model->count(); ++i) {
-+          content::WebContents* const contents =
-+              tab_strip_model->GetWebContentsAt(i);
-+          if (!contents) {
-+            continue;
-+          }
-+          const GURL url = contents->GetLastCommittedURL();
-+          if (!url.SchemeIsHTTPOrHTTPS()) {
-+            continue;
-+          }
-+          std::string domain = GetDomainAndRegistry(
-+              url, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
-+          if (domain.empty()) {
-+            domain = url.host();  // IP address or internal hostname.
-+          }
-+          if (!domain.empty()) {
-+            result.insert(std::move(domain));
-+          }
-+        }
-+        return true;
-+      });
-+  return result;
-+}
-+
-+// Aerium: the registrable domains the user marked ephemeral, normalised the
-+// same way so the comparison against the open set above is like for like.
-+std::set<std::string> AeriumEphemeralDomains(PrefService* prefs) {
-+  std::set<std::string> result;
-+  if (!prefs) {
-+    return result;
-+  }
-+  for (const auto& entry :
-+       prefs->GetList(browsing_data::prefs::kAeriumEphemeralSites)) {
-+    if (!entry.is_string()) {
-+      continue;
-+    }
-+    const std::string& host = entry.GetString();
-+    if (host.empty()) {
-+      continue;
-+    }
-+    std::string domain = net::registry_controlled_domains::GetDomainAndRegistry(
-+        host, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
-+    if (domain.empty()) {
-+      domain = host;  // IP address or internal hostname.
-+    }
-+    result.insert(std::move(domain));
-+  }
-+  return result;
-+}
-+#endif  // !BUILDFLAG(IS_ANDROID)
-+
- std::set<GURL> GetOpenedUrlsAndOngoingDownloads(Profile* profile) {
-   std::set<GURL> result;
-   // TODO (crbug.com/40211511): Enable this for android.
-@@ -386,6 +455,10 @@
-     content::BrowserContext* browser_context)
-     : profile_(Profile::FromBrowserContext(browser_context)) {
-   DCHECK(!profile_->IsGuestSession() || profile_->IsOffTheRecord());
-+#if !BUILDFLAG(IS_ANDROID)
-+  AeriumObserveExistingBrowsers();
-+  GlobalBrowserCollection::GetInstance()->AddObserver(this);
-+#endif
-   pref_change_registrar_.Init(profile_->GetPrefs());
-   pref_change_registrar_.Add(
-       browsing_data::prefs::kBrowsingDataLifetime,
-@@ -407,10 +480,126 @@
-     default;
- 
- void ChromeBrowsingDataLifetimeManager::Shutdown() {
-+#if !BUILDFLAG(IS_ANDROID)
-+  // Ordered before the weak-pointer invalidation below: dropping the
-+  // observations first means no further AeriumClearClosedEphemeralSites() can
-+  // be posted, and any already posted is cancelled by the invalidation.
-+  aerium_tab_strip_observations_.RemoveAllObservations();
-+  if (auto* collection = GlobalBrowserCollection::GetInstance()) {
-+    collection->RemoveObserver(this);
-+  }
-+#endif
-   pref_change_registrar_.RemoveAll();
-   weak_ptr_factory_.InvalidateWeakPtrs();
- }
- 
-+#if !BUILDFLAG(IS_ANDROID)
-+void ChromeBrowsingDataLifetimeManager::AeriumObserveExistingBrowsers() {
-+  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
-+      [this](BrowserWindowInterface* browser) {
-+        if (browser->GetProfile() == profile_) {
-+          TabStripModel* const model = browser->GetTabStripModel();
-+          if (model &&
-+              !aerium_tab_strip_observations_.IsObservingSource(model)) {
-+            aerium_tab_strip_observations_.AddObservation(model);
-+          }
-+        }
-+        return true;
-+      });
-+}
-+
-+void ChromeBrowsingDataLifetimeManager::OnBrowserCreated(
-+    BrowserWindowInterface* browser) {
-+  if (!browser || browser->GetProfile() != profile_) {
-+    return;
-+  }
-+  TabStripModel* const model = browser->GetTabStripModel();
-+  if (model && !aerium_tab_strip_observations_.IsObservingSource(model)) {
-+    aerium_tab_strip_observations_.AddObservation(model);
-+  }
-+}
-+
-+void ChromeBrowsingDataLifetimeManager::OnBrowserClosed(
-+    BrowserWindowInterface* browser) {
-+  if (!browser || browser->GetProfile() != profile_) {
-+    return;
-+  }
-+  TabStripModel* const model = browser->GetTabStripModel();
-+  if (model && aerium_tab_strip_observations_.IsObservingSource(model)) {
-+    aerium_tab_strip_observations_.RemoveObservation(model);
-+  }
-+  // A closing window takes every tab in it with it, so a site can stop being
-+  // open without any single tab removal having been the one that did it.
-+  content::GetUIThreadTaskRunner({})->PostTask(
-+      FROM_HERE,
-+      base::BindOnce(
-+          &ChromeBrowsingDataLifetimeManager::AeriumClearClosedEphemeralSites,
-+          weak_ptr_factory_.GetWeakPtr()));
-+}
-+
-+void ChromeBrowsingDataLifetimeManager::OnTabStripModelChanged(
-+    TabStripModel* tab_strip_model,
-+    const TabStripModelChange& change,
-+    const TabStripSelectionChange& selection) {
-+  if (change.type() != TabStripModelChange::kRemoved) {
-+    return;
-+  }
-+  // Posted, not immediate: at this point the removed tab can still be reachable
-+  // from the model, so an immediate walk would see the site as still open and
-+  // clear nothing.
-+  content::GetUIThreadTaskRunner({})->PostTask(
-+      FROM_HERE,
-+      base::BindOnce(
-+          &ChromeBrowsingDataLifetimeManager::AeriumClearClosedEphemeralSites,
-+          weak_ptr_factory_.GetWeakPtr()));
-+}
-+
-+void ChromeBrowsingDataLifetimeManager::AeriumClearClosedEphemeralSites() {
-+  const std::set<std::string> ephemeral =
-+      AeriumEphemeralDomains(profile_->GetPrefs());
-+  if (ephemeral.empty()) {
-+    return;
-+  }
-+  const std::set<std::string> still_open =
-+      AeriumOpenRegistrableDomains(profile_);
-+
-+  auto filter = content::BrowsingDataFilterBuilder::Create(
-+      content::BrowsingDataFilterBuilder::Mode::kDelete);
-+  bool any = false;
-+  for (const std::string& domain : ephemeral) {
-+    if (still_open.count(domain)) {
-+      continue;
-+    }
-+    filter->AddRegisterableDomain(domain);
-+    any = true;
-+  }
-+  if (!any) {
-+    return;
-+  }
-+
-+  // Cookies and storage only. Both are in FILTERABLE_DATA_TYPES; anything else
-+  // would trip the CHECK in
-+  // ChromeBrowsingDataRemoverDelegate::RemoveEmbedderData(), which aborts
-+  // release builds rather than merely failing the deletion.
-+  //
-+  // The observer is not optional - RemoveWithFilterAndReply() calls into it
-+  // unconditionally - but no keep-alive variant is needed here: unlike the
-+  // on-exit path this runs while the browser is plainly still up.
-+  content::BrowsingDataRemover* const remover =
-+      profile_->GetBrowsingDataRemover();
-+  remover->RemoveWithFilterAndReply(
-+      base::Time::Min(), base::Time::Max(),
-+      content::BrowsingDataRemover::DATA_TYPE_COOKIES |
-+          content::BrowsingDataRemover::DATA_TYPE_DOM_STORAGE,
-+      content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
-+      std::move(filter),
-+      testing_data_remover_observer_
-+          ? testing_data_remover_observer_.get()
-+          : BrowsingDataRemoverObserver::Create(
-+                remover, /*filterable_deletion=*/true, profile_));
-+}
-+#endif  // !BUILDFLAG(IS_ANDROID)
-+
- void ChromeBrowsingDataLifetimeManager::ClearBrowsingDataForOnExitPolicy(
-     bool keep_browser_alive) {
-   const base::ListValue& data_types = profile_->GetPrefs()->GetList(
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 @@ -2460,6 +2460,14 @@
@@ -744,3 +438,328 @@ is.
      <cr-link-row id="clearBrowsingData"
          start-icon="cr:delete"
          class="hr" label="$i18n{clearBrowsingData}"
+--- a/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.h
++++ b/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.h
+@@ -11,14 +11,22 @@
+ #include <utility>
+ #include <vector>
+ 
++#include <set>
++
+ #include "base/memory/raw_ptr.h"
+ #include "base/memory/weak_ptr.h"
+ #include "base/time/time.h"
++#include "build/build_config.h"
+ #include "components/keyed_service/core/keyed_service.h"
+ #include "components/prefs/pref_change_registrar.h"
+ #include "components/sync/base/user_selectable_type.h"
+ #include "content/public/browser/browsing_data_remover.h"
+ 
++#if !BUILDFLAG(IS_ANDROID)
++#include "chrome/browser/ui/browser_window/public/browser_collection_observer.h"
++#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
++#endif
++
+ namespace content {
+ class BrowserContext;
+ }  // namespace content
+@@ -36,7 +44,19 @@
+ }  // namespace browsing_data
+ 
+ // Controls the lifetime of some browsing data.
++//
++// Aerium: this class also drives the ephemeral-sites feature, clearing a
++// marked site's cookies and storage as soon as its last tab closes. That half
++// is desktop-only - Android has no TabStripModel and no browser-window
++// collection, and chrome://settings (which owns the list) is gated by
++// assert(!is_android) - so on Android the class is exactly what it was.
++#if !BUILDFLAG(IS_ANDROID)
++class ChromeBrowsingDataLifetimeManager : public KeyedService,
++                                          public BrowserCollectionObserver,
++                                          public TabStripModelObserver {
++#else
+ class ChromeBrowsingDataLifetimeManager : public KeyedService {
++#endif
+  public:
+   struct ScheduledRemovalSettings {
+     uint64_t remove_mask;
+@@ -55,6 +75,18 @@
+   // KeyedService:
+   void Shutdown() override;
+ 
++#if !BUILDFLAG(IS_ANDROID)
++  // BrowserCollectionObserver:
++  void OnBrowserCreated(BrowserWindowInterface* browser) override;
++  void OnBrowserClosed(BrowserWindowInterface* browser) override;
++
++  // TabStripModelObserver:
++  void OnTabStripModelChanged(TabStripModel* tab_strip_model,
++                              const TabStripModelChange& change,
++                              const TabStripSelectionChange& selection) override;
++  void OnTabStripModelDestroyed(TabStripModel* tab_strip_model) override;
++#endif
++
+   // Sets the end time of the period for which data must be deleted, for all
+   // configurations. If this is |end_time_for_testing| has no value, use the
+   // computed end time from each configuration.
+@@ -88,6 +120,30 @@
+   // Deletes data that needs to be deleted, and schedules the next deletion.
+   void StartScheduledBrowsingDataRemoval();
+ 
++#if !BUILDFLAG(IS_ANDROID)
++  // Aerium: starts observing the tab strip of every window already open for
++  // this profile. Called from the constructor - the service is created lazily,
++  // so windows can and do exist before it does.
++  void AeriumObserveExistingBrowsers();
++
++  // Aerium: observes one model, at most once.
++  void AeriumObserveTabStrip(TabStripModel* tab_strip_model);
++
++  // Aerium: clears cookies and storage for every ephemeral site that no longer
++  // has a tab open. Always posted rather than called straight from the
++  // tab-strip notification, because at the point that fires the closing tab can
++  // still be reachable from the model and would count itself as open.
++  void AeriumClearClosedEphemeralSites();
++
++  // Aerium: which models this service has called AddObserver() on, purely to
++  // keep that call idempotent. Lifetime is NOT managed here - TabStripModelObserver
++  // tracks its own observations and drops them when a model is destroyed, which
++  // is exactly why base::ScopedMultiSourceObservation<TabStripModel, ...> is an
++  // explicitly deleted specialisation in tab_strip_model.h. Entries are removed
++  // in OnTabStripModelDestroyed() so this never holds a dangling model.
++  std::set<raw_ptr<TabStripModel>> aerium_observed_models_;
++#endif
++
+   std::vector<ScheduledRemovalSettings> scheduled_removals_settings_;
+   PrefChangeRegistrar pref_change_registrar_;
+   raw_ptr<Profile> profile_;
+--- a/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc
++++ b/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc
+@@ -48,6 +48,7 @@
+ #if !BUILDFLAG(IS_ANDROID)
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"  // nogncheck crbug.com/40147906
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
++#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #else
+ #include "chrome/browser/android/tab_android.h"
+@@ -313,6 +314,72 @@
+   return scheduled_removals_settings;
+ }
+ 
++#if !BUILDFLAG(IS_ANDROID)
++// Aerium: the registrable domain of every URL currently open in a tab of this
++// profile, built with the same window/tab walk as
++// GetOpenedUrlsAndOngoingDownloads() below so the two agree on what counts as
++// open. Folded to eTLD+1 because the deletion filter is built with
++// AddRegisterableDomain(), which DCHECKs on anything that is not an eTLD+1, an
++// IP literal or a single-label host.
++std::set<std::string> AeriumOpenRegistrableDomains(Profile* profile) {
++  std::set<std::string> result;
++  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
++      [profile, &result](BrowserWindowInterface* browser) {
++        if (browser->GetProfile() != profile) {
++          return true;
++        }
++        TabStripModel* const tab_strip_model = browser->GetTabStripModel();
++        for (int i = 0; i < tab_strip_model->count(); ++i) {
++          content::WebContents* const contents =
++              tab_strip_model->GetWebContentsAt(i);
++          if (!contents) {
++            continue;
++          }
++          const GURL url = contents->GetLastCommittedURL();
++          if (!url.SchemeIsHTTPOrHTTPS()) {
++            continue;
++          }
++          std::string domain = GetDomainAndRegistry(
++              url, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
++          if (domain.empty()) {
++            domain = url.host();  // IP address or internal hostname.
++          }
++          if (!domain.empty()) {
++            result.insert(std::move(domain));
++          }
++        }
++        return true;
++      });
++  return result;
++}
++
++// Aerium: the registrable domains the user marked ephemeral, normalised the
++// same way so the comparison against the open set above is like for like.
++std::set<std::string> AeriumEphemeralDomains(PrefService* prefs) {
++  std::set<std::string> result;
++  if (!prefs) {
++    return result;
++  }
++  for (const auto& entry :
++       prefs->GetList(browsing_data::prefs::kAeriumEphemeralSites)) {
++    if (!entry.is_string()) {
++      continue;
++    }
++    const std::string& host = entry.GetString();
++    if (host.empty()) {
++      continue;
++    }
++    std::string domain = net::registry_controlled_domains::GetDomainAndRegistry(
++        host, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
++    if (domain.empty()) {
++      domain = host;  // IP address or internal hostname.
++    }
++    result.insert(std::move(domain));
++  }
++  return result;
++}
++#endif  // !BUILDFLAG(IS_ANDROID)
++
+ std::set<GURL> GetOpenedUrlsAndOngoingDownloads(Profile* profile) {
+   std::set<GURL> result;
+   // TODO (crbug.com/40211511): Enable this for android.
+@@ -386,6 +453,13 @@
+     content::BrowserContext* browser_context)
+     : profile_(Profile::FromBrowserContext(browser_context)) {
+   DCHECK(!profile_->IsGuestSession() || profile_->IsOffTheRecord());
++#if !BUILDFLAG(IS_ANDROID)
++  // Order matters: take the windows that already exist first, then subscribe
++  // for later ones. The collection does not replay creations to a new observer,
++  // so doing it the other way round would miss any window opened in between.
++  AeriumObserveExistingBrowsers();
++  GlobalBrowserCollection::GetInstance()->AddObserver(this);
++#endif
+   pref_change_registrar_.Init(profile_->GetPrefs());
+   pref_change_registrar_.Add(
+       browsing_data::prefs::kBrowsingDataLifetime,
+@@ -407,10 +481,132 @@
+     default;
+ 
+ void ChromeBrowsingDataLifetimeManager::Shutdown() {
++#if !BUILDFLAG(IS_ANDROID)
++  // StopObservingAll() is TabStripModelObserver's own teardown - the reason
++  // base::ScopedMultiSourceObservation<TabStripModel, TabStripModelObserver> is
++  // an explicitly deleted specialisation is that this class already tracks and
++  // releases its observations. Done before invalidating weak pointers so no
++  // further AeriumClearClosedEphemeralSites() can be posted, and any already
++  // posted is cancelled.
++  TabStripModelObserver::StopObservingAll(this);
++  aerium_observed_models_.clear();
++  if (auto* collection = GlobalBrowserCollection::GetInstance()) {
++    collection->RemoveObserver(this);
++  }
++#endif
+   pref_change_registrar_.RemoveAll();
+   weak_ptr_factory_.InvalidateWeakPtrs();
+ }
+ 
++#if !BUILDFLAG(IS_ANDROID)
++void ChromeBrowsingDataLifetimeManager::AeriumObserveTabStrip(
++    TabStripModel* tab_strip_model) {
++  if (tab_strip_model && aerium_observed_models_.insert(tab_strip_model).second) {
++    tab_strip_model->AddObserver(this);
++  }
++}
++
++void ChromeBrowsingDataLifetimeManager::AeriumObserveExistingBrowsers() {
++  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
++      [this](BrowserWindowInterface* browser) {
++        if (browser->GetProfile() == profile_) {
++          AeriumObserveTabStrip(browser->GetTabStripModel());
++        }
++        return true;
++      });
++}
++
++void ChromeBrowsingDataLifetimeManager::OnBrowserCreated(
++    BrowserWindowInterface* browser) {
++  if (browser && browser->GetProfile() == profile_) {
++    AeriumObserveTabStrip(browser->GetTabStripModel());
++  }
++}
++
++void ChromeBrowsingDataLifetimeManager::OnBrowserClosed(
++    BrowserWindowInterface* browser) {
++  if (!browser || browser->GetProfile() != profile_) {
++    return;
++  }
++  // No RemoveObserver() here: the model is destroyed with the window, and
++  // TabStripModelObserver drops the observation itself, telling us through
++  // OnTabStripModelDestroyed(). Closing a window takes every tab in it, so a
++  // site can stop being open without any single tab removal having done it.
++  content::GetUIThreadTaskRunner({})->PostTask(
++      FROM_HERE,
++      base::BindOnce(
++          &ChromeBrowsingDataLifetimeManager::AeriumClearClosedEphemeralSites,
++          weak_ptr_factory_.GetWeakPtr()));
++}
++
++void ChromeBrowsingDataLifetimeManager::OnTabStripModelDestroyed(
++    TabStripModel* tab_strip_model) {
++  aerium_observed_models_.erase(tab_strip_model);
++}
++
++void ChromeBrowsingDataLifetimeManager::OnTabStripModelChanged(
++    TabStripModel* tab_strip_model,
++    const TabStripModelChange& change,
++    const TabStripSelectionChange& selection) {
++  if (change.type() != TabStripModelChange::kRemoved) {
++    return;
++  }
++  // Posted, not immediate: at this point the removed tab can still be reachable
++  // from the model, so an immediate walk would see the site as still open and
++  // clear nothing.
++  content::GetUIThreadTaskRunner({})->PostTask(
++      FROM_HERE,
++      base::BindOnce(
++          &ChromeBrowsingDataLifetimeManager::AeriumClearClosedEphemeralSites,
++          weak_ptr_factory_.GetWeakPtr()));
++}
++
++void ChromeBrowsingDataLifetimeManager::AeriumClearClosedEphemeralSites() {
++  const std::set<std::string> ephemeral =
++      AeriumEphemeralDomains(profile_->GetPrefs());
++  if (ephemeral.empty()) {
++    return;
++  }
++  const std::set<std::string> still_open =
++      AeriumOpenRegistrableDomains(profile_);
++
++  auto filter = content::BrowsingDataFilterBuilder::Create(
++      content::BrowsingDataFilterBuilder::Mode::kDelete);
++  bool any = false;
++  for (const std::string& domain : ephemeral) {
++    if (still_open.count(domain)) {
++      continue;
++    }
++    filter->AddRegisterableDomain(domain);
++    any = true;
++  }
++  if (!any) {
++    return;
++  }
++
++  // Cookies and storage only. Both are in FILTERABLE_DATA_TYPES; anything else
++  // would trip the CHECK in
++  // ChromeBrowsingDataRemoverDelegate::RemoveEmbedderData(), which aborts
++  // release builds rather than merely failing the deletion.
++  //
++  // The observer is not optional - RemoveWithFilterAndReply() calls into it
++  // unconditionally - but no keep-alive variant is needed: unlike the on-exit
++  // path this runs while the browser is plainly still up.
++  content::BrowsingDataRemover* const remover =
++      profile_->GetBrowsingDataRemover();
++  remover->RemoveWithFilterAndReply(
++      base::Time::Min(), base::Time::Max(),
++      content::BrowsingDataRemover::DATA_TYPE_COOKIES |
++          content::BrowsingDataRemover::DATA_TYPE_DOM_STORAGE,
++      content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
++      std::move(filter),
++      testing_data_remover_observer_
++          ? testing_data_remover_observer_.get()
++          : BrowsingDataRemoverObserver::Create(
++                remover, /*filterable_deletion=*/true, profile_));
++}
++#endif  // !BUILDFLAG(IS_ANDROID)
++
+ void ChromeBrowsingDataLifetimeManager::ClearBrowsingDataForOnExitPolicy(
+     bool keep_browser_alive) {
+   const base::ListValue& data_types = profile_->GetPrefs()->GetList(

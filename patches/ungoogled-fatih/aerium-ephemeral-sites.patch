@@ -1,0 +1,748 @@
+Per-site "reset on exit": clear a site's cookies and storage as soon as
+its last tab closes, instead of waiting for the browser to quit.
+
+The exclusion list added by aerium-clear-on-exit-site-exclusions.patch
+answers "keep these when I quit". This answers the opposite question -
+"never let this one persist at all" - for the account you do not want
+following you around but do not want to give up every other login to
+avoid. Marking a site here is independent of the delete-on-exit toggle:
+it works whether or not that toggle is on, because it is about one site
+rather than about shutdown.
+
+Scope is deliberately cookies and storage only. Nothing else can be
+honestly offered: ChromeBrowsingDataRemoverDelegate::RemoveEmbedderData()
+CHECKs - not DCHECKs, so it aborts release builds too - that a filtered
+removal's mask is a subset of FILTERABLE_DATA_TYPES, and history,
+autofill, passwords and site settings are all outside it because their
+backends ignore the origin filter entirely. A UI implying a full per-site
+wipe would be a lie, so the string says what it does.
+
+Implemented on ChromeBrowsingDataLifetimeManager rather than as a new
+KeyedService. That class is already the per-profile owner of on-exit
+clearing, already holds the BrowsingDataRemover plumbing, and - most
+usefully - already enumerates every open tab for a profile in
+GetOpenedUrlsAndOngoingDownloads(), including the Android variant. Keeping
+both behaviours in one place also stops the on-exit and on-tab-close paths
+drifting apart as the filtering rules change. A separate service would
+have meant a new factory, an entry in profile_keyed_service_factories.cc
+and a hunk in chrome/browser/BUILD.gn, for no behavioural gain.
+
+Entries are folded to their registrable domain (eTLD+1) exactly as the
+exclusion list folds its own, so marking example.com covers
+www.example.com too and the two lists cannot disagree about what a "site"
+is.
+
+--- a/components/browsing_data/core/pref_names.h
++++ b/components/browsing_data/core/pref_names.h
+@@ -69,6 +69,15 @@
+ inline constexpr char kAeriumClearOnExitExcludedSites[] =
+     "browser.clear_data.aerium_on_exit.excluded_sites";
+ 
++// Aerium: sites whose cookies and storage are cleared as soon as their last
++// tab closes, rather than at shutdown. Independent of the delete-on-exit
++// toggle - this is a property of the site, not of the session. Stored as bare
++// hostnames and folded to their registrable domain (eTLD+1) at deletion time,
++// the same as kAeriumClearOnExitExcludedSites above, so the two lists cannot
++// disagree about what counts as one site.
++inline constexpr char kAeriumEphemeralSites[] =
++    "browser.clear_data.aerium_ephemeral_sites";
++
+ // Clear browsing data deletion time period.
+ inline constexpr char kDeleteTimePeriod[] = "browser.clear_data.time_period";
+ 
+--- a/components/browsing_data/core/pref_names.cc
++++ b/components/browsing_data/core/pref_names.cc
+@@ -56,6 +56,9 @@
+   // Aerium: empty exclusion list by default, i.e. nothing is kept and the
+   // toggle behaves exactly as it did before the list existed.
+   registry->RegisterListPref(kAeriumClearOnExitExcludedSites);
++  // Aerium: no site is ephemeral by default, so the tab-close observer below
++  // finds an empty list and returns before doing any work.
++  registry->RegisterListPref(kAeriumEphemeralSites);
+   // TODO(crbug.com/471197613): When MaybeMigrateToQuickDeletePrefValues is
+   // removed, set default value in iOS for the `kDeleteTimePeriod` pref to 15
+   // minutes.
+--- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
++++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
+@@ -625,6 +625,11 @@
+   // instead, which is what that helper pair exists for.
+   (*s_allowlist)[browsing_data::prefs::kAeriumClearOnExitExcludedSites] =
+       settings_api::PrefType::kList;
++  // Aerium: the ephemeral-sites list, read and written the same way by
++  // settings-ephemeral-sites. Without this entry settingsPrivate rejects every
++  // write silently and the list looks like it saves but never does.
++  (*s_allowlist)[browsing_data::prefs::kAeriumEphemeralSites] =
++      settings_api::PrefType::kList;
+   (*s_allowlist)[browsing_data::prefs::kDeleteTimePeriod] =
+       settings_api::PrefType::kNumber;
+ 
+--- a/chrome/browser/browsing_data/DEPS
++++ b/chrome/browser/browsing_data/DEPS
+@@ -1,5 +1,11 @@
+ include_rules = [
+   "-chrome/browser",
++  # Aerium: the ephemeral-sites feature observes browser windows appearing and
++  # disappearing, and the tab strips inside them, to notice when a site's last
++  # tab closes. The collection and tab-strip headers themselves are already
++  # allowed below; these two are their observer interfaces.
++  "+chrome/browser/ui/browser_window/public/browser_collection_observer.h",
++  "+chrome/browser/ui/tabs/tab_strip_model_observer.h",
+   "+chrome/browser/android/customtabs/chrome_origin_verifier.h",
+   "+chrome/browser/android/oom_intervention/oom_intervention_decider.h",
+   "+chrome/browser/android/search_permissions/search_permissions_service.h",
+--- a/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.h
++++ b/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.h
+@@ -13,12 +13,19 @@
+ 
+ #include "base/memory/raw_ptr.h"
+ #include "base/memory/weak_ptr.h"
++#include "base/scoped_multi_source_observation.h"
+ #include "base/time/time.h"
++#include "build/build_config.h"
+ #include "components/keyed_service/core/keyed_service.h"
+ #include "components/prefs/pref_change_registrar.h"
+ #include "components/sync/base/user_selectable_type.h"
+ #include "content/public/browser/browsing_data_remover.h"
+ 
++#if !BUILDFLAG(IS_ANDROID)
++#include "chrome/browser/ui/browser_window/public/browser_collection_observer.h"
++#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
++#endif
++
+ namespace content {
+ class BrowserContext;
+ }  // namespace content
+@@ -36,7 +43,19 @@
+ }  // namespace browsing_data
+ 
+ // Controls the lifetime of some browsing data.
++//
++// Aerium: this class also drives the ephemeral-sites feature, clearing a
++// marked site's cookies and storage as soon as its last tab closes. That half
++// is desktop-only - Android has no TabStripModel and no browser-window
++// collection, and chrome://settings (which owns the list) is gated by
++// assert(!is_android) - so on Android the class is exactly what it was.
++#if !BUILDFLAG(IS_ANDROID)
++class ChromeBrowsingDataLifetimeManager : public KeyedService,
++                                          public BrowserCollectionObserver,
++                                          public TabStripModelObserver {
++#else
+ class ChromeBrowsingDataLifetimeManager : public KeyedService {
++#endif
+  public:
+   struct ScheduledRemovalSettings {
+     uint64_t remove_mask;
+@@ -55,6 +74,17 @@
+   // KeyedService:
+   void Shutdown() override;
+ 
++#if !BUILDFLAG(IS_ANDROID)
++  // BrowserCollectionObserver:
++  void OnBrowserCreated(BrowserWindowInterface* browser) override;
++  void OnBrowserClosed(BrowserWindowInterface* browser) override;
++
++  // TabStripModelObserver:
++  void OnTabStripModelChanged(TabStripModel* tab_strip_model,
++                              const TabStripModelChange& change,
++                              const TabStripSelectionChange& selection) override;
++#endif
++
+   // Sets the end time of the period for which data must be deleted, for all
+   // configurations. If this is |end_time_for_testing| has no value, use the
+   // computed end time from each configuration.
+@@ -88,6 +118,22 @@
+   // Deletes data that needs to be deleted, and schedules the next deletion.
+   void StartScheduledBrowsingDataRemoval();
+ 
++#if !BUILDFLAG(IS_ANDROID)
++  // Aerium: starts observing the tab strip of every window already open for
++  // this profile. Called from the constructor - the service is created lazily,
++  // so windows can and do exist before it does.
++  void AeriumObserveExistingBrowsers();
++
++  // Aerium: clears cookies and storage for every ephemeral site that no longer
++  // has a tab open. Always posted rather than called straight from the
++  // tab-strip notification, because at the point that fires the closing tab can
++  // still be reachable from the model and would count itself as open.
++  void AeriumClearClosedEphemeralSites();
++
++  base::ScopedMultiSourceObservation<TabStripModel, TabStripModelObserver>
++      aerium_tab_strip_observations_{this};
++#endif
++
+   std::vector<ScheduledRemovalSettings> scheduled_removals_settings_;
+   PrefChangeRegistrar pref_change_registrar_;
+   raw_ptr<Profile> profile_;
+--- a/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc
++++ b/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc
+@@ -48,6 +48,7 @@
+ #if !BUILDFLAG(IS_ANDROID)
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"  // nogncheck crbug.com/40147906
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
++#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #else
+ #include "chrome/browser/android/tab_android.h"
+@@ -313,6 +314,74 @@
+   return scheduled_removals_settings;
+ }
+ 
++#if !BUILDFLAG(IS_ANDROID)
++// Aerium: the registrable domain of every URL currently open in a tab of this
++// profile. Uses the same window/tab walk as
++// GetOpenedUrlsAndOngoingDownloads() below, so the two agree on what counts as
++// open.
++//
++// Folded to eTLD+1 because the deletion filter is built with
++// AddRegisterableDomain(), which DCHECKs on anything that is not an eTLD+1, an
++// IP literal or a single-label host.
++std::set<std::string> AeriumOpenRegistrableDomains(Profile* profile) {
++  std::set<std::string> result;
++  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
++      [profile, &result](BrowserWindowInterface* browser) {
++        if (browser->GetProfile() != profile) {
++          return true;
++        }
++        TabStripModel* const tab_strip_model = browser->GetTabStripModel();
++        for (int i = 0; i < tab_strip_model->count(); ++i) {
++          content::WebContents* const contents =
++              tab_strip_model->GetWebContentsAt(i);
++          if (!contents) {
++            continue;
++          }
++          const GURL url = contents->GetLastCommittedURL();
++          if (!url.SchemeIsHTTPOrHTTPS()) {
++            continue;
++          }
++          std::string domain = GetDomainAndRegistry(
++              url, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
++          if (domain.empty()) {
++            domain = url.host();  // IP address or internal hostname.
++          }
++          if (!domain.empty()) {
++            result.insert(std::move(domain));
++          }
++        }
++        return true;
++      });
++  return result;
++}
++
++// Aerium: the registrable domains the user marked ephemeral, normalised the
++// same way so the comparison against the open set above is like for like.
++std::set<std::string> AeriumEphemeralDomains(PrefService* prefs) {
++  std::set<std::string> result;
++  if (!prefs) {
++    return result;
++  }
++  for (const auto& entry :
++       prefs->GetList(browsing_data::prefs::kAeriumEphemeralSites)) {
++    if (!entry.is_string()) {
++      continue;
++    }
++    const std::string& host = entry.GetString();
++    if (host.empty()) {
++      continue;
++    }
++    std::string domain = net::registry_controlled_domains::GetDomainAndRegistry(
++        host, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
++    if (domain.empty()) {
++      domain = host;  // IP address or internal hostname.
++    }
++    result.insert(std::move(domain));
++  }
++  return result;
++}
++#endif  // !BUILDFLAG(IS_ANDROID)
++
+ std::set<GURL> GetOpenedUrlsAndOngoingDownloads(Profile* profile) {
+   std::set<GURL> result;
+   // TODO (crbug.com/40211511): Enable this for android.
+@@ -386,6 +455,10 @@
+     content::BrowserContext* browser_context)
+     : profile_(Profile::FromBrowserContext(browser_context)) {
+   DCHECK(!profile_->IsGuestSession() || profile_->IsOffTheRecord());
++#if !BUILDFLAG(IS_ANDROID)
++  AeriumObserveExistingBrowsers();
++  GlobalBrowserCollection::GetInstance()->AddObserver(this);
++#endif
+   pref_change_registrar_.Init(profile_->GetPrefs());
+   pref_change_registrar_.Add(
+       browsing_data::prefs::kBrowsingDataLifetime,
+@@ -407,10 +480,126 @@
+     default;
+ 
+ void ChromeBrowsingDataLifetimeManager::Shutdown() {
++#if !BUILDFLAG(IS_ANDROID)
++  // Ordered before the weak-pointer invalidation below: dropping the
++  // observations first means no further AeriumClearClosedEphemeralSites() can
++  // be posted, and any already posted is cancelled by the invalidation.
++  aerium_tab_strip_observations_.RemoveAllObservations();
++  if (auto* collection = GlobalBrowserCollection::GetInstance()) {
++    collection->RemoveObserver(this);
++  }
++#endif
+   pref_change_registrar_.RemoveAll();
+   weak_ptr_factory_.InvalidateWeakPtrs();
+ }
+ 
++#if !BUILDFLAG(IS_ANDROID)
++void ChromeBrowsingDataLifetimeManager::AeriumObserveExistingBrowsers() {
++  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
++      [this](BrowserWindowInterface* browser) {
++        if (browser->GetProfile() == profile_) {
++          TabStripModel* const model = browser->GetTabStripModel();
++          if (model &&
++              !aerium_tab_strip_observations_.IsObservingSource(model)) {
++            aerium_tab_strip_observations_.AddObservation(model);
++          }
++        }
++        return true;
++      });
++}
++
++void ChromeBrowsingDataLifetimeManager::OnBrowserCreated(
++    BrowserWindowInterface* browser) {
++  if (!browser || browser->GetProfile() != profile_) {
++    return;
++  }
++  TabStripModel* const model = browser->GetTabStripModel();
++  if (model && !aerium_tab_strip_observations_.IsObservingSource(model)) {
++    aerium_tab_strip_observations_.AddObservation(model);
++  }
++}
++
++void ChromeBrowsingDataLifetimeManager::OnBrowserClosed(
++    BrowserWindowInterface* browser) {
++  if (!browser || browser->GetProfile() != profile_) {
++    return;
++  }
++  TabStripModel* const model = browser->GetTabStripModel();
++  if (model && aerium_tab_strip_observations_.IsObservingSource(model)) {
++    aerium_tab_strip_observations_.RemoveObservation(model);
++  }
++  // A closing window takes every tab in it with it, so a site can stop being
++  // open without any single tab removal having been the one that did it.
++  content::GetUIThreadTaskRunner({})->PostTask(
++      FROM_HERE,
++      base::BindOnce(
++          &ChromeBrowsingDataLifetimeManager::AeriumClearClosedEphemeralSites,
++          weak_ptr_factory_.GetWeakPtr()));
++}
++
++void ChromeBrowsingDataLifetimeManager::OnTabStripModelChanged(
++    TabStripModel* tab_strip_model,
++    const TabStripModelChange& change,
++    const TabStripSelectionChange& selection) {
++  if (change.type() != TabStripModelChange::kRemoved) {
++    return;
++  }
++  // Posted, not immediate: at this point the removed tab can still be reachable
++  // from the model, so an immediate walk would see the site as still open and
++  // clear nothing.
++  content::GetUIThreadTaskRunner({})->PostTask(
++      FROM_HERE,
++      base::BindOnce(
++          &ChromeBrowsingDataLifetimeManager::AeriumClearClosedEphemeralSites,
++          weak_ptr_factory_.GetWeakPtr()));
++}
++
++void ChromeBrowsingDataLifetimeManager::AeriumClearClosedEphemeralSites() {
++  const std::set<std::string> ephemeral =
++      AeriumEphemeralDomains(profile_->GetPrefs());
++  if (ephemeral.empty()) {
++    return;
++  }
++  const std::set<std::string> still_open =
++      AeriumOpenRegistrableDomains(profile_);
++
++  auto filter = content::BrowsingDataFilterBuilder::Create(
++      content::BrowsingDataFilterBuilder::Mode::kDelete);
++  bool any = false;
++  for (const std::string& domain : ephemeral) {
++    if (still_open.count(domain)) {
++      continue;
++    }
++    filter->AddRegisterableDomain(domain);
++    any = true;
++  }
++  if (!any) {
++    return;
++  }
++
++  // Cookies and storage only. Both are in FILTERABLE_DATA_TYPES; anything else
++  // would trip the CHECK in
++  // ChromeBrowsingDataRemoverDelegate::RemoveEmbedderData(), which aborts
++  // release builds rather than merely failing the deletion.
++  //
++  // The observer is not optional - RemoveWithFilterAndReply() calls into it
++  // unconditionally - but no keep-alive variant is needed here: unlike the
++  // on-exit path this runs while the browser is plainly still up.
++  content::BrowsingDataRemover* const remover =
++      profile_->GetBrowsingDataRemover();
++  remover->RemoveWithFilterAndReply(
++      base::Time::Min(), base::Time::Max(),
++      content::BrowsingDataRemover::DATA_TYPE_COOKIES |
++          content::BrowsingDataRemover::DATA_TYPE_DOM_STORAGE,
++      content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
++      std::move(filter),
++      testing_data_remover_observer_
++          ? testing_data_remover_observer_.get()
++          : BrowsingDataRemoverObserver::Create(
++                remover, /*filterable_deletion=*/true, profile_));
++}
++#endif  // !BUILDFLAG(IS_ANDROID)
++
+ void ChromeBrowsingDataLifetimeManager::ClearBrowsingDataForOnExitPolicy(
+     bool keep_browser_alive) {
+   const base::ListValue& data_types = profile_->GetPrefs()->GetList(
+--- a/chrome/browser/resources/settings/privacy_page/privacy_page.ts
++++ b/chrome/browser/resources/settings/privacy_page/privacy_page.ts
+@@ -20,6 +20,7 @@
+ import '../settings_page/settings_section.js';
+ import '../settings_shared.css.js';
+ import './clear_on_exit_sites.js';
++import './ephemeral_sites.js';
+ import './privacy_guide/privacy_guide_dialog.js';
+ 
+ import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+--- a/chrome/browser/resources/settings/BUILD.gn
++++ b/chrome/browser/resources/settings/BUILD.gn
+@@ -130,6 +130,7 @@
+     "performance_page/tab_discard/exception_list.ts",
+     "performance_page/tab_discard/exception_tabbed_add_dialog.ts",
+     "privacy_page/clear_on_exit_sites.ts",
++    "privacy_page/ephemeral_sites.ts",
+     "privacy_page/cookies_page.ts",
+     "privacy_page/do_not_track_toggle.ts",
+     "privacy_page/personalization_options.ts",
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -2211,6 +2211,27 @@
+     <message name="IDS_SETTINGS_CLEAR_ON_EXIT_SITES_DUPLICATE" desc="Error shown when the website typed into the add-a-site field is already in the list.">
+       This site is already on the list
+     </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_SITES_HEADER" desc="Header for a list of websites whose cookies and stored data are deleted as soon as the last tab showing that site is closed.">
++      Reset these sites when I close their last tab
++    </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_SITES_DESC" desc="Description of the list of websites that are reset as soon as their last tab closes. It states plainly which data this covers, because the browser cannot delete the other categories for one site at a time.">
++      As soon as you close the last tab for one of these sites, its cookies and stored data are deleted, so your next visit starts signed out. Adding a site covers its subdomains too. This clears cookies and site storage only - browsing history, autofill data, passwords and site settings can only be deleted for every site at once.
++    </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_SITES_ADD_TITLE" desc="Title of the dialog for adding a website to the list of sites that are reset when their last tab closes.">
++      Add a site to reset
++    </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_SITES_ADD_ARIA_LABEL" desc="Accessibility label for the button that opens the dialog for adding a website to the list of sites that are reset when their last tab closes.">
++      Add a site to reset when its last tab closes
++    </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_SITES_PLACEHOLDER" desc="Placeholder text in the text field for typing a website address, showing the expected format.">
++      example.com
++    </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_SITES_INVALID" desc="Error shown when the text typed into the add-a-site field is not a website address.">
++      Enter a site, for example example.com
++    </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_SITES_DUPLICATE" desc="Error shown when the website typed into the add-a-site field is already in the list.">
++      This site is already on the list
++    </message>
+     <message name="IDS_SETTINGS_TITLE_AND_COUNT" desc="The title of a section in the settings page with a count of the total number of items in the section">
+       <ph name="TITLE">$1<ex>Block</ex></ph> - <ph name="COUNT">$2<ex>42</ex></ph>
+     </message>
+--- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
++++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+@@ -2460,6 +2460,14 @@
+        IDS_SETTINGS_CLEAR_ON_EXIT_SITES_PLACEHOLDER},
+       {"clearOnExitSitesInvalid", IDS_SETTINGS_CLEAR_ON_EXIT_SITES_INVALID},
+       {"clearOnExitSitesDuplicate", IDS_SETTINGS_CLEAR_ON_EXIT_SITES_DUPLICATE},
++      {"ephemeralSitesHeader", IDS_SETTINGS_EPHEMERAL_SITES_HEADER},
++      {"ephemeralSitesDesc", IDS_SETTINGS_EPHEMERAL_SITES_DESC},
++      {"ephemeralSitesAddTitle", IDS_SETTINGS_EPHEMERAL_SITES_ADD_TITLE},
++      {"ephemeralSitesAddAriaLabel",
++       IDS_SETTINGS_EPHEMERAL_SITES_ADD_ARIA_LABEL},
++      {"ephemeralSitesPlaceholder", IDS_SETTINGS_EPHEMERAL_SITES_PLACEHOLDER},
++      {"ephemeralSitesInvalid", IDS_SETTINGS_EPHEMERAL_SITES_INVALID},
++      {"ephemeralSitesDuplicate", IDS_SETTINGS_EPHEMERAL_SITES_DUPLICATE},
+       {"titleAndCount", IDS_SETTINGS_TITLE_AND_COUNT},
+       {"safeBrowsingEnableExtendedReportingDesc",
+        IDS_SETTINGS_SAFEBROWSING_ENABLE_REPORTING_DESC},
+--- /dev/null
++++ b/chrome/browser/resources/settings/privacy_page/ephemeral_sites.html
+@@ -0,0 +1,58 @@
++<style include="cr-shared-style cr-icons settings-shared">
++  .list-frame {
++    padding-inline-start: var(--cr-section-indent-width);
++  }
++
++  #sites > .list-item:not(:first-of-type) {
++    border-top: var(--cr-separator-line);
++  }
++
++  .cr-padded-text {
++    flex: 1;
++  }
++</style>
++<div class="cr-row first">
++  <div class="cr-padded-text">
++    $i18n{ephemeralSitesHeader}
++    <div class="secondary">$i18n{ephemeralSitesDesc}</div>
++  </div>
++  <cr-button id="addButton" on-click="onAddClick_"
++      aria-label="$i18n{ephemeralSitesAddAriaLabel}">
++    $i18n{add}
++  </cr-button>
++</div>
++<div id="noSites" class="list-frame" hidden$="[[hasSites_(sites_.*)]]">
++  <div class="list-item secondary">$i18n{noSitesAdded}</div>
++</div>
++<div id="sites" class="list-frame" role="list"
++    hidden$="[[!hasSites_(sites_.*)]]">
++  <template is="dom-repeat" items="[[sites_]]">
++    <div class="list-item" role="listitem">
++      <div class="start text-elide">[[item]]</div>
++      <cr-icon-button class="icon-clear" data-site$="[[item]]"
++          on-click="onRemoveClick_" title="$i18n{remove}"
++          aria-label="$i18n{remove}">
++      </cr-icon-button>
++    </div>
++  </template>
++</div>
++<cr-dialog id="addDialog" close-text="$i18n{close}">
++  <div slot="title">$i18n{ephemeralSitesAddTitle}</div>
++  <div slot="body">
++    <cr-input id="siteInput" label="$i18n{addSite}"
++        placeholder="$i18n{ephemeralSitesPlaceholder}"
++        value="{{newSite_}}" on-input="validate_"
++        invalid="[[inputInvalid_]]" error-message="[[errorMessage_]]"
++        spellcheck="false" autofocus>
++    </cr-input>
++  </div>
++  <div slot="button-container">
++    <cr-button class="cancel-button" on-click="onCancelClick_">
++      $i18n{cancel}
++    </cr-button>
++    <cr-button id="addSiteButton" class="action-button" on-click="onSubmit_"
++        disabled="[[addDisabled_]]">
++      $i18n{add}
++    </cr-button>
++  </div>
++</cr-dialog>
+--- /dev/null
++++ b/chrome/browser/resources/settings/privacy_page/ephemeral_sites.ts
+@@ -0,0 +1,209 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++/**
++ * @fileoverview
++ * 'settings-ephemeral-sites' is the "reset these sites when their last tab
++ * closes" list. It is the mirror image of settings-clear-on-exit-sites next to
++ * it: that one names sites to keep when the browser quits, this one names
++ * sites that should never persist at all.
++ *
++ * Deliberately independent of the delete-on-exit toggle, and so rendered
++ * outside its cr-collapse - being ephemeral is a property of the site, not of
++ * the session, and the feature works whether or not that toggle is on.
++ *
++ * Same storage mechanics as its sibling: a single list pref, which
++ * settingsPrivate exposes as PrefType.LIST and which therefore cannot be bound
++ * by settings-toggle-button or settings-checkbox, so this goes through
++ * PrefsMixin's appendPrefListItem()/deletePrefListItem() instead.
++ *
++ * The description string promises cookies and site storage and nothing more,
++ * because that is all the browser can honestly deliver: history, autofill,
++ * passwords and site settings ignore the origin filter, so they can only be
++ * cleared for every site at once.
++ */
++import 'chrome://resources/cr_elements/cr_button/cr_button.js';
++import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
++import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
++import 'chrome://resources/cr_elements/cr_input/cr_input.js';
++import 'chrome://resources/cr_elements/cr_shared_style.css.js';
++import 'chrome://resources/cr_elements/icons.html.js';
++import '../settings_shared.css.js';
++
++import type {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
++import type {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
++import type {CrInputElement} from 'chrome://resources/cr_elements/cr_input/cr_input.js';
++import type {PrefsMixinInterface} from '/shared/settings/prefs/prefs_mixin.js';
++import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
++import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
++
++import {loadTimeData} from '../i18n_setup.js';
++
++import {getTemplate} from './ephemeral_sites.html.js';
++
++export const EPHEMERAL_SITES_PREF: string =
++    'browser.clear_data.aerium_ephemeral_sites';
++
++export interface EphemeralSitesElement {
++  $: {
++    addButton: CrButtonElement,
++    addDialog: CrDialogElement,
++    addSiteButton: CrButtonElement,
++    siteInput: CrInputElement,
++  };
++}
++
++type Constructor<T> = new (...args: any[]) => T;
++const EphemeralSitesElementBase = PrefsMixin(PolymerElement) as
++    Constructor<PrefsMixinInterface&PolymerElement>;
++
++export class EphemeralSitesElement extends EphemeralSitesElementBase {
++  static get is() {
++    return 'settings-ephemeral-sites';
++  }
++
++  static get template() {
++    return getTemplate();
++  }
++
++  static get properties() {
++    return {
++      sites_: {
++        type: Array,
++        value: () => [],
++      },
++
++      newSite_: {
++        type: String,
++        value: '',
++      },
++
++      addDisabled_: {
++        type: Boolean,
++        value: true,
++      },
++
++      inputInvalid_: {
++        type: Boolean,
++        value: false,
++      },
++
++      errorMessage_: {
++        type: String,
++        value: '',
++      },
++    };
++  }
++
++  static get observers() {
++    return [
++      `onPrefChanged_(prefs.${EPHEMERAL_SITES_PREF}.value.*)`,
++    ];
++  }
++
++  declare private sites_: string[];
++  declare private newSite_: string;
++  declare private addDisabled_: boolean;
++  declare private inputInvalid_: boolean;
++  declare private errorMessage_: string;
++
++  private onPrefChanged_() {
++    this.sites_ = this.getPref<string[]>(EPHEMERAL_SITES_PREF).value.slice();
++  }
++
++  private hasSites_(): boolean {
++    return this.sites_.length > 0;
++  }
++
++  /**
++   * Turns whatever the user typed into a bare hostname, or null if it cannot
++   * be one. Accepts a pasted URL and a content-settings style "[*.]example.com"
++   * pattern as well as a plain hostname, because people will type all three.
++   * The URL parser does the actual work, so IDN, IPv6 literals and ports are
++   * handled the same way the browser handles them everywhere else.
++   */
++  private normalizeSite_(input: string): string|null {
++    const trimmed = input.trim();
++    if (!trimmed) {
++      return null;
++    }
++    let candidate = trimmed.replace(/^\[\*\.\]/, '').replace(/^\*\./, '');
++    if (!candidate.includes('://')) {
++      candidate = 'https://' + candidate;
++    }
++    let url: URL;
++    try {
++      url = new URL(candidate);
++    } catch (e) {
++      return null;
++    }
++    return url.hostname || null;
++  }
++
++  private validate_() {
++    if (this.newSite_.trim() === '') {
++      // Empty input disables the action button without shouting at the user.
++      this.inputInvalid_ = false;
++      this.addDisabled_ = true;
++      this.errorMessage_ = '';
++      return;
++    }
++
++    const site = this.normalizeSite_(this.newSite_);
++    if (site === null) {
++      this.inputInvalid_ = true;
++      this.addDisabled_ = true;
++      this.errorMessage_ = loadTimeData.getString('ephemeralSitesInvalid');
++      return;
++    }
++
++    if (this.sites_.includes(site)) {
++      this.inputInvalid_ = true;
++      this.addDisabled_ = true;
++      this.errorMessage_ = loadTimeData.getString('ephemeralSitesDuplicate');
++      return;
++    }
++
++    this.inputInvalid_ = false;
++    this.addDisabled_ = false;
++    this.errorMessage_ = '';
++  }
++
++  private onAddClick_() {
++    this.newSite_ = '';
++    this.inputInvalid_ = false;
++    this.addDisabled_ = true;
++    this.errorMessage_ = '';
++    this.$.addDialog.showModal();
++  }
++
++  private onCancelClick_() {
++    this.$.addDialog.cancel();
++  }
++
++  private onSubmit_() {
++    const site = this.normalizeSite_(this.newSite_);
++    if (site === null || this.sites_.includes(site)) {
++      return;
++    }
++    this.appendPrefListItem(EPHEMERAL_SITES_PREF, site);
++    this.$.addDialog.close();
++  }
++
++  private onRemoveClick_(e: Event) {
++    const site = (e.currentTarget as HTMLElement).dataset['site'];
++    if (site === undefined) {
++      return;
++    }
++    this.deletePrefListItem(EPHEMERAL_SITES_PREF, site);
++  }
++}
++
++declare global {
++  interface HTMLElementTagNameMap {
++    'settings-ephemeral-sites': EphemeralSitesElement;
++  }
++}
++
++customElements.define(EphemeralSitesElement.is, EphemeralSitesElement);
+--- a/chrome/browser/resources/settings/privacy_page/privacy_page.html
++++ b/chrome/browser/resources/settings/privacy_page/privacy_page.html
+@@ -60,5 +60,7 @@
+       <settings-clear-on-exit-sites id="clearOnExitSites" prefs="{{prefs}}">
+       </settings-clear-on-exit-sites>
+     </cr-collapse>
++    <settings-ephemeral-sites id="ephemeralSites" prefs="{{prefs}}">
++    </settings-ephemeral-sites>
+     <cr-link-row id="thirdPartyCookiesLinkRow"
+         start-icon="privacy:cookie"

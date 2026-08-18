@@ -45,3 +45,4 @@ ungoogled-fatih/aerium-clear-on-exit-site-exclusions.patch
 ungoogled-fatih/aerium-guard-settings-section.patch
 ungoogled-fatih/aerium-guard-location-bar-button.patch
 ungoogled-fatih/aerium-remove-passwords-autofill-profile-menu.patch
+ungoogled-fatih/aerium-ephemeral-sites.patch

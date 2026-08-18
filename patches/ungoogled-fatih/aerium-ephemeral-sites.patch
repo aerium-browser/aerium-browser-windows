@@ -396,56 +396,6 @@ is.
  void ChromeBrowsingDataLifetimeManager::ClearBrowsingDataForOnExitPolicy(
      bool keep_browser_alive) {
    const base::ListValue& data_types = profile_->GetPrefs()->GetList(
---- a/chrome/browser/resources/settings/privacy_page/privacy_page.ts
-+++ b/chrome/browser/resources/settings/privacy_page/privacy_page.ts
-@@ -20,6 +20,7 @@
- import '../settings_page/settings_section.js';
- import '../settings_shared.css.js';
- import './clear_on_exit_sites.js';
-+import './ephemeral_sites.js';
- import './privacy_guide/privacy_guide_dialog.js';
- 
- import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
---- a/chrome/browser/resources/settings/BUILD.gn
-+++ b/chrome/browser/resources/settings/BUILD.gn
-@@ -130,6 +130,7 @@
-     "performance_page/tab_discard/exception_list.ts",
-     "performance_page/tab_discard/exception_tabbed_add_dialog.ts",
-     "privacy_page/clear_on_exit_sites.ts",
-+    "privacy_page/ephemeral_sites.ts",
-     "privacy_page/cookies_page.ts",
-     "privacy_page/do_not_track_toggle.ts",
-     "privacy_page/personalization_options.ts",
---- a/chrome/app/settings_strings.grdp
-+++ b/chrome/app/settings_strings.grdp
-@@ -2211,6 +2211,27 @@
-     <message name="IDS_SETTINGS_CLEAR_ON_EXIT_SITES_DUPLICATE" desc="Error shown when the website typed into the add-a-site field is already in the list.">
-       This site is already on the list
-     </message>
-+    <message name="IDS_SETTINGS_EPHEMERAL_SITES_HEADER" desc="Header for a list of websites whose cookies and stored data are deleted as soon as the last tab showing that site is closed.">
-+      Reset these sites when I close their last tab
-+    </message>
-+    <message name="IDS_SETTINGS_EPHEMERAL_SITES_DESC" desc="Description of the list of websites that are reset as soon as their last tab closes. It states plainly which data this covers, because the browser cannot delete the other categories for one site at a time.">
-+      As soon as you close the last tab for one of these sites, its cookies and stored data are deleted, so your next visit starts signed out. Adding a site covers its subdomains too. This clears cookies and site storage only - browsing history, autofill data, passwords and site settings can only be deleted for every site at once.
-+    </message>
-+    <message name="IDS_SETTINGS_EPHEMERAL_SITES_ADD_TITLE" desc="Title of the dialog for adding a website to the list of sites that are reset when their last tab closes.">
-+      Add a site to reset
-+    </message>
-+    <message name="IDS_SETTINGS_EPHEMERAL_SITES_ADD_ARIA_LABEL" desc="Accessibility label for the button that opens the dialog for adding a website to the list of sites that are reset when their last tab closes.">
-+      Add a site to reset when its last tab closes
-+    </message>
-+    <message name="IDS_SETTINGS_EPHEMERAL_SITES_PLACEHOLDER" desc="Placeholder text in the text field for typing a website address, showing the expected format.">
-+      example.com
-+    </message>
-+    <message name="IDS_SETTINGS_EPHEMERAL_SITES_INVALID" desc="Error shown when the text typed into the add-a-site field is not a website address.">
-+      Enter a site, for example example.com
-+    </message>
-+    <message name="IDS_SETTINGS_EPHEMERAL_SITES_DUPLICATE" desc="Error shown when the website typed into the add-a-site field is already in the list.">
-+      This site is already on the list
-+    </message>
-     <message name="IDS_SETTINGS_TITLE_AND_COUNT" desc="The title of a section in the settings page with a count of the total number of items in the section">
-       <ph name="TITLE">$1<ex>Block</ex></ph> - <ph name="COUNT">$2<ex>42</ex></ph>
-     </message>
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 @@ -2460,6 +2460,14 @@
@@ -736,13 +686,61 @@ is.
 +}
 +
 +customElements.define(EphemeralSitesElement.is, EphemeralSitesElement);
+--- a/chrome/browser/resources/settings/privacy_page/privacy_page.ts
++++ b/chrome/browser/resources/settings/privacy_page/privacy_page.ts
+@@ -14,6 +14,7 @@
+ import '../settings_page/settings_section.js';
+ import '../settings_shared.css.js';
+ import './clear_on_exit.js';
++import './ephemeral_sites.js';
+ import './privacy_guide/privacy_guide_dialog.js';
+ 
+ import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+--- a/chrome/browser/resources/settings/BUILD.gn
++++ b/chrome/browser/resources/settings/BUILD.gn
+@@ -131,4 +131,5 @@
+     "privacy_page/clear_on_exit_sites.ts",
+     "privacy_page/cookies_page.ts",
+     "privacy_page/do_not_track_toggle.ts",
++    "privacy_page/ephemeral_sites.ts",
+     "privacy_page/personalization_options.ts",
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -2265,5 +2265,26 @@
+     <message name="IDS_SETTINGS_AERIUM_GUARD_BUBBLE_CUSTOM_NOTE" desc="Note shown in the address-bar bubble when the current settings match none of the three modes, so none of them is selected.">
+       Your settings match none of these modes. Picking one replaces them.
+     </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_SITES_HEADER" desc="Header for a list of websites whose cookies and stored data are deleted as soon as the last tab showing that site is closed.">
++      Reset these sites when I close their last tab
++    </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_SITES_DESC" desc="Description of the list of websites that are reset as soon as their last tab closes. It states plainly which data this covers, because the browser cannot delete the other categories for one site at a time.">
++      As soon as you close the last tab for one of these sites, its cookies and stored data are deleted, so your next visit starts signed out. Adding a site covers its subdomains too. This clears cookies and site storage only - browsing history, autofill data, passwords and site settings can only be deleted for every site at once.
++    </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_SITES_ADD_TITLE" desc="Title of the dialog for adding a website to the list of sites that are reset when their last tab closes.">
++      Add a site to reset
++    </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_SITES_ADD_ARIA_LABEL" desc="Accessibility label for the button that opens the dialog for adding a website to the list of sites that are reset when their last tab closes.">
++      Add a site to reset when its last tab closes
++    </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_SITES_PLACEHOLDER" desc="Placeholder text in the text field for typing a website address, showing the expected format.">
++      example.com
++    </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_SITES_INVALID" desc="Error shown when the text typed into the add-a-site field is not a website address.">
++      Enter a site, for example example.com
++    </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_SITES_DUPLICATE" desc="Error shown when the website typed into the add-a-site field is already in the list.">
++      This site is already on the list
++    </message>
+     <message name="IDS_SETTINGS_TITLE_AND_COUNT" desc="The title of a section in the settings page with a count of the total number of items in the section">
+       <ph name="TITLE">$1<ex>Block</ex></ph> - <ph name="COUNT">$2<ex>42</ex></ph>
 --- a/chrome/browser/resources/settings/privacy_page/privacy_page.html
 +++ b/chrome/browser/resources/settings/privacy_page/privacy_page.html
-@@ -60,5 +60,7 @@
-       <settings-clear-on-exit-sites id="clearOnExitSites" prefs="{{prefs}}">
-       </settings-clear-on-exit-sites>
-     </cr-collapse>
+@@ -12,6 +12,8 @@
+     </template>
+     <settings-clear-on-exit id="clearOnExit" prefs="{{prefs}}">
+     </settings-clear-on-exit>
 +    <settings-ephemeral-sites id="ephemeralSites" prefs="{{prefs}}">
 +    </settings-ephemeral-sites>
-     <cr-link-row id="thirdPartyCookiesLinkRow"
-         start-icon="privacy:cookie"
+     <cr-link-row id="clearBrowsingData"
+         start-icon="cr:delete"
+         class="hr" label="$i18n{clearBrowsingData}"

@@ -35,6 +35,21 @@ _BRAND_NAME = 'Aerium'
 _COMPANY_NAME = 'Dioide'
 
 
+def _generate_patch_manifest(source_tree):
+    """Writes chrome://aerium's patch list, derived from the series files."""
+    out = source_tree / 'chrome' / 'browser' / 'ui' / 'webui' / 'aerium_patch_manifest.inc'
+    version = (_ROOT_DIR / 'ungoogled-chromium' / 'chromium_version.txt').read_text().strip()
+    subprocess.run([
+        sys.executable,
+        str(_ROOT_DIR / 'devutils' / 'generate_patch_manifest.py'),
+        '--series', str(_ROOT_DIR / 'ungoogled-chromium' / 'patches' / 'series'),
+        str(_ROOT_DIR / 'ungoogled-chromium' / 'patches'),
+        '--series', str(_ROOT_DIR / 'patches' / 'series'), str(_ROOT_DIR / 'patches'),
+        '--chromium-version', version,
+        '-o', str(out),
+    ], check=True)
+
+
 def _apply_branding(source_tree):
     """Renames Chromium to Aerium (by Dioide) and swaps in the Aerium logos"""
     get_logger().info('Applying %s branding...', _BRAND_NAME)
@@ -383,6 +398,12 @@ def main():
 
         # Apply Aerium branding
         _apply_branding(source_tree)
+
+        # Generate the data behind chrome://aerium. After branding and domain
+        # substitution, matching the Linux repo's ordering: generating earlier
+        # would let domain substitution rewrite hostnames inside the patch
+        # descriptions into the unreachable placeholder domain.
+        _generate_patch_manifest(source_tree)
 
     # Check if rust-toolchain folder has been populated
     HOST_CPU_IS_64BIT = sys.maxsize > 2**32

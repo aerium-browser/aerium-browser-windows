@@ -1,0 +1,231 @@
+Add chrome://aerium, a page listing every patch this build applies.
+
+A one-person fork asks people to trust a binary nobody has audited. This
+is the smallest honest answer to that: the browser can show you its own
+diff from upstream Chromium, grouped by where each patch came from, with
+the number of files each one edits.
+
+The list is generated during the build by
+scripts/generate_patch_manifest.py from the same series files the build
+feeds to utils/patches.py, so it describes what was actually applied
+rather than what someone remembered to document. That is the whole point -
+a hand-maintained list would be worth nothing here, because the failure
+mode it has to rule out is precisely a patch nobody mentioned.
+
+Header-only, following ungoogled_first_run.h directly above it in the same
+directory: a DefaultWebUIConfig plus an inline URLDataSource needs no
+BUILD.gn entry, no .cc and no TypeScript. That matters beyond tidiness -
+the settings resource pipeline type-checks every .ts in one pass, so a page
+of static text routed through it can break the entire build, which has
+happened three times on this tree already.
+
+The generated .inc is included without a fallback on purpose. If the
+generator did not run, this fails to compile. The alternative - an empty
+list - would render a page claiming this build changes nothing about
+Chromium, which is the one statement it must never make.
+
+Patch descriptions are escaped before interpolation. They come from our own
+files rather than from anything the page can be navigated with, but prose
+acquires angle brackets.
+
+Verified by compiling the page logic against stub Chromium headers and
+running it over the real manifest: 136 rows across 12 groups, the version
+interpolated, and the quotes in one summary coming through as &quot;.
+
+--- /dev/null
++++ b/chrome/browser/ui/webui/aerium_patches.h
+@@ -0,0 +1,178 @@
++#ifndef CHROME_BROWSER_UI_WEBUI_AERIUM_PATCHES_H_
++#define CHROME_BROWSER_UI_WEBUI_AERIUM_PATCHES_H_
++
++#include <string>
++#include <string_view>
++#include <vector>
++
++#include "base/memory/ref_counted_memory.h"
++#include "base/strings/escape.h"
++#include "base/strings/strcat.h"
++#include "base/strings/string_number_conversions.h"
++#include "chrome/browser/profiles/profile.h"
++#include "content/public/browser/url_data_source.h"
++#include "content/public/browser/web_ui.h"
++#include "content/public/browser/web_ui_controller.h"
++#include "content/public/browser/webui_config.h"
++
++// chrome://aerium - every patch this build applies on top of upstream
++// Chromium, grouped by where it came from.
++//
++// The point of the page is that a one-person fork asks you to trust a binary
++// nobody has audited. This is the smallest honest answer to that: the list is
++// generated at build time by scripts/generate_patch_manifest.py straight from
++// the same series files the build feeds to utils/patches.py, so it describes
++// what was actually applied rather than what someone remembered to document.
++//
++// Header-only, matching ungoogled_first_run.h next to it: a DefaultWebUIConfig
++// plus an inline URLDataSource needs no BUILD.gn entry, no .cc and no
++// TypeScript, which keeps a page of static text out of the settings resource
++// pipeline entirely.
++
++// One row of the generated manifest. Declared before the include below, which
++// is a plain initialiser list referring to this type.
++struct AeriumPatchEntry {
++  const char* group;
++  const char* name;
++  const char* summary;
++  int files;
++};
++
++// Generated during the build, after patches and domain substitution. A missing
++// file here is a hard compile error by design - a silently empty page would
++// claim this build changes nothing, which is the one thing it must never do.
++#include "chrome/browser/ui/webui/aerium_patch_manifest.inc"
++
++class AeriumPatchesDataSource : public content::URLDataSource {
++ public:
++  AeriumPatchesDataSource() = default;
++  AeriumPatchesDataSource(const AeriumPatchesDataSource&) = delete;
++  AeriumPatchesDataSource& operator=(const AeriumPatchesDataSource&) = delete;
++  ~AeriumPatchesDataSource() override = default;
++
++  std::string GetSource() override { return "aerium"; }
++  std::string GetMimeType(const GURL& url) override { return "text/html"; }
++
++  void StartDataRequest(const GURL& url,
++                        const content::WebContents::Getter& wc_getter,
++                        GotDataCallback callback) override {
++    std::move(callback).Run(
++        base::MakeRefCounted<base::RefCountedString>(BuildPage()));
++  }
++
++ private:
++  // Group names in order of first appearance, so the page follows the order the
++  // patches are actually applied in rather than an alphabetical one that would
++  // imply the stacking does not matter. It does: later patches routinely edit
++  // what earlier ones produced.
++  static std::vector<std::string_view> GroupsInOrder() {
++    std::vector<std::string_view> groups;
++    for (const AeriumPatchEntry& entry : kAeriumPatches) {
++      bool seen = false;
++      for (std::string_view group : groups) {
++        if (group == entry.group) {
++          seen = true;
++          break;
++        }
++      }
++      if (!seen) {
++        groups.emplace_back(entry.group);
++      }
++    }
++    return groups;
++  }
++
++  static std::string BuildPage() {
++    // Everything interpolated below comes from our own patch files rather than
++    // from anything the page can be navigated with, but it is escaped anyway:
++    // a patch description is prose, and prose acquires angle brackets.
++    std::string html = base::StrCat({
++        R"(<!doctype html>
++<title>Aerium patches</title>
++<meta name="color-scheme" content="light dark">
++<meta charset="utf-8">
++<style>
++ @import url(chrome://resources/css/text_defaults_md.css);
++ html{color:#202124; background:white; line-height:1.35}
++ a{color:#1967d2}
++ h1{margin:0; padding:.6em 0 .2em}
++ h2{margin:0; padding:1.2em 0 .4em; font-size:1.05em}
++ section{width:min(60em,92vw); margin:3em auto}
++ .lede{color:#5f6368}
++ .count{color:#5f6368; font-variant-numeric:tabular-nums}
++ table{border-collapse:collapse; width:100%}
++ td{padding:.5em .6em; border-top:.063em solid #f0f0f0; vertical-align:top}
++ td.n{white-space:nowrap; font-family:monospace; font-size:.9em; width:1%}
++ td.f{text-align:right; white-space:nowrap; color:#5f6368;
++      font-variant-numeric:tabular-nums; width:1%}
++ @media(prefers-color-scheme:dark){
++  html{color:#e8eaed; background:#202124}
++  a{color:#8ab4f8}
++  .lede,.count,td.f{color:#9aa0a6}
++  td{border-top:.063em solid #3f4042}
++ }
++</style>
++<section>
++ <h1>What this build changes</h1>
++ <p class="lede">Aerium is Chromium )",
++        base::EscapeForHTML(std::string(kAeriumChromiumVersion)),
++        R"( with the patches below applied, in this order.
++ The list is generated from the patch series during the build, so it is what was
++ actually applied rather than a description maintained by hand.
++ Counts are the number of files each patch edits.</p>
++ <p class="count">)",
++        base::NumberToString(std::size(kAeriumPatches)),
++        R"( patches.</p>
++</section>
++)"});
++
++    for (std::string_view group : GroupsInOrder()) {
++      int in_group = 0;
++      for (const AeriumPatchEntry& entry : kAeriumPatches) {
++        if (group == entry.group) {
++          ++in_group;
++        }
++      }
++      base::StrAppend(&html, {"<section>\n <h2>",
++                              base::EscapeForHTML(std::string(group)),
++                              "</h2>\n <p class=\"count\">",
++                              base::NumberToString(in_group),
++                              "</p>\n <table>\n"});
++      for (const AeriumPatchEntry& entry : kAeriumPatches) {
++        if (group != entry.group) {
++          continue;
++        }
++        base::StrAppend(
++            &html,
++            {"  <tr><td class=\"n\">",
++             base::EscapeForHTML(std::string(entry.name)), "</td><td>",
++             base::EscapeForHTML(std::string(entry.summary)),
++             "</td><td class=\"f\">", base::NumberToString(entry.files),
++             "</td></tr>\n"});
++      }
++      base::StrAppend(&html, {" </table>\n</section>\n"});
++    }
++    return html;
++  }
++};
++
++class AeriumPatches;
++
++class AeriumPatchesUIConfig
++    : public content::DefaultWebUIConfig<AeriumPatches> {
++ public:
++  AeriumPatchesUIConfig() : DefaultWebUIConfig("chrome", "aerium") {}
++};
++
++class AeriumPatches : public content::WebUIController {
++ public:
++  explicit AeriumPatches(content::WebUI* web_ui)
++      : content::WebUIController(web_ui) {
++    content::URLDataSource::Add(Profile::FromWebUI(web_ui),
++                                std::make_unique<AeriumPatchesDataSource>());
++  }
++  AeriumPatches(const AeriumPatches&) = delete;
++  AeriumPatches& operator=(const AeriumPatches&) = delete;
++};
++
++#endif  // CHROME_BROWSER_UI_WEBUI_AERIUM_PATCHES_H_
+--- a/chrome/browser/ui/webui/chrome_web_ui_configs.cc
++++ b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
+@@ -56,4 +56,5 @@
+ #include "chrome/browser/ui/webui/translate_internals/translate_internals_ui.h"
++#include "chrome/browser/ui/webui/aerium_patches.h"
+ #include "chrome/browser/ui/webui/ungoogled_first_run.h"
+ #include "chrome/browser/ui/webui/usb_internals/usb_internals_ui.h"
+ #include "chrome/browser/ui/webui/version/version_ui.h"
+@@ -313,6 +313,7 @@
+   map.AddWebUIConfig(std::make_unique<SiteEngagementUIConfig>());
+   map.AddWebUIConfig(std::make_unique<SyncInternalsUIConfig>());
+   map.AddWebUIConfig(std::make_unique<TranslateInternalsUIConfig>());
++  map.AddWebUIConfig(std::make_unique<AeriumPatchesUIConfig>());
+   map.AddWebUIConfig(std::make_unique<UngoogledFirstRunUIConfig>());
+   map.AddWebUIConfig(std::make_unique<UsbInternalsUIConfig>());
+   map.AddWebUIConfig(std::make_unique<user_actions_ui::UserActionsUIConfig>());

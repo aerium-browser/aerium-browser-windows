@@ -440,7 +440,7 @@ is.
          class="hr" label="$i18n{clearBrowsingData}"
 --- a/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.h
 +++ b/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.h
-@@ -11,14 +11,22 @@
+@@ -11,14 +11,24 @@
  #include <utility>
  #include <vector>
  
@@ -448,6 +448,7 @@ is.
 +
  #include "base/memory/raw_ptr.h"
  #include "base/memory/weak_ptr.h"
++#include "base/scoped_observation.h"
  #include "base/time/time.h"
 +#include "build/build_config.h"
  #include "components/keyed_service/core/keyed_service.h"
@@ -457,13 +458,14 @@ is.
  
 +#if !BUILDFLAG(IS_ANDROID)
 +#include "chrome/browser/ui/browser_window/public/browser_collection_observer.h"
++#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
 +#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 +#endif
 +
  namespace content {
  class BrowserContext;
  }  // namespace content
-@@ -36,7 +44,19 @@
+@@ -36,7 +46,19 @@
  }  // namespace browsing_data
  
  // Controls the lifetime of some browsing data.
@@ -483,7 +485,7 @@ is.
   public:
    struct ScheduledRemovalSettings {
      uint64_t remove_mask;
-@@ -55,6 +75,18 @@
+@@ -55,6 +77,18 @@
    // KeyedService:
    void Shutdown() override;
  
@@ -502,7 +504,7 @@ is.
    // Sets the end time of the period for which data must be deleted, for all
    // configurations. If this is |end_time_for_testing| has no value, use the
    // computed end time from each configuration.
-@@ -88,6 +120,30 @@
+@@ -88,6 +122,39 @@
    // Deletes data that needs to be deleted, and schedules the next deletion.
    void StartScheduledBrowsingDataRemoval();
  
@@ -528,6 +530,15 @@ is.
 +  // explicitly deleted specialisation in tab_strip_model.h. Entries are removed
 +  // in OnTabStripModelDestroyed() so this never holds a dangling model.
 +  std::set<raw_ptr<TabStripModel>> aerium_observed_models_;
++
++  // Aerium: BrowserCollection::AddObserver()/RemoveObserver() are protected,
++  // and both BrowserCollection and GlobalBrowserCollection befriend
++  // base::ScopedObservationTraits for exactly this pair, so a ScopedObservation
++  // is the sanctioned way to subscribe rather than a convenience. Note this is
++  // the opposite of the tab strips above, where the equivalent helper is a
++  // deleted specialisation - the two APIs disagree, deliberately.
++  base::ScopedObservation<GlobalBrowserCollection, BrowserCollectionObserver>
++      aerium_browser_collection_observation_{this};
 +#endif
 +
    std::vector<ScheduledRemovalSettings> scheduled_removals_settings_;
@@ -616,7 +627,7 @@ is.
  std::set<GURL> GetOpenedUrlsAndOngoingDownloads(Profile* profile) {
    std::set<GURL> result;
    // TODO (crbug.com/40211511): Enable this for android.
-@@ -386,6 +453,13 @@
+@@ -386,6 +453,14 @@
      content::BrowserContext* browser_context)
      : profile_(Profile::FromBrowserContext(browser_context)) {
    DCHECK(!profile_->IsGuestSession() || profile_->IsOffTheRecord());
@@ -625,12 +636,13 @@ is.
 +  // for later ones. The collection does not replay creations to a new observer,
 +  // so doing it the other way round would miss any window opened in between.
 +  AeriumObserveExistingBrowsers();
-+  GlobalBrowserCollection::GetInstance()->AddObserver(this);
++  aerium_browser_collection_observation_.Observe(
++      GlobalBrowserCollection::GetInstance());
 +#endif
    pref_change_registrar_.Init(profile_->GetPrefs());
    pref_change_registrar_.Add(
        browsing_data::prefs::kBrowsingDataLifetime,
-@@ -407,10 +481,132 @@
+@@ -407,10 +482,130 @@
      default;
  
  void ChromeBrowsingDataLifetimeManager::Shutdown() {
@@ -643,9 +655,7 @@ is.
 +  // posted is cancelled.
 +  TabStripModelObserver::StopObservingAll(this);
 +  aerium_observed_models_.clear();
-+  if (auto* collection = GlobalBrowserCollection::GetInstance()) {
-+    collection->RemoveObserver(this);
-+  }
++  aerium_browser_collection_observation_.Reset();
 +#endif
    pref_change_registrar_.RemoveAll();
    weak_ptr_factory_.InvalidateWeakPtrs();

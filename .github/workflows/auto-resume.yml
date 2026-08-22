@@ -24,9 +24,28 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          if ! gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[].name' | grep -qx 'build-artifact'; then
-            echo "Run $RUN_ID saved no checkpoint - real error, not a transient crash. Not resuming."
-            exit 0
+          # No checkpoint means the stage action classified this as a real
+          # error and deliberately skipped the upload - see the fast-fail
+          # branch in .github/actions/stage/index.js, which refuses to
+          # checkpoint a build.py that died in under an hour. That is why this
+          # repo needs no separate deterministic-failure marker the way Linux
+          # and Android do: the stage already withholds the checkpoint, and a
+          # compile error slower than the threshold self-corrects, since the
+          # next stage restores the tree, re-hits it within minutes and trips
+          # the same check.
+          if ! gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts" \
+               --jq '.artifacts[] | select(.expired == false) | .name' | grep -qx 'build-artifact'; then
+            {
+              echo "## Build needs a human, not a resume"
+              echo
+              echo "Run \`$RUN_ID\` for \`$HEAD_SHA\` saved no checkpoint, which the"
+              echo "stage action only does when it judged the failure a real error"
+              echo "rather than a stage timeout. Resuming would fail the same way."
+              echo
+              echo "Check that run's log for the build.py exit code."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "Run $RUN_ID saved no checkpoint - not resuming."
+            exit 1
           fi
           # Cap the auto-retry chain per commit. Dispatches made with the
           # workflow token show actor github-actions[bot], so manual resumes
@@ -34,8 +53,14 @@ jobs:
           attempts=$(gh api "repos/$REPO/actions/workflows/build-x64.yml/runs?head_sha=$HEAD_SHA&per_page=100" \
             --jq '[.workflow_runs[] | select(.actor.login == "github-actions[bot]")] | length')
           if [ "$attempts" -ge 2 ]; then
+            {
+              echo "## Auto-resume cap reached"
+              echo
+              echo "\`$HEAD_SHA\` has been auto-resumed $attempts times without"
+              echo "finishing. Something is wrong that resuming does not fix."
+            } >> "$GITHUB_STEP_SUMMARY"
             echo "Already auto-resumed $attempts times for $HEAD_SHA - giving up, this needs a human."
-            exit 0
+            exit 1
           fi
           echo "Dispatching resume of run $RUN_ID (auto-attempt $((attempts + 1)))"
           gh api -X POST "repos/$REPO/actions/workflows/build-x64.yml/dispatches" \

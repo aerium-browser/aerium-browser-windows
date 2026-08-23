@@ -1,0 +1,518 @@
+Finish Cookie AutoDelete parity: all-sites mode, a greylist, and a delay.
+
+Three patches already cover most of it - the delete-on-exit toggle, the
+keep list, and per-site reset on tab close. What was missing was the model
+Cookie AutoDelete actually uses. Its list is a list of sites to KEEP and
+everything else goes; ours was a list of sites to DELETE and everything
+else stays. Same mechanism, opposite polarity, and the opposite default.
+
+Three additions close it.
+
+All-sites mode (kAeriumEphemeralAllSites, off by default)
+
+  Turns the ephemeral list inside out: every site is cleared when its last
+  tab closes, and kAeriumClearOnExitExcludedSites becomes the keep list.
+  Expressed with BrowsingDataFilterBuilder::Mode::kPreserve rather than by
+  enumerating domains to delete, because the set of domains holding data is
+  not knowable from here - and listing it would be far larger than listing
+  the handful being spared.
+
+  Off by default deliberately. Turning it on signs the user out of every
+  site not on the keep list, which is a thing to opt into, not to receive
+  in an update. The explicit list keeps working unchanged when it is off,
+  so both models coexist rather than one replacing the other.
+
+  The exclusion list is shared with the on-exit toggle rather than
+  duplicated. "Never delete this site's data" is one intent; a second list
+  would let the same site be kept at shutdown and wiped on tab close, which
+  nobody means.
+
+  Three things are spared in this mode: the keep list because the user said
+  so, the greylist because it survives until shutdown and this is not
+  shutdown, and whatever is still open - clearing a site out from under a
+  tab displaying it logs the user out mid-session. The explicit-list path
+  always protected open sites; this path needs it more, since every site is
+  now a candidate.
+
+Greylist (kAeriumSessionOnlySites)
+
+  Cookie AutoDelete's middle tier: keep this site while the browser runs,
+  drop it at shutdown. Between "never delete" and "delete the moment the
+  last tab closes", and it covers the ordinary case of a site you want to
+  stay signed into while you work but not tomorrow.
+
+  Cleared by its own removal at shutdown, before every condition in
+  ClearBrowsingDataForOnExitPolicy() and outside all of them. Session-only
+  is a promise made per site, not a mode: it should not require asking for
+  a general clean-out, and turning that clean-out off should not cancel it.
+
+Delay (kAeriumEphemeralDelaySeconds, default 10)
+
+  Not a nicety. Sign-in flows routinely bounce through a provider in a tab
+  that closes itself, and OAuth popups close the moment they hand back a
+  token - clearing the instant the tab count reaches zero can delete the
+  cookie the redirect is about to need. It also forgives closing a tab by
+  accident. Cookie AutoDelete ships a delay for the same reasons.
+
+  Implemented by making the existing post-a-task hop a delayed one rather
+  than adding a timer. The weak pointer already in use is the cancellation
+  mechanism: Shutdown() invalidates the factory, so a pending clear never
+  runs against a half-destroyed profile. Clamped to 0-3600 in the browser
+  and again in the UI - the first stops a hand-edited Preferences file from
+  silently disabling the feature with a negative or enormous value, the
+  second stops a type="number" field reporting an empty string mid-edit
+  from being persisted as 0, which reads as "clear immediately".
+
+AeriumEphemeralDomains() becomes AeriumDomainsFromPref(), taking the pref
+name, because four lists now share that shape - ephemeral, keep, greylist
+and the on-exit exclusions - and they have to agree on what counts as one
+site or a domain could end up both kept and deleted.
+
+Still to do, tracked rather than silently skipped: the greylist has no
+Settings list of its own yet (the pref is live and settings_private can
+reach it), and none of the three earlier patches or this one exists on
+Android.
+--- a/components/browsing_data/core/pref_names.h
++++ b/components/browsing_data/core/pref_names.h
+@@ -78,6 +78,45 @@
+ inline constexpr char kAeriumEphemeralSites[] =
+     "browser.clear_data.aerium_ephemeral_sites";
+ 
++// Aerium: turns the list above inside out. With this on, every site is treated
++// as ephemeral and kAeriumClearOnExitExcludedSites becomes the keep list -
++// which is Cookie AutoDelete's actual model, "clear everything except these",
++// rather than the opt-in enumeration kAeriumEphemeralSites provides. The two
++// coexist deliberately: with this off the explicit list still works exactly as
++// before, so enabling the feature is the user's decision and an update cannot
++// silently sign anyone out of every site they had not thought to list.
++//
++// The exclusion list is shared rather than duplicated because "never delete
++// this site's data" is one intent, not two. A second list would let the same
++// site be kept at shutdown and wiped on tab close, which no user means.
++inline constexpr char kAeriumEphemeralAllSites[] =
++    "browser.clear_data.aerium_ephemeral_all_sites";
++
++// Aerium: Cookie AutoDelete's greylist - keep this site's data for as long as
++// the browser is running, then drop it at shutdown. Sits between the keep list
++// (never deleted) and ephemeral (deleted the moment the last tab closes), and
++// covers the common case of a site you want to stay signed into while you work
++// but not tomorrow.
++//
++// Cleared at shutdown independently of the delete-on-exit toggle. That is the
++// whole point of the tier: a site listed here is session-only whether or not
++// the user asked for a general clean-out, so the greylist has its own removal
++// rather than widening the toggle's mask.
++inline constexpr char kAeriumSessionOnlySites[] =
++    "browser.clear_data.aerium_session_only_sites";
++
++// Aerium: how long after a site's last tab closes before its data is cleared,
++// in seconds. Zero means immediately, which is what the feature did before this
++// pref existed.
++//
++// A delay is not a nicety. Sign-in flows routinely bounce through a provider in
++// a tab that closes itself, and OAuth popups close the moment they hand back a
++// token; clearing the instant the tab count hits zero can delete the cookie the
++// redirect is about to need. It also forgives closing a tab by accident. Cookie
++// AutoDelete defaults to a delay for the same reasons.
++inline constexpr char kAeriumEphemeralDelaySeconds[] =
++    "browser.clear_data.aerium_ephemeral_delay_seconds";
++
+ // Clear browsing data deletion time period.
+ inline constexpr char kDeleteTimePeriod[] = "browser.clear_data.time_period";
+ 
+--- a/components/browsing_data/core/pref_names.cc
++++ b/components/browsing_data/core/pref_names.cc
+@@ -62,6 +62,15 @@
+   // Aerium: no site is ephemeral by default, so the tab-close observer below
+   // finds an empty list and returns before doing any work.
+   registry->RegisterListPref(kAeriumEphemeralSites);
++  // Aerium: off, so an existing profile keeps behaving exactly as it did. The
++  // all-sites mode signs the user out of everything not on the keep list, which
++  // is a thing to opt into rather than to receive in an update.
++  registry->RegisterBooleanPref(kAeriumEphemeralAllSites, false);
++  registry->RegisterListPref(kAeriumSessionOnlySites);
++  // Aerium: ten seconds. Long enough for an OAuth redirect through a
++  // self-closing tab to come back, short enough that the data is gone before
++  // the user has moved on.
++  registry->RegisterIntegerPref(kAeriumEphemeralDelaySeconds, 10);
+   // TODO(crbug.com/471197613): When MaybeMigrateToQuickDeletePrefValues is
+   // removed, set default value in iOS for the `kDeleteTimePeriod` pref to 15
+   // minutes.
+--- a/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.h
++++ b/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.h
+@@ -135,6 +135,14 @@
+   // has a tab open. Always posted rather than called straight from the
+   // tab-strip notification, because at the point that fires the closing tab can
+   // still be reachable from the model and would count itself as open.
++  // Aerium: posts AeriumClearClosedEphemeralSites() after the configured
++  // delay. Cancelled by Shutdown() invalidating the weak pointer factory.
++  void AeriumScheduleEphemeralClear();
++
++  // Aerium: drops the greylist's cookies and storage at shutdown, regardless
++  // of the delete-on-exit toggle.
++  void AeriumClearSessionOnlySites(bool keep_browser_alive);
++
+   void AeriumClearClosedEphemeralSites();
+ 
+   // Aerium: which models this service has called AddObserver() on, purely to
+--- a/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc
++++ b/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc
+@@ -6,8 +6,10 @@
+ 
+ #include <algorithm>
+ #include <limits>
++#include <memory>
+ #include <set>
+ #include <string>
++#include <string_view>
+ #include <utility>
+ 
+ #include "base/command_line.h"
+@@ -368,15 +370,19 @@
+   return result;
+ }
+ 
+-// Aerium: the registrable domains the user marked ephemeral, normalised the
+-// same way so the comparison against the open set above is like for like.
+-std::set<std::string> AeriumEphemeralDomains(PrefService* prefs) {
++// Aerium: the registrable domains held in one of the site-list prefs,
++// normalised the same way so comparisons against the open set above are like
++// for like. Takes the pref name because four lists now share this shape -
++// ephemeral, the keep list, the greylist, and the on-exit exclusions - and
++// they must agree on what counts as one site or a domain could end up both
++// kept and deleted.
++std::set<std::string> AeriumDomainsFromPref(PrefService* prefs,
++                                            std::string_view pref_name) {
+   std::set<std::string> result;
+   if (!prefs) {
+     return result;
+   }
+-  for (const auto& entry :
+-       prefs->GetList(browsing_data::prefs::kAeriumEphemeralSites)) {
++  for (const auto& entry : prefs->GetList(std::string(pref_name))) {
+     if (!entry.is_string()) {
+       continue;
+     }
+@@ -546,11 +552,7 @@
+   // TabStripModelObserver drops the observation itself, telling us through
+   // OnTabStripModelDestroyed(). Closing a window takes every tab in it, so a
+   // site can stop being open without any single tab removal having done it.
+-  content::GetUIThreadTaskRunner({})->PostTask(
+-      FROM_HERE,
+-      base::BindOnce(
+-          &ChromeBrowsingDataLifetimeManager::AeriumClearClosedEphemeralSites,
+-          weak_ptr_factory_.GetWeakPtr()));
++  AeriumScheduleEphemeralClear();
+ }
+ 
+ void ChromeBrowsingDataLifetimeManager::OnTabStripModelDestroyed(
+@@ -568,35 +570,120 @@
+   // Posted, not immediate: at this point the removed tab can still be reachable
+   // from the model, so an immediate walk would see the site as still open and
+   // clear nothing.
+-  content::GetUIThreadTaskRunner({})->PostTask(
++  AeriumScheduleEphemeralClear();
++}
++
++void ChromeBrowsingDataLifetimeManager::AeriumScheduleEphemeralClear() {
++  // Posted rather than run inline for two reasons that both matter. At the
++  // moment a tab is removed it can still be reachable from the model, so an
++  // immediate walk would see the site as open and clear nothing. And the user's
++  // delay has to be honoured, which is the other half of why this is a hop.
++  //
++  // The weak pointer is the cancellation mechanism: Shutdown() invalidates the
++  // factory, so a pending clear posted before teardown never runs against a
++  // half-destroyed profile. That is why the delay needs no timer of its own.
++  int delay_seconds = profile_->GetPrefs()->GetInteger(
++      browsing_data::prefs::kAeriumEphemeralDelaySeconds);
++  // Clamped, not trusted. The pref is reachable through settings_private and a
++  // negative value would be read as an immediate task while a very large one
++  // would silently disable the feature; an hour is well past any redirect this
++  // is meant to survive.
++  delay_seconds = std::clamp(delay_seconds, 0, 3600);
++  content::GetUIThreadTaskRunner({})->PostDelayedTask(
+       FROM_HERE,
+       base::BindOnce(
+           &ChromeBrowsingDataLifetimeManager::AeriumClearClosedEphemeralSites,
+-          weak_ptr_factory_.GetWeakPtr()));
++          weak_ptr_factory_.GetWeakPtr()),
++      base::Seconds(delay_seconds));
+ }
+ 
+-void ChromeBrowsingDataLifetimeManager::AeriumClearClosedEphemeralSites() {
+-  const std::set<std::string> ephemeral =
+-      AeriumEphemeralDomains(profile_->GetPrefs());
+-  if (ephemeral.empty()) {
++void ChromeBrowsingDataLifetimeManager::AeriumClearSessionOnlySites(
++    bool keep_browser_alive) {
++  // The greylist is cleared at shutdown whether or not the delete-on-exit
++  // toggle is on, which is why this is its own removal and not an addition to
++  // that toggle's filter. "Keep this until I quit" is a statement about one
++  // site; it should not require asking for a general clean-out, and it should
++  // not be cancelled by turning that clean-out off.
++  const std::set<std::string> session_only = AeriumDomainsFromPref(
++      profile_->GetPrefs(), browsing_data::prefs::kAeriumSessionOnlySites);
++  if (session_only.empty()) {
+     return;
+   }
+-  const std::set<std::string> still_open =
+-      AeriumOpenRegistrableDomains(profile_);
+-
+   auto filter = content::BrowsingDataFilterBuilder::Create(
+       content::BrowsingDataFilterBuilder::Mode::kDelete);
+-  bool any = false;
+-  for (const std::string& domain : ephemeral) {
+-    if (still_open.count(domain)) {
+-      continue;
+-    }
++  for (const std::string& domain : session_only) {
+     filter->AddRegisterableDomain(domain);
+-    any = true;
+   }
+-  if (!any) {
++  content::BrowsingDataRemover* const remover =
++      profile_->GetBrowsingDataRemover();
++  remover->RemoveWithFilterAndReply(
++      base::Time::Min(), base::Time::Max(),
++      content::BrowsingDataRemover::DATA_TYPE_COOKIES |
++          content::BrowsingDataRemover::DATA_TYPE_DOM_STORAGE,
++      content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
++      std::move(filter),
++      testing_data_remover_observer_
++          ? testing_data_remover_observer_.get()
++          : BrowsingDataRemoverObserver::Create(remover,
++                                                /*filterable_deletion=*/true,
++                                                profile_, keep_browser_alive));
++}
++
++void ChromeBrowsingDataLifetimeManager::AeriumClearClosedEphemeralSites() {
++  PrefService* const prefs = profile_->GetPrefs();
++  const bool all_sites =
++      prefs->GetBoolean(browsing_data::prefs::kAeriumEphemeralAllSites);
++  const std::set<std::string> ephemeral = AeriumDomainsFromPref(
++      prefs, browsing_data::prefs::kAeriumEphemeralSites);
++  if (!all_sites && ephemeral.empty()) {
+     return;
+   }
++  const std::set<std::string> still_open =
++      AeriumOpenRegistrableDomains(profile_);
++
++  std::unique_ptr<content::BrowsingDataFilterBuilder> filter;
++  if (all_sites) {
++    // Cookie AutoDelete's model: delete every site except the ones being kept.
++    // Expressed as a kPreserve filter rather than by enumerating what to
++    // delete, because the set of domains holding data is not knowable from
++    // here - and even if it were, listing it would be a much larger filter
++    // than listing the handful being spared.
++    //
++    // Three things are spared. The keep list, because the user said so. The
++    // greylist, because it is kept until shutdown and this is not shutdown.
++    // And whatever is still open, because clearing a site out from under a tab
++    // that is displaying it logs the user out mid-session - the explicit-list
++    // path has always protected open sites and this one must too, all the more
++    // so now that every site is a candidate.
++    filter = content::BrowsingDataFilterBuilder::Create(
++        content::BrowsingDataFilterBuilder::Mode::kPreserve);
++    std::set<std::string> keep = AeriumDomainsFromPref(
++        prefs, browsing_data::prefs::kAeriumClearOnExitExcludedSites);
++    const std::set<std::string> session_only = AeriumDomainsFromPref(
++        prefs, browsing_data::prefs::kAeriumSessionOnlySites);
++    keep.insert(session_only.begin(), session_only.end());
++    keep.insert(still_open.begin(), still_open.end());
++    for (const std::string& domain : keep) {
++      filter->AddRegisterableDomain(domain);
++    }
++    // No early return on an empty keep set: preserving nothing is a valid and
++    // meaningful request here - clear everything - unlike the kDelete path
++    // below, where an empty filter would delete nothing at all.
++  } else {
++    filter = content::BrowsingDataFilterBuilder::Create(
++        content::BrowsingDataFilterBuilder::Mode::kDelete);
++    bool any = false;
++    for (const std::string& domain : ephemeral) {
++      if (still_open.count(domain)) {
++        continue;
++      }
++      filter->AddRegisterableDomain(domain);
++      any = true;
++    }
++    if (!any) {
++      return;
++    }
++  }
+ 
+   // Cookies and storage only. Both are in FILTERABLE_DATA_TYPES; anything else
+   // would trip the CHECK in
+@@ -623,6 +710,13 @@
+ 
+ void ChromeBrowsingDataLifetimeManager::ClearBrowsingDataForOnExitPolicy(
+     bool keep_browser_alive) {
++#if !BUILDFLAG(IS_ANDROID)
++  // Aerium: first, and outside every condition below. The greylist means
++  // "session only" - that is a promise made per site, not a mode, so it is
++  // kept whether or not the delete-on-exit toggle is on and whether or not the
++  // enterprise policy has anything to say.
++  AeriumClearSessionOnlySites(keep_browser_alive);
++#endif
+   const base::ListValue& data_types = profile_->GetPrefs()->GetList(
+       browsing_data::prefs::kClearBrowsingDataOnExitList);
+ 
+--- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
++++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
+@@ -616,6 +616,16 @@
+   // write silently and the list looks like it saves but never does.
+   (*s_allowlist)[browsing_data::prefs::kAeriumEphemeralSites] =
+       settings_api::PrefType::kList;
++  // Aerium: the all-sites mode, the greylist and the clearing delay, all of
++  // them driven from the same settings-ephemeral-sites element. Same reason as
++  // above - a pref missing from this allowlist is not an error the UI can see,
++  // it is a write that silently does nothing.
++  (*s_allowlist)[browsing_data::prefs::kAeriumEphemeralAllSites] =
++      settings_api::PrefType::kBoolean;
++  (*s_allowlist)[browsing_data::prefs::kAeriumSessionOnlySites] =
++      settings_api::PrefType::kList;
++  (*s_allowlist)[browsing_data::prefs::kAeriumEphemeralDelaySeconds] =
++      settings_api::PrefType::kNumber;
+   (*s_allowlist)[browsing_data::prefs::kDeleteTimePeriod] =
+       settings_api::PrefType::kNumber;
+ 
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -2211,6 +2211,18 @@
+     <message name="IDS_SETTINGS_CLEAR_ON_EXIT_SITES_DUPLICATE" desc="Error shown when the website typed into the add-a-site field is already in the list.">
+       This site is already on the list
+     </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_ALL_SITES_LABEL" desc="Label for a setting that deletes every website's cookies and stored data as soon as its last tab is closed, apart from websites the user has chosen to keep.">
++      Delete site data when its last tab closes
++    </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_ALL_SITES_DESC" desc="Description of the setting that deletes every website's data when its last tab closes. Explains that the keep list is what stops a site being cleared, and that the user will be signed out of anything not on it.">
++      Applies to every site except those on your keep list. You will be signed out of everything else once its last tab is closed.
++    </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_DELAY_LABEL" desc="Label for a setting controlling how many seconds to wait after a website's last tab closes before deleting its data.">
++      Wait before deleting
++    </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_DELAY_DESC" desc="Description of the waiting period before a website's data is deleted, explaining why a delay is useful. Sign-in flows often use a tab that closes itself.">
++      Seconds to wait after the last tab closes. A short delay lets sign-in redirects finish and forgives closing a tab by mistake.
++    </message>
+     <message name="IDS_SETTINGS_EPHEMERAL_SITES_HEADER" desc="Header for a list of websites whose cookies and stored data are deleted as soon as the last tab showing that site is closed.">
+       Reset these sites when I close their last tab
+     </message>
+--- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
++++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+@@ -2434,6 +2434,10 @@
+        IDS_SETTINGS_CLEAR_ON_EXIT_SITES_PLACEHOLDER},
+       {"clearOnExitSitesInvalid", IDS_SETTINGS_CLEAR_ON_EXIT_SITES_INVALID},
+       {"clearOnExitSitesDuplicate", IDS_SETTINGS_CLEAR_ON_EXIT_SITES_DUPLICATE},
++      {"ephemeralAllSitesLabel", IDS_SETTINGS_EPHEMERAL_ALL_SITES_LABEL},
++      {"ephemeralAllSitesDesc", IDS_SETTINGS_EPHEMERAL_ALL_SITES_DESC},
++      {"ephemeralDelayLabel", IDS_SETTINGS_EPHEMERAL_DELAY_LABEL},
++      {"ephemeralDelayDesc", IDS_SETTINGS_EPHEMERAL_DELAY_DESC},
+       {"ephemeralSitesHeader", IDS_SETTINGS_EPHEMERAL_SITES_HEADER},
+       {"ephemeralSitesDesc", IDS_SETTINGS_EPHEMERAL_SITES_DESC},
+       {"ephemeralSitesAddTitle", IDS_SETTINGS_EPHEMERAL_SITES_ADD_TITLE},
+--- a/chrome/browser/resources/settings/privacy_page/ephemeral_sites.html
++++ b/chrome/browser/resources/settings/privacy_page/ephemeral_sites.html
+@@ -11,7 +11,22 @@
+     flex: 1;
+   }
+ </style>
+-<div class="cr-row first">
++<settings-toggle-button id="allSitesToggle" class="first"
++    pref="{{prefs.browser.clear_data.aerium_ephemeral_all_sites}}"
++    label="$i18n{ephemeralAllSitesLabel}"
++    sub-label="$i18n{ephemeralAllSitesDesc}">
++</settings-toggle-button>
++<div class="cr-row continuation">
++  <div class="cr-padded-text">
++    $i18n{ephemeralDelayLabel}
++    <div class="secondary">$i18n{ephemeralDelayDesc}</div>
++  </div>
++  <cr-input id="delayInput" type="number" min="0" max="3600"
++      value="{{delaySeconds_}}" on-change="onDelayChanged_"
++      aria-label="$i18n{ephemeralDelayLabel}">
++  </cr-input>
++</div>
++<div class="cr-row">
+   <div class="cr-padded-text">
+     $i18n{ephemeralSitesHeader}
+     <div class="secondary">$i18n{ephemeralSitesDesc}</div>
+--- a/chrome/browser/resources/settings/privacy_page/ephemeral_sites.ts
++++ b/chrome/browser/resources/settings/privacy_page/ephemeral_sites.ts
+@@ -30,6 +30,7 @@
+ import 'chrome://resources/cr_elements/cr_shared_style.css.js';
+ import 'chrome://resources/cr_elements/icons.html.js';
+ import '../settings_shared.css.js';
++import '../controls/settings_toggle_button.js';
+ 
+ import type {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
+ import type {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
+@@ -45,6 +46,16 @@
+ export const EPHEMERAL_SITES_PREF: string =
+     'browser.clear_data.aerium_ephemeral_sites';
+ 
++/**
++ * Aerium: how long after a site's last tab closes before its data goes. Bound
++ * through a local property rather than straight to the pref because a
++ * type="number" input reports an empty string while the field is being edited,
++ * and writing that through would land a 0 - "clear immediately" - the moment
++ * someone selects the value to retype it.
++ */
++const EPHEMERAL_DELAY_PREF: string =
++    'browser.clear_data.aerium_ephemeral_delay_seconds';
++
+ export interface EphemeralSitesElement {
+   $: {
+     addButton: CrButtonElement,
+@@ -93,12 +104,18 @@
+         type: String,
+         value: '',
+       },
++
++      delaySeconds_: {
++        type: Number,
++        value: 0,
++      },
+     };
+   }
+ 
+   static get observers() {
+     return [
+       `onPrefChanged_(prefs.${EPHEMERAL_SITES_PREF}.value.*)`,
++      `onDelayPrefChanged_(prefs.${EPHEMERAL_DELAY_PREF}.value)`,
+     ];
+   }
+ 
+@@ -107,11 +124,33 @@
+   declare private addDisabled_: boolean;
+   declare private inputInvalid_: boolean;
+   declare private errorMessage_: string;
++  declare private delaySeconds_: number;
+ 
+   private onPrefChanged_() {
+     this.sites_ = this.getPref<string[]>(EPHEMERAL_SITES_PREF).value.slice();
+   }
+ 
++  private onDelayPrefChanged_() {
++    this.delaySeconds_ = this.getPref<number>(EPHEMERAL_DELAY_PREF).value;
++  }
++
++  /**
++   * Writes the delay back only when it is a whole number of seconds in range.
++   * Anything else - an empty field mid-edit, a pasted word, a negative - snaps
++   * the input back to the stored value rather than being persisted. The
++   * browser process clamps this pref as well; both checks exist because this
++   * one keeps the UI honest and that one keeps a hand-edited Preferences file
++   * from disabling the feature silently.
++   */
++  private onDelayChanged_() {
++    const raw = Number(this.delaySeconds_);
++    if (!Number.isInteger(raw) || raw < 0 || raw > 3600) {
++      this.delaySeconds_ = this.getPref<number>(EPHEMERAL_DELAY_PREF).value;
++      return;
++    }
++    this.setPrefValue(EPHEMERAL_DELAY_PREF, raw);
++  }
++
+   private hasSites_(): boolean {
+     return this.sites_.length > 0;
+   }

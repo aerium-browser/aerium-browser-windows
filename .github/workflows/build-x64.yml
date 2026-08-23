@@ -8,9 +8,18 @@ on:
         required: false
         default: ''
   push:
+    # Branches only. `tags: ['*']` used to be here, inherited from upstream,
+    # where releases are cut by pushing a tag by hand and nothing publishes
+    # automatically. Aerium's publish-release job creates a tag after every
+    # successful build, so that trigger closed a loop: build -> publish
+    # v<version>-b<n> -> tag push starts another build -> publish -b<n+1> ->
+    # ... Each lap is a ~30-hour x64 build of a commit that was already
+    # released. It fired for real on v151.0.7922.173-b94, which started a
+    # rebuild two seconds after the release appeared (that run was cancelled).
+    # The per-ref concurrency group below could not stop it either, since a
+    # tag ref is its own group and never queued behind the master build.
+    # Building from a tag on purpose is what workflow_dispatch is for.
     branches: [master]
-    tags:
-      - '*'
     paths:
       - 'build.py'
       - 'package.py'

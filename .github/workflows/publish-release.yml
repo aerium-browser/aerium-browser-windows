@@ -33,10 +33,17 @@ jobs:
   publish-release:
     # Publish after every successful build-x64 run that came from our own
     # repo (push or manual dispatch), not just tag builds.
+    #
+    # The head_branch check is the second half of the loop fix in
+    # build-x64.yml: a build that somehow ran off a tag must not mint another
+    # release, or it tags again and the cycle restarts. build-x64 no longer
+    # triggers on tags, so this should never be what stops it - it is here so
+    # that re-adding a tag trigger cannot silently recreate the loop.
     if: >-
       ${{ github.event_name == 'workflow_dispatch' ||
           (github.event.workflow_run.conclusion == 'success' &&
-           github.event.workflow_run.head_repository.full_name == github.repository) }}
+           github.event.workflow_run.head_repository.full_name == github.repository &&
+           github.event.workflow_run.head_branch == 'master') }}
     runs-on: ubuntu-latest
     steps:
       - name: Resolve source build run

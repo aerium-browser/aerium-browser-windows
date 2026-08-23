@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+PackageIdentifier: Dioide.Aerium
+PackageVersion: "@VERSION@"
+PackageLocale: en-US
+Publisher: Dioide
+PublisherUrl: https://github.com/aerium-browser
+PublisherSupportUrl: https://github.com/aerium-browser/aerium-browser-windows/issues
+PackageName: Aerium
+PackageUrl: https://github.com/aerium-browser/aerium-browser-windows
+License: BSD-3-Clause
+LicenseUrl: https://github.com/aerium-browser/aerium-browser-windows/blob/master/LICENSE
+Copyright: Copyright Dioide. All rights reserved.
+ShortDescription: A privacy-focused Chromium browser built on ungoogled-chromium.
+Description: |-
+  Aerium is a Chromium browser built on ungoogled-chromium, with Google
+  integration removed and privacy defaults applied at build time rather than
+  left to the user to find. It ships no password manager, payment or address
+  storage; web forms are filled by whichever autofill service the system is
+  set to use.
+
+  Every patch applied on top of upstream Chromium is listed in the browser at
+  chrome://aerium, so what has been changed can be read rather than taken on
+  trust.
+Moniker: aerium
+Tags:
+  - browser
+  - chromium
+  - privacy
+  - ungoogled
+  - web-browser
+ReleaseNotesUrl: "@RELEASENOTESURL@"
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0

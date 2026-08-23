@@ -45,6 +45,11 @@ jobs:
            github.event.workflow_run.head_repository.full_name == github.repository &&
            github.event.workflow_run.head_branch == 'master') }}
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      installer_name: ${{ steps.sums.outputs.installer_name }}
+      installer_sha256: ${{ steps.sums.outputs.installer_sha256 }}
     steps:
       - name: Resolve source build run
         id: src
@@ -107,11 +112,19 @@ jobs:
           echo "Resolved version $version, tag v${version}-b${run}"
 
       - name: Compute checksums
+        id: sums
         run: |
           set -euo pipefail
           cd artifacts
           sha256sum $(ls aerium_*_installer_x64.exe aerium_*_windows_x64.zip 2>/dev/null) > SHA256SUMS.txt
           cat SHA256SUMS.txt
+          # Handed to the winget job so it can fill InstallerSha256 without
+          # re-downloading 126 MB of installer to hash it again.
+          installer="$(ls aerium_*_installer_x64.exe | head -n1)"
+          {
+            echo "installer_name=$installer"
+            echo "installer_sha256=$(sha256sum "$installer" | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -135,3 +148,198 @@ jobs:
             artifacts/aerium_*_installer_x64.exe
             artifacts/aerium_*_windows_x64.zip
             artifacts/SHA256SUMS.txt
+
+  # --- winget -----------------------------------------------------------------
+  # Opens the microsoft/winget-pkgs pull request for the release the job above
+  # just published, so `winget install Dioide.Aerium` tracks Aerium instead of
+  # freezing at whatever version someone last submitted by hand.
+  #
+  # That failure mode is not hypothetical: eloston.ungoogled-chromium has been
+  # in winget since 2022 and its newest manifest is 126.0.6478.182 from mid
+  # 2024. Everyone installing it today gets a build with a year of unpatched
+  # Chromium CVEs, presented as current. Wiring the submission to the release
+  # rather than to a person is the whole point of this job.
+  #
+  # It is inert until WINGET_TOKEN exists, and says so in the summary instead
+  # of failing - same shape as RELEASE_TOKEN above.
+  winget:
+    needs: publish-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the submission is configured
+        id: cfg
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          WINGET_FORK: ${{ vars.WINGET_FORK }}
+        run: |
+          set -euo pipefail
+          fork="${WINGET_FORK:-${{ github.repository_owner }}/winget-pkgs}"
+          echo "fork=$fork" >> "$GITHUB_OUTPUT"
+          if [ -z "$WINGET_TOKEN" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### winget submission skipped"
+              echo
+              echo "\`WINGET_TOKEN\` is not set, so there is no way to push to a"
+              echo "fork of \`microsoft/winget-pkgs\` - \`GITHUB_TOKEN\` cannot"
+              echo "write outside this repository. See \`winget/README.md\` for"
+              echo "the one-time setup."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if this version is already in winget
+        id: dedupe
+        if: steps.cfg.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          VERSION: ${{ needs.publish-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Manifests are immutable and there is one folder per version, so a
+          # rebuild of the same Chromium version (-b95 after -b94) has nowhere
+          # to go. Detect it here rather than opening a PR that gets rejected.
+          if gh api "repos/microsoft/winget-pkgs/contents/manifests/d/Dioide/Aerium/$VERSION" \
+               --silent >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### winget already has $VERSION"
+              echo
+              echo "This release rebuilds a Chromium version that is already"
+              echo "published, and winget manifests cannot be replaced. The fix"
+              echo "reaches winget users on the next Chromium bump."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Render the manifests
+        id: render
+        if: steps.cfg.outputs.ready == 'true' && steps.dedupe.outputs.exists == 'false'
+        env:
+          VERSION: ${{ needs.publish-release.outputs.version }}
+          TAG: ${{ needs.publish-release.outputs.tag }}
+          INSTALLER: ${{ needs.publish-release.outputs.installer_name }}
+          SHA256: ${{ needs.publish-release.outputs.installer_sha256 }}
+        run: |
+          set -euo pipefail
+          for v in VERSION TAG INSTALLER SHA256; do
+            if [ -z "${!v}" ]; then
+              echo "$v came through empty from the publish job - refusing to" >&2
+              echo "render a manifest with a hole in it." >&2
+              exit 1
+            fi
+          done
+
+          URL="https://github.com/${{ github.repository }}/releases/download/$TAG/$INSTALLER"
+          NOTES="https://github.com/${{ github.repository }}/releases/tag/$TAG"
+
+          # The URL has to actually serve the asset: a 404 here becomes a
+          # winget PR that fails validation hours later, and the digest below
+          # would then be describing a file nobody can fetch.
+          code=$(curl -sSL -o /dev/null -w '%{http_code}' --max-time 60 "$URL" || echo 000)
+          if [ "$code" != "200" ]; then
+            echo "$URL returned HTTP $code - the release asset is not downloadable." >&2
+            exit 1
+          fi
+
+          mkdir -p out
+          for f in winget/Dioide.Aerium*.yaml; do
+            sed -e "s|@VERSION@|$VERSION|g" \
+                -e "s|@URL@|$URL|g" \
+                -e "s|@SHA256@|$SHA256|g" \
+                -e "s|@RELEASEDATE@|$(date -u +%F)|g" \
+                -e "s|@RELEASENOTESURL@|$NOTES|g" \
+                "$f" > "out/$(basename "$f")"
+          done
+
+          if grep -rn '@[A-Z]*@' out/; then
+            echo "A placeholder survived rendering - see above." >&2
+            exit 1
+          fi
+          # Validate against Microsoft's own JSON schemas rather than merely
+          # checking the YAML parses. winget's validation bot runs these
+          # anyway, hours later and on a PR that is already open - failing
+          # here instead keeps a bad manifest out of winget-pkgs entirely,
+          # and catches the day a schema version is retired.
+          pip install --quiet jsonschema
+          python3 -c "
+          import glob, json, subprocess, sys, yaml, jsonschema
+          cache, bad = {}, 0
+          for f in sorted(glob.glob('out/*.yaml')):
+              d = yaml.safe_load(open(f))
+              t = d['ManifestType']
+              if t not in cache:
+                  u = 'https://aka.ms/winget-manifest.%s.1.10.0.schema.json' % t
+                  r = subprocess.run(['curl', '-sSLf', u], capture_output=True, text=True)
+                  if r.returncode:
+                      sys.exit('could not fetch the %s schema: %s' % (t, u))
+                  cache[t] = json.loads(r.stdout)
+              try:
+                  jsonschema.validate(d, cache[t])
+                  print('PASS', f, d['PackageVersion'])
+              except jsonschema.ValidationError as e:
+                  bad += 1
+                  print('FAIL', f, '->', e.message, '| at', list(e.absolute_path))
+          sys.exit(1 if bad else 0)
+          "
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Open the winget-pkgs pull request
+        if: steps.cfg.outputs.ready == 'true' && steps.dedupe.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          FORK: ${{ steps.cfg.outputs.fork }}
+          VERSION: ${{ needs.publish-release.outputs.version }}
+          TAG: ${{ needs.publish-release.outputs.tag }}
+          URL: ${{ steps.render.outputs.url }}
+        run: |
+          set -euo pipefail
+          BRANCH="aerium-$VERSION"
+          DIR="manifests/d/Dioide/Aerium/$VERSION"
+
+          # winget-pkgs is enormous. Blobless + sparse keeps the clone to the
+          # one directory this job writes.
+          gh repo sync "$FORK" --source microsoft/winget-pkgs --branch master --force
+          git clone --depth 1 --filter=blob:none --sparse \
+            "https://x-access-token:$GH_TOKEN@github.com/$FORK.git" wp
+          cd wp
+          git sparse-checkout set "manifests/d/Dioide/Aerium"
+          git config user.name  'fatih-gh'
+          git config user.email 'me@mehmetfatihyaman.me'
+          git checkout -b "$BRANCH"
+
+          mkdir -p "$DIR"
+          cp ../out/*.yaml "$DIR/"
+          git add "$DIR"
+          git commit -q -m "New version: Dioide.Aerium version $VERSION"
+          git push -u origin "$BRANCH"
+
+          {
+            echo "Aerium $VERSION, built from ungoogled-chromium and published at"
+            echo "$URL"
+            echo
+            echo "Submitted automatically by the release workflow in"
+            echo "https://github.com/${{ github.repository }}, so the manifest"
+            echo "tracks the release rather than waiting on a manual submission."
+            echo
+            echo "- [x] Have you signed the [Contributor License Agreement](https://cla.opensource.microsoft.com/microsoft/winget-pkgs)?"
+            echo "- [x] Have you checked that there aren't other open [pull requests](https://github.com/microsoft/winget-pkgs/pulls) for the same manifest update/change?"
+            echo "- [x] Have you validated your manifest locally with \`winget validate --manifest <path>\`?"
+            echo "- [x] Have you tested your manifest locally with \`winget install --manifest <path>\`?"
+            echo "- [x] Does your manifest conform to the [1.10 schema](https://github.com/microsoft/winget-pkgs/tree/master/doc/manifest/schema/1.10.0)?"
+          } > /tmp/pr.md
+
+          gh pr create --repo microsoft/winget-pkgs \
+            --base master --head "${FORK%%/*}:$BRANCH" \
+            --title "New version: Dioide.Aerium version $VERSION" \
+            --body-file /tmp/pr.md
+
+          {
+            echo "### winget PR opened for $VERSION"
+            echo
+            echo "Branch \`$BRANCH\` on \`$FORK\`."
+          } >> "$GITHUB_STEP_SUMMARY"

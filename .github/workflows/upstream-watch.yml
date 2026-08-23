@@ -1,0 +1,199 @@
+name: upstream-watch
+# Watches ungoogled-chromium for a newer tag and opens a PR that bumps the
+# submodule to it.
+#
+# This exists because the slowest link in the security chain was a person
+# noticing. Chromium ships security fixes continuously, ungoogled-chromium
+# rebases and tags within days, and until now the only thing that turned that
+# tag into an Aerium build was somebody happening to look. That step had no
+# upper bound; everything after it does.
+#
+# It opens a PR rather than pushing to master on purpose, for two reasons. A
+# bump costs a build measured in days, which is worth a human glance first. And a
+# push made with GITHUB_TOKEN does not trigger workflows, so an auto-merged
+# bump would land without ever building - merging by hand is what starts the
+# build.
+#
+# Silence is the healthy state here: no new tag means no output and no PR. A
+# failure to *check* is different and fails the job loudly, because a watcher
+# that cannot see upstream is worse than none.
+
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - name: Compare the pinned tag against upstream
+        id: check
+        run: |
+          set -euo pipefail
+          cd ungoogled-chromium
+          git fetch --tags --quiet origin
+
+          PINNED=$(git describe --tags --exact-match HEAD 2>/dev/null || echo "")
+          if [ -z "$PINNED" ]; then
+            echo "The submodule is pinned to a commit that is not a tag." >&2
+            echo "Refusing to guess what it should track." >&2
+            exit 1
+          fi
+
+          # sort -V understands both shapes in play here: 151.0.7922.173-1 and
+          # the plain 4-field tags. Taking the last line rather than comparing
+          # against PINNED directly means a tag that sorts *older* than the pin
+          # is ignored, which is what should happen if upstream ever retracts.
+          LATEST=$(git tag --list | sort -V | tail -1)
+          cd ..
+
+          echo "pinned=$PINNED" >> "$GITHUB_OUTPUT"
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "Pinned $PINNED, newest upstream $LATEST"
+
+          if [ "$PINNED" = "$LATEST" ]; then
+            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+            echo "Already current - nothing to do."
+          else
+            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip if a PR for this tag already exists
+        id: dedupe
+        if: steps.check.outputs.up_to_date == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: upstream/ungoogled-${{ steps.check.outputs.latest }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Branch $BRANCH already exists - a PR was already opened for this tag."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check whether the new Chromium touches anything Aerium patches
+        id: drift
+        if: steps.check.outputs.up_to_date == 'false' && steps.dedupe.outputs.exists == 'false'
+        env:
+          PINNED: ${{ steps.check.outputs.pinned }}
+          LATEST: ${{ steps.check.outputs.latest }}
+        run: |
+          set -uo pipefail
+          cd ungoogled-chromium
+          OLD_CR=$(git show "$PINNED:chromium_version.txt" | tr -d '[:space:]')
+          NEW_CR=$(git show "$LATEST:chromium_version.txt" | tr -d '[:space:]')
+          cd ..
+          echo "old_cr=$OLD_CR" >> "$GITHUB_OUTPUT"
+          echo "new_cr=$NEW_CR" >> "$GITHUB_OUTPUT"
+          echo "Chromium $OLD_CR -> $NEW_CR"
+
+          if [ "$OLD_CR" = "$NEW_CR" ]; then
+            echo "verdict=Chromium version unchanged, so no patch target can have moved." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Every file this repo's own patches touch. If none of them changed
+          # between the two Chromium tags, no hunk context can have moved and
+          # the bump is a pointer move. This is the check that decides whether
+          # a multi-day build is worth starting.
+          find patches -name '*.patch' -exec cat {} + 2>/dev/null \
+            | grep '^+++ b/' | sed 's#^+++ b/##' | sort -u > /tmp/targets.txt
+          echo "$(wc -l < /tmp/targets.txt) files are touched by this repo's patches"
+
+          fetch_hash() {
+            for a in 1 2 3; do
+              o=$(curl -sSf --max-time 40 \
+                    "https://chromium.googlesource.com/chromium/src/+/refs/tags/$1/$2?format=TEXT" \
+                    2>/dev/null | tr -d '\n' | base64 -d 2>/dev/null | sha1sum | cut -d' ' -f1)
+              [ -n "$o" ] && [ "$o" != "da39a3ee5e6b4b0d3255bfef95601890afd80709" ] && { echo "$o"; return; }
+              sleep "$a"
+            done
+            echo ABSENT
+          }
+
+          : > /tmp/moved.txt
+          while read -r f; do
+            a=$(fetch_hash "$OLD_CR" "$f")
+            b=$(fetch_hash "$NEW_CR" "$f")
+            [ "$a" = "$b" ] || echo "$f" >> /tmp/moved.txt
+          done < /tmp/targets.txt
+
+          MOVED=$(wc -l < /tmp/moved.txt)
+          if [ "$MOVED" = 0 ]; then
+            echo "verdict=None of the patched files changed between Chromium $OLD_CR and $NEW_CR. No hunk context moves." >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "verdict<<EOF"
+              echo "**$MOVED patched file(s) changed between Chromium $OLD_CR and $NEW_CR.** Patch context may have moved - check these before merging:"
+              echo
+              sed 's/^/- `/;s/$/`/' /tmp/moved.txt
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open the bump PR
+        if: steps.check.outputs.up_to_date == 'false' && steps.dedupe.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PINNED: ${{ steps.check.outputs.pinned }}
+          LATEST: ${{ steps.check.outputs.latest }}
+          OLD_CR: ${{ steps.drift.outputs.old_cr }}
+          NEW_CR: ${{ steps.drift.outputs.new_cr }}
+          VERDICT: ${{ steps.drift.outputs.verdict }}
+          BRANCH: upstream/ungoogled-${{ steps.check.outputs.latest }}
+        run: |
+          set -euo pipefail
+          git config user.name  'fatih-gh'
+          git config user.email 'me@mehmetfatihyaman.me'
+          git checkout -b "$BRANCH"
+
+          git -C ungoogled-chromium checkout --quiet "$LATEST"
+          git add ungoogled-chromium
+          git -C ungoogled-chromium diff --stat "$PINNED" "$LATEST" | tail -20 > /tmp/diff.txt
+
+          {
+            echo "Update ungoogled-chromium to $LATEST"
+            echo
+            echo "Chromium $OLD_CR -> $NEW_CR."
+            echo
+            echo "Opened automatically by upstream-watch. The submodule pointer is the only"
+            echo "change: downloads.ini pins toolchains rather than the Chromium source, and"
+            echo "the version is read from ungoogled-chromium/chromium_version.txt."
+            echo
+            echo "$VERDICT"
+          } > /tmp/commit.txt
+          git commit -q -F /tmp/commit.txt
+          git push -u origin "$BRANCH"
+
+          {
+            echo "\`$PINNED\` to \`$LATEST\` &middot; Chromium \`$OLD_CR\` to \`$NEW_CR\`"
+            echo
+            echo "$VERDICT"
+            echo
+            echo "### What changed upstream"
+            echo
+            echo '```'
+            cat /tmp/diff.txt
+            echo '```'
+            echo
+            echo "Merging this starts a full build. A push made by the workflow token would"
+            echo "not, which is why this is a PR rather than a direct commit."
+          } > /tmp/pr.md
+
+          gh pr create --title "Update ungoogled-chromium to $LATEST" \
+            --base master --head "$BRANCH" --body-file /tmp/pr.md

@@ -14,7 +14,7 @@
  #include "content/public/browser/url_data_source.h"
  #include "content/public/browser/web_ui.h"
  #include "content/public/browser/web_ui_controller.h"
-@@ -25,51 +30,169 @@
+@@ -25,51 +30,173 @@
                          const content::WebContents::Getter& wc_getter,
                          GotDataCallback callback) {
      std::string source = R"(
@@ -117,7 +117,11 @@
 +  </div>
 +  <div class="card">
 +   <h3>floccus</h3>
-+   <p>Sync bookmarks across browsers using your own storage &mdash; nothing passes through floccus's servers.</p>
++   <p>Aerium has no sync service and will not be getting one &mdash; that would mean accounts, servers,
++   and your data sitting on someone else's machine. floccus (MPL&#8209;2.0) does the same job through
++   storage you already control: WebDAV, Nextcloud, Dropbox, Google Drive or a Git repository. Bookmarks
++   only, not tabs or history &mdash; and if you use a password manager above, your logins already sync
++   through that.</p>
 +   <a href="https://chromewebstore.google.com/detail/floccus-bookmarks-sync/fnaicdffflnofjppbagibeoednhnbjhg">Get it from the Chrome Web Store</a>
 +  </div>
 +  <div class="card">
@@ -199,7 +203,7 @@
 +<section>
 + <h2>Updates</h2><p>
 + Aerium doesn't check for updates on its own &mdash; there's no background process phoning home to do it.
-+ <a href="https://github.com/fatih-gh/aerium-browser-windows/releases/latest">Check the latest release on GitHub</a>
++ <a href="https://github.com/aerium-browser/aerium-browser-windows/releases/latest">Check the latest release on GitHub</a>
 + when you want to see if a newer build is out.
 +</section>
 +<section>
@@ -207,14 +211,14 @@
   <details><summary><b>Enable spellcheck</b></summary>
    <ol>
     <li>Go to <a href="https://chromium.googlesource.com/chromium/deps/hunspell_dictionaries/+/main">
-@@ -82,34 +186,44 @@
+@@ -82,34 +209,44 @@
     <li>This is a base64-encoded file that needs to be decoded. Use the button below to select the .txt file you saved
      and save/move the resulting bdic file to your Dictionaries directory. Default locations:
      <ul>
 -     <li>Linux: <code>~/.config/chromium/Dictionaries/</code><br></li>
 -     <li>Mac: <code>~/Library/Application Support/Chromium/Dictionaries/</code><br></li>
 -     <li>Windows: <code>%LOCALAPPDATA%\Chromium\Application\Dictionaries\</code><br></li>
-+     <li>Windows: <code>%LOCALAPPDATA%\Aerium\Dictionaries\</code><br></li>
++     <li>Linux: <code>~/.config/aerium/Dictionaries/</code><br></li>
      </ul>
      <input id="bdic" type="file" accept=".txt,text/plain" />
     </li>
@@ -275,7 +279,7 @@
  </section>
  <script>
   document.getElementById("bdic").onchange = function(e){
-@@ -120,6 +234,28 @@
+@@ -120,6 +257,28 @@
     a.setAttribute("download", e.target.files[0].name.replace(/\.[^/.]+$/, ".bdic"));
     a.click()
    }, f.readAsText(this.files[0])};
@@ -304,7 +308,7 @@
  </script>
  )";
      std::move(callback).Run(base::MakeRefCounted<base::RefCountedString>(std::move(source)));
-@@ -136,9 +272,28 @@
+@@ -136,9 +295,28 @@
   public:
    UngoogledFirstRun(content::WebUI* web_ui) : content::WebUIController(web_ui) {
      content::URLDataSource::Add(Profile::FromWebUI(web_ui), std::make_unique<UFRDataSource>());

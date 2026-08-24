@@ -59,9 +59,28 @@ No circular GN dependency
   ChromeBrowserMainParts::PostBrowserStart(); the Settings handler reads
   lists from the service rather than from local_state.
 
-Settings
+Where it lives: Aerium Guard, not Privacy and security
 
-  Privacy and security gains a content blocker section: an on/off toggle, an
+  The shield in the address bar gains a "Block ads and trackers" checkbox
+  above the three modes, because that is what people open the shield for.
+  The full list management - toggles, add, remove, Update now, rule counts -
+  lives on the Aerium Guard settings page.
+
+  The checkbox is a checkbox and not a fourth mode, and blocking is
+  deliberately not part of PresetValues. The three modes are mutually
+  exclusive descriptions of how the browser is set up; blocking is orthogonal
+  and every mode wants it on. Folding it in would mean switching the ad
+  blocker off silently renamed the active mode to "Custom" - a control with a
+  side effect on an unrelated label.
+
+  Hosted in exactly one place, per the rule the Guard page already states
+  about delete-on-exit: showing the same pref-bound controls in two sections
+  gives the user two switches for one setting and no way to tell which one
+  they last touched. The Guard page had no prefs before - it dealt only in
+  modes, through its handler - so it gains a prefs binding from settings-main
+  like every other page has.
+
+  The section itself: an on/off toggle, an
   automatic-update toggle disclosing exactly what the fetch does and does
   not send, the list of filter lists with rule counts and per-list errors,
   add and remove, and Update now.
@@ -75,9 +94,24 @@ Settings
 
 Lists
 
-  EasyList, EasyPrivacy and AdGuard Base ship enabled. AdGuard overlaps
-  EasyList deliberately: the indexer folds duplicates, so carrying both
-  costs far less than the sum and covers what either misses.
+  Ten ship, and the defaults are uBlock Origin's rather than a set assembled
+  here: uBlock filters, uBlock badware, uBlock privacy, EasyList, EasyPrivacy
+  and Peter Lowe's server list. That is the most widely exercised blocking
+  configuration in existence, tested against site breakage by millions of
+  people daily; picking a different combination would mean discovering that
+  breakage ourselves.
+
+  AdGuard Base, AdGuard Tracking Protection, AdGuard Annoyances and EasyList
+  Cookie ship present but switched off. They overlap EasyList heavily, so
+  enabling them alongside it spends indexing time and memory on rules already
+  there - but some people want them, and present-and-off puts the choice in
+  reach without imposing the cost. EasyList Cookie is off for a different
+  reason: hiding a cookie banner without answering it leaves the site's own
+  default consent standing, which is not what switching it on suggests.
+
+  Every one of the ten URLs was fetched and confirmed to serve filter-list
+  content before being written down. A default list that 404s is a blocker
+  that silently does less than it claims.
 
   All enabled lists merge into one ruleset, because the indexed ruleset is
   one flatbuffer and matching walks one index - a fourth list costs a
@@ -119,8 +153,8 @@ Parsing untrusted text in the browser process
 +// here: this is components/, and the pref lives in chrome/'s local_state.
 +//
 +// So it is a process-global that chrome/ sets. A plain bool rather than a
-+// base::Feature because it is toggled at runtime from Settings, and a Feature
-+// is fixed for the life of the process.
++// base::Feature because it is toggled at runtime from Aerium Guard, and a
++// Feature is fixed for the life of the process.
 +//
 +// Read on the UI thread only, from SafeBrowsingPageActivationThrottle, and
 +// written on the UI thread only, by AeriumBlockerService - so no atomic is
@@ -236,7 +270,7 @@ Parsing untrusted text in the browser process
  #include "chrome/browser/browser_process_impl.h"
  #include "chrome/browser/chrome_browser_main_extra_parts.h"
  #include "chrome/browser/component_updater/registration.h"
-@@ -1663,6 +1666,19 @@
+@@ -1664,6 +1667,19 @@
  
    browser_process_->browser_policy_connector()->OnBrowserStarted();
  
@@ -266,13 +300,13 @@ Parsing untrusted text in the browser process
  #include "chrome/browser/ash/account_manager/account_apps_availability.h"
  #include "chrome/browser/ash/account_manager/account_apps_availability_factory.h"
  #include "chrome/browser/ash/account_manager/account_manager_util.h"
-@@ -252,6 +253,11 @@
+@@ -255,6 +256,11 @@
    AddSettingsPageUIHandler(std::make_unique<BrowserLifetimeHandler>());
    AddSettingsPageUIHandler(
        std::make_unique<ClearBrowsingDataHandler>(web_ui, profile));
-+  // Aerium: backs the content blocker section. Not settings_private, because
-+  // adding a list must be validated and fetched and "Update now" is an action
-+  // with no state to store.
++  // Aerium: backs the content blocker section of Aerium Guard. Not
++  // settings_private, because adding a list must be validated and fetched and
++  // "Update now" is an action with no state to store.
 +  AddSettingsPageUIHandler(
 +      std::make_unique<AeriumContentBlockerHandler>());
    AddSettingsPageUIHandler(std::make_unique<SafetyHubHandler>(profile));
@@ -288,7 +322,7 @@ Parsing untrusted text in the browser process
  #include "components/browsing_data/core/pref_names.h"
  #include "components/commerce/core/pref_names.h"
  #include "components/component_updater/pref_names.h"
-@@ -620,6 +621,16 @@
+@@ -618,6 +619,16 @@
    // them driven from the same settings-ephemeral-sites element. Same reason as
    // above - a pref missing from this allowlist is not an error the UI can see,
    // it is a write that silently does nothing.
@@ -307,9 +341,9 @@ Parsing untrusted text in the browser process
    (*s_allowlist)[browsing_data::prefs::kAeriumSessionOnlySites] =
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
-@@ -2253,6 +2253,57 @@
-     <message name="IDS_SETTINGS_AERIUM_GUARD_RESTART_NOTE" desc="Note explaining that part of what a setup mode changes only applies after the browser restarts.">
-       Settings apply straight away. The chrome://flags entries a mode switches on need a restart, and are never switched off again, so a mode you leave keeps any flags it turned on.
+@@ -2263,6 +2263,60 @@
+     <message name="IDS_SETTINGS_AERIUM_GUARD_ICON_TOOLTIP" desc="Tooltip of the address-bar button that opens the Aerium Guard setup modes. The placeholder is the name of the mode currently in force.">
+       Aerium Guard: <ph name="MODE">$1<ex>Recommended</ex></ph>
      </message>
 +    <message name="IDS_SETTINGS_CONTENT_BLOCKER_LABEL" desc="Label for the setting that turns Aerium's built-in advertising and tracking blocker on or off.">
 +      Block ads and trackers
@@ -362,8 +396,11 @@ Parsing untrusted text in the browser process
 +    <message name="IDS_SETTINGS_CONTENT_BLOCKER_NEVER_UPDATED" desc="Text shown when the filter lists have never been refreshed.">
 +      Not downloaded yet
 +    </message>
-     <message name="IDS_SETTINGS_EPHEMERAL_ALL_SITES_LABEL" desc="Label for a setting that deletes every website's cookies and stored data as soon as its last tab is closed, apart from websites the user has chosen to keep.">
-       Delete site data when its last tab closes
++    <message name="IDS_SETTINGS_AERIUM_GUARD_BUBBLE_BLOCKING" desc="Label for the checkbox in the Aerium Guard bubble that turns the built-in advertising and tracking blocker on or off.">
++      Block ads and trackers
++    </message>
+     <message name="IDS_SETTINGS_AERIUM_GUARD_BUBBLE_DESC" desc="Line under the title of the address-bar bubble, explaining that the modes it offers apply to the whole browser rather than to the site being shown.">
+       These modes apply to the whole browser, not just this site.
      </message>
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
@@ -401,27 +438,132 @@ Parsing untrusted text in the browser process
      "privacy_page/cookies_page.ts",
      "privacy_page/do_not_track_toggle.ts",
      "privacy_page/ephemeral_sites.ts",
---- a/chrome/browser/resources/settings/privacy_page/privacy_page.html
-+++ b/chrome/browser/resources/settings/privacy_page/privacy_page.html
-@@ -11,6 +11,8 @@
-           on-close="onPrivacyGuideDialogClosed_">
-       </settings-privacy-guide-dialog>
-     </template>
-+    <settings-content-blocker id="contentBlocker" prefs="{{prefs}}">
-+    </settings-content-blocker>
-     <settings-clear-on-exit id="clearOnExit" prefs="{{prefs}}">
-     </settings-clear-on-exit>
-     <settings-ephemeral-sites id="ephemeralSites" prefs="{{prefs}}">
---- a/chrome/browser/resources/settings/privacy_page/privacy_page.ts
-+++ b/chrome/browser/resources/settings/privacy_page/privacy_page.ts
-@@ -16,6 +16,7 @@
- import '../privacy_icons.html.js';
+--- a/chrome/browser/resources/settings/aerium_guard_page/aerium_guard_page.html
++++ b/chrome/browser/resources/settings/aerium_guard_page/aerium_guard_page.html
+@@ -28,6 +28,9 @@
+     </div>
+   </template>
+ 
++  <settings-content-blocker id="contentBlocker" prefs="{{prefs}}">
++  </settings-content-blocker>
++
+   <div class="cr-row continuation">
+     <div class="flex cr-padded-text secondary" id="restartNote">
+       $i18n{aeriumGuardRestartNote}
+--- a/chrome/browser/resources/settings/aerium_guard_page/aerium_guard_page.ts
++++ b/chrome/browser/resources/settings/aerium_guard_page/aerium_guard_page.ts
+@@ -28,6 +28,7 @@
+ import 'chrome://resources/cr_elements/cr_shared_style.css.js';
  import '../settings_page/settings_section.js';
  import '../settings_shared.css.js';
-+import './content_blocker.js';
- import './clear_on_exit.js';
- import './ephemeral_sites.js';
- import './privacy_guide/privacy_guide_dialog.js';
++import '../privacy_page/content_blocker.js';
+ 
+ import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
+ import {sendWithPromise} from 'chrome://resources/js/cr.js';
+@@ -60,6 +61,17 @@
+   static get properties() {
+     return {
+       /**
++       * Bound straight through to settings-content-blocker. This page had no
++       * prefs before: it dealt only in modes, which go through the handler.
++       * The blocker's two toggles are ordinary prefs, so the binding has to
++       * reach it from settings-main as it does for every other page.
++       */
++      prefs: {
++        type: Object,
++        notify: true,
++      },
++
++      /**
+        * The preset the browser reports as currently in force, or 'custom'.
+        * Never assumed here - always whatever aerium_presets.h last said.
+        */
+--- a/chrome/browser/resources/settings/settings_main/settings_main.html
++++ b/chrome/browser/resources/settings/settings_main/settings_main.html
+@@ -81,7 +81,8 @@
+   <div slot="view" id="aeriumGuard">
+     <template is="dom-if" if="[[renderPlugin_(
+         routes_.AERIUM_GUARD, lastRoute_, inSearchMode_)]]">
+-      <settings-aerium-guard-page></settings-aerium-guard-page>
++      <settings-aerium-guard-page prefs="{{prefs}}">
++      </settings-aerium-guard-page>
+     </template>
+   </div>
+ 
+--- a/chrome/browser/ui/views/location_bar/aerium_guard_icon_view.cc
++++ b/chrome/browser/ui/views/location_bar/aerium_guard_icon_view.cc
+@@ -7,6 +7,7 @@
+ #include <utility>
+ 
+ #include "base/functional/bind.h"
++#include "chrome/browser/aerium_blocker/aerium_blocker_prefs.h"
+ #include "chrome/browser/browser_process.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/ui/views/location_bar/location_bar_bubble_delegate_view.h"
+@@ -21,6 +22,7 @@
+ #include "ui/gfx/geometry/insets.h"
+ #include "ui/views/accessibility/view_accessibility.h"
+ #include "ui/views/bubble/bubble_dialog_delegate_view.h"
++#include "ui/views/controls/button/checkbox.h"
+ #include "ui/views/controls/button/radio_button.h"
+ #include "ui/views/controls/label.h"
+ #include "ui/views/layout/box_layout.h"
+@@ -92,9 +94,11 @@
+ 
+  private:
+   void OnModePicked(const char* preset);
++  void OnBlockingToggled();
+   void SyncToActivePreset();
+ 
+   const raw_ptr<Profile> profile_;
++  raw_ptr<views::Checkbox> blocking_ = nullptr;
+   raw_ptr<views::Label> custom_note_ = nullptr;
+   raw_ptr<views::RadioButton> recommended_ = nullptr;
+   raw_ptr<views::RadioButton> privacy_ = nullptr;
+@@ -136,6 +140,20 @@
+     return AddChildView(std::move(radio));
+   };
+ 
++  // Content blocking first, because it is what the shield is opened for.
++  //
++  // A checkbox rather than a fourth mode, and deliberately not part of
++  // PresetValues. The three modes are mutually exclusive descriptions of how
++  // the browser is set up; blocking is orthogonal to all of them and every mode
++  // wants it on. Folding it into the presets would mean that switching the ad
++  // blocker off silently renamed the active mode to "Custom" - a control with a
++  // side effect on an unrelated label, which is the kind of surprise this
++  // bubble exists to remove.
++  blocking_ = AddChildView(std::make_unique<views::Checkbox>(
++      l10n_util::GetStringUTF16(IDS_SETTINGS_AERIUM_GUARD_BUBBLE_BLOCKING),
++      base::BindRepeating(&AeriumGuardBubbleView::OnBlockingToggled,
++                          base::Unretained(this))));
++
+   add_note(IDS_SETTINGS_AERIUM_GUARD_BUBBLE_DESC);
+   custom_note_ = add_note(IDS_SETTINGS_AERIUM_GUARD_BUBBLE_CUSTOM_NOTE);
+   recommended_ = add_mode(IDS_SETTINGS_AERIUM_GUARD_RECOMMENDED_LABEL,
+@@ -159,7 +177,22 @@
+   SyncToActivePreset();
+ }
+ 
++void AeriumGuardBubbleView::OnBlockingToggled() {
++  if (PrefService* const local_state = LocalState()) {
++    local_state->SetBoolean(aerium_blocker::kAeriumBlockerEnabled,
++                            blocking_->GetChecked());
++  }
++  // Nothing here touches the blocker: the service observes this pref and
++  // rebuilds the ruleset itself. Writing a preference is the whole of the
++  // bubble's involvement, which is also why the checkbox is re-read from the
++  // pref below rather than trusted.
++}
++
+ void AeriumGuardBubbleView::SyncToActivePreset() {
++  if (PrefService* const local_state = LocalState()) {
++    blocking_->SetChecked(
++        local_state->GetBoolean(aerium_blocker::kAeriumBlockerEnabled));
++  }
+   const std::string active = ActivePreset(profile_);
+   recommended_->SetChecked(active == aerium_presets::kRecommended);
+   privacy_->SetChecked(active == aerium_presets::kPrivacy);
 --- /dev/null
 +++ b/chrome/browser/aerium_blocker/BUILD.gn
 @@ -0,0 +1,39 @@
@@ -560,13 +702,14 @@ Parsing untrusted text in the browser process
 +#endif  // CHROME_BROWSER_AERIUM_BLOCKER_AERIUM_BLOCKER_PREFS_H_
 --- /dev/null
 +++ b/chrome/browser/aerium_blocker/aerium_blocker_prefs.cc
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,213 @@
 +// Copyright 2026 The Aerium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
 +
 +#include "chrome/browser/aerium_blocker/aerium_blocker_prefs.h"
 +
++#include <iterator>
 +#include <utility>
 +
 +#include "components/prefs/pref_registry_simple.h"
@@ -636,31 +779,74 @@ Parsing untrusted text in the browser process
 +}
 +
 +std::vector<FilterList> DefaultLists() {
++  // The shipped set, and which of them start on.
++  //
++  // The defaults are uBlock Origin's, not a set assembled here. Its stock
++  // selection - the uBlock lists, EasyList, EasyPrivacy and Peter Lowe's - is
++  // the most widely exercised blocking configuration there is, tested against
++  // site breakage by millions of users daily. Picking a different combination
++  // would mean discovering that breakage ourselves.
++  //
++  // AdGuard's lists ship switched off rather than absent. They overlap EasyList
++  // heavily, so enabling them alongside it costs indexing time and memory for
++  // rules already present, but they cover things EasyList does not and some
++  // people want them. Present and off is the honest arrangement: the choice is
++  // there without the cost being imposed.
++  //
++  // Every URL here was fetched and confirmed to serve filter-list content
++  // before being written down. A default list that 404s is a blocker that
++  // silently does less than it claims.
++  struct Seed {
++    const char* url;
++    const char* title;
++    bool enabled;
++  };
++  static constexpr Seed kSeeds[] = {
++      // uBlock Origin's own lists. "filters" is the main one; badware and
++      // privacy are separate upstream and are separate here for the same
++      // reason - they are updated on different cadences.
++      {"https://ublockorigin.github.io/uAssets/filters/filters.txt",
++       "uBlock Origin filters", true},
++      {"https://ublockorigin.github.io/uAssets/filters/badware.txt",
++       "uBlock Origin badware risks", true},
++      {"https://ublockorigin.github.io/uAssets/filters/privacy.txt",
++       "uBlock Origin privacy", true},
++
++      // The EasyList family, which almost every blocker builds on.
++      {"https://easylist.to/easylist/easylist.txt", "EasyList", true},
++      {"https://easylist.to/easylist/easyprivacy.txt", "EasyPrivacy", true},
++
++      // Peter Lowe's server list: hosts rather than patterns, so it overlaps
++      // the others very little for its size.
++      {"https://pgl.yoyo.org/adservers/serverlist.php?hostformat=adblockplus"
++       "&mimetype=plaintext",
++       "Peter Lowe's ad and tracking servers", true},
++
++      // Off by default - see above.
++      {"https://filters.adtidy.org/extension/chromium/filters/2.txt",
++       "AdGuard Base", false},
++      {"https://filters.adtidy.org/extension/chromium/filters/3.txt",
++       "AdGuard Tracking Protection", false},
++      {"https://filters.adtidy.org/extension/chromium/filters/14.txt",
++       "AdGuard Annoyances", false},
++
++      // Cookie banners. Off by default because hiding the banner without
++      // answering it leaves the site's own default consent in place, which is
++      // not what someone switching it on necessarily expects.
++      {"https://secure.fanboy.co.nz/fanboy-cookiemonster.txt",
++       "EasyList Cookie", false},
++  };
++
 +  std::vector<FilterList> lists;
-+
-+  FilterList easylist;
-+  easylist.url = "https://easylist.to/easylist/easylist.txt";
-+  easylist.title = "EasyList";
-+  easylist.builtin = true;
-+  lists.push_back(std::move(easylist));
-+
-+  FilterList easyprivacy;
-+  easyprivacy.url = "https://easylist.to/easylist/easyprivacy.txt";
-+  easyprivacy.title = "EasyPrivacy";
-+  easyprivacy.builtin = true;
-+  lists.push_back(std::move(easyprivacy));
-+
-+  // Overlaps EasyList on purpose. Rules that appear in both are folded by the
-+  // indexer - RulesetIndexer stores each domain vector once and drops rules it
-+  // cannot represent - so carrying both costs far less than the sum of the two
-+  // and covers what either misses alone.
-+  FilterList adguard;
-+  adguard.url =
-+      "https://filters.adtidy.org/extension/chromium/filters/2.txt";
-+  adguard.title = "AdGuard Base";
-+  adguard.builtin = true;
-+  lists.push_back(std::move(adguard));
-+
++  lists.reserve(std::size(kSeeds));
++  for (const Seed& seed : kSeeds) {
++    FilterList list;
++    list.url = seed.url;
++    list.title = seed.title;
++    list.enabled = seed.enabled;
++    list.builtin = true;
++    lists.push_back(std::move(list));
++  }
 +  return lists;
 +}
 +
@@ -708,6 +894,9 @@ Parsing untrusted text in the browser process
 +      }
 +    }
 +    if (!present) {
++      // Pushed with its own default enabled state, which for the AdGuard and
++      // cookie lists is off. A new built-in must not switch itself on in an
++      // existing profile just because the build learned about it.
 +      lists.push_back(def);
 +      added = true;
 +    }

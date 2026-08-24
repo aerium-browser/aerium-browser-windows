@@ -566,7 +566,7 @@ Parsing untrusted text in the browser process
    privacy_->SetChecked(active == aerium_presets::kPrivacy);
 --- /dev/null
 +++ b/chrome/browser/aerium_blocker/BUILD.gn
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,47 @@
 +# Copyright 2026 The Aerium Authors
 +# Use of this source code is governed by a BSD-style license that can be
 +# found in the LICENSE file.
@@ -588,6 +588,11 @@ Parsing untrusted text in the browser process
 +
 +  deps = [
 +    "//base",
++    # base/i18n/time_formatting.h, used to render the "last updated" stamp in
++    # the locale the rest of Settings uses. Its own target, and //base does not
++    # public_dep it - checked, because base/i18n lives in component("i18n")
++    # specifically so that everything depending on //base does not drag ICU in.
++    "//base:i18n",
 +    "//components/prefs",
 +    "//content/public/browser",
 +    # The EasyList parser and the indexed/unindexed ruleset writers. Both are
@@ -601,6 +606,9 @@ Parsing untrusted text in the browser process
 +    "//components/url_pattern_index",
 +    "//components/url_pattern_index/proto:url_pattern_index",
 +    "//net",
++    # network_traffic_annotation.h is source_set("traffic_annotation"), not
++    # part of //net proper.
++    "//net/traffic_annotation",
 +    "//services/network/public/cpp",
 +    "//third_party/protobuf:protobuf_lite",
 +    "//url",

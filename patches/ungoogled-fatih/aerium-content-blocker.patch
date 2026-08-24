@@ -388,10 +388,10 @@ Parsing untrusted text in the browser process
 +      Off
 +    </message>
 +    <message name="IDS_SETTINGS_CONTENT_BLOCKER_LIST_DETAIL" desc="Text shown beneath a filter list giving how many rules it contributed. $1 is a formatted number.">
-+      $1 rules
++      <ph name="RULE_COUNT">$1<ex>18,432</ex></ph> rules
 +    </message>
 +    <message name="IDS_SETTINGS_CONTENT_BLOCKER_LAST_UPDATED" desc="Text giving when the filter lists were last refreshed. $1 is a formatted date and time.">
-+      Last updated $1
++      Last updated <ph name="TIMESTAMP">$1<ex>24 Aug 2026, 09:15</ex></ph>
 +    </message>
 +    <message name="IDS_SETTINGS_CONTENT_BLOCKER_NEVER_UPDATED" desc="Text shown when the filter lists have never been refreshed.">
 +      Not downloaded yet

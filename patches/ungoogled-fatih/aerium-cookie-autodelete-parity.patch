@@ -482,7 +482,7 @@ Android.
      ];
    }
  
-@@ -107,11 +124,33 @@
+@@ -107,11 +124,37 @@
    declare private addDisabled_: boolean;
    declare private inputInvalid_: boolean;
    declare private errorMessage_: string;
@@ -505,7 +505,11 @@ Android.
 +   * from disabling the feature silently.
 +   */
 +  private onDelayChanged_() {
-+    const raw = Number(this.delaySeconds_);
++    // No Number() around this: `delaySeconds_` is declared number and Polymer
++    // coerces the input's string for a `type: Number` property, so converting
++    // again is a no-op that @typescript-eslint/no-unnecessary-type-conversion
++    // rejects - which is what broke build 64.
++    const raw = this.delaySeconds_;
 +    if (!Number.isInteger(raw) || raw < 0 || raw > 3600) {
 +      this.delaySeconds_ = this.getPref<number>(EPHEMERAL_DELAY_PREF).value;
 +      return;

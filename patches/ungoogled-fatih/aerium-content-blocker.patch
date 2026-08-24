@@ -1848,10 +1848,10 @@ Parsing untrusted text in the browser process
 +  };
 +}
 +
-+const SettingsContentBlockerElementBase =
-+    PrefsMixin(PolymerElement) as {
-+      new (): PolymerElement & PrefsMixinInterface,
-+    };
++type Constructor<T> = new (...args: any[]) => T;
++
++const SettingsContentBlockerElementBase = PrefsMixin(PolymerElement) as
++    Constructor<PrefsMixinInterface&PolymerElement>;
 +
 +export class SettingsContentBlockerElement extends
 +    SettingsContentBlockerElementBase {

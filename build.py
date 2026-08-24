@@ -27,6 +27,15 @@ from _common import ENCODING, USE_REGISTRY, ExtractorEnum, get_logger
 sys.path.pop(0)
 
 _ROOT_DIR = Path(__file__).resolve().parent
+
+# Aerium: the GN targets this project owns, as label patterns for gn check.
+# Deliberately not "everything" - checking all of Chromium would be slow and
+# would surface upstream's problems, which are not ours to fix in a build
+# script. Keep in step with _aerium_check_targets in the Linux repo's
+# scripts/shared.sh; the content blocker patch is byte-identical across both.
+_AERIUM_CHECK_TARGETS = [
+    '//chrome/browser/aerium_blocker:*',
+]
 _PATCH_BIN_RELPATH = Path('third_party/git/usr/bin/patch.exe')
 
 # Browser brand name (replaces "Chromium" in product name, UI strings,
@@ -470,6 +479,29 @@ def main():
 
         # Run gn gen
         _run_build_process('out\\Default\\gn.exe', 'gen', 'out\\Default', '--fail-on-unused-args')
+
+        # Aerium: verify that every #include in the targets this project owns
+        # is covered by a declared dependency.
+        #
+        # A missing dep is close to invisible until it is expensive. //base
+        # does not public_dep :i18n and //net does not include
+        # net/traffic_annotation, so a target using base/i18n/time_formatting.h
+        # or network_traffic_annotation.h without naming them builds fine right
+        # up until it does not - at link, hours in. Both were real, in the
+        # content blocker, and nothing before this caught them.
+        #
+        # gn check rather than a bespoke include scanner: it uses GN's own
+        # notion of what a dependency permits, including public_deps chains, so
+        # it cannot drift from the build the way a hand-written parser would.
+        # Chromium's .gn excludes only six v8 targets from header checking, so
+        # this is a supported thing to ask for - it is simply never run by
+        # default. Here, right after gen, nothing has compiled yet.
+        for target in _AERIUM_CHECK_TARGETS:
+            # A target that does not exist is not a pass: it means the patch
+            # that should have created it did not apply, and checking nothing
+            # is how a guard rots into decoration.
+            _run_build_process('out\\Default\\gn.exe', 'ls', 'out\\Default', target)
+            _run_build_process('out\\Default\\gn.exe', 'check', 'out\\Default', target)
 
     if not args.ci or not os.path.exists('third_party\\rust-toolchain\\bin\\bindgen.exe'):
         # Build bindgen

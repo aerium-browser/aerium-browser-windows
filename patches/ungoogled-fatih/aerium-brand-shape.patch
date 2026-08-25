@@ -1,0 +1,78 @@
+--- a/chrome/browser/ui/color/omnibox_color_mixer.cc
++++ b/chrome/browser/ui/color/omnibox_color_mixer.cc
+@@ -344,8 +344,11 @@
+     // Aligns with default InkDropHighlight::visible_opacity_.
+     mixer[kColorOmniboxResultsIconHovered] =
+         ui::SetAlpha({kColorOmniboxResultsIcon}, std::ceil(0.128f * 255.0f));
++    // Aerium: this one is not gated on user_color the way the composebox
++    // baseline colours are, so it stayed Google blue in the dropdown even
++    // with a seeded palette. Take it from the generated palette instead.
+     mixer[kColorOmniboxResultsStarterPackIcon] = ui::BlendForMinContrast(
+-        gfx::kGoogleBlue600, kColorOmniboxResultsBackground, std::nullopt,
++        ui::kColorSysPrimary, kColorOmniboxResultsBackground, std::nullopt,
+         color_utils::kMinimumVisibleContrastRatio);
+   }
+ 
+--- a/chrome/browser/ui/layout_constants.cc
++++ b/chrome/browser/ui/layout_constants.cc
+@@ -54,13 +54,19 @@
+     case LayoutConstant::kLocationBarChildInternalSpacing:
+       return touch_ui ? 10 : 4;
+     case LayoutConstant::kLocationBarChildCornerRadius:
+-      return 12;
++      // Aerium: 12 -> 14. The chips inside the omnibox sit in a taller pill
++      // now, so their corners follow it round rather than reading as a
++      // rectangle that happens to be inside one.
++      return 14;
+     case LayoutConstant::kLocationBarChipIconSize:
+       return 16;
+     case LayoutConstant::kLocationBarChipPadding:
+       return 4;
+     case LayoutConstant::kLocationBarElementPadding:
+-      return touch_ui ? 3 : 2;
++      // Aerium: 2 -> 4 (touch 3 -> 5). Two pixels of breathing room inside
++      // the pill was tuned for a 34px bar; at 38 it leaves the contents
++      // looking pinned to the edges.
++      return touch_ui ? 5 : 4;
+     case LayoutConstant::kLocationBarPageInfoIconVerticalPadding:
+       return touch_ui ? 3 : 5;
+     case LayoutConstant::kLocationBarPageInfoIconLabelExtraTrailingPadding:
+@@ -74,7 +80,12 @@
+     case LayoutConstant::kLocationBarTrailingDecorationInnerPadding:
+       return touch_ui ? 3 : 8;
+     case LayoutConstant::kLocationBarHeight:
+-      return touch_ui ? 36 : 34;
++      // Aerium: 34 -> 38 (touch 36 -> 40). The omnibox radius is
++      // Emphasis::kMaximum, i.e. half the height, so this is what actually
++      // shapes the address bar: a 19px pill instead of a 17px one. The logo
++      // is entirely circular, and the browser should agree with it rather
++      // than sit in Chromium's tighter default.
++      return touch_ui ? 40 : 38;
+     // LINT.IfChange(LocationBarIconSize)
+     case LayoutConstant::kLocationBarIconSize:
+       return touch_ui ? 20 : 16;
+@@ -100,7 +111,9 @@
+     case LayoutConstant::kTabCloseButtonSize:
+       return touch_ui ? 24 : (features::IsRoundedIconsEnabled() ? 14 : 16);
+     case LayoutConstant::kTabHeight:
+-      return 34 + GetLayoutConstant(LayoutConstant::kTabstripToolbarOverlap);
++      // Aerium: 34 -> 36, so the tab strip keeps its proportion against the
++      // taller omnibox below it.
++      return 36 + GetLayoutConstant(LayoutConstant::kTabstripToolbarOverlap);
+     case LayoutConstant::kTabStripHeight:
+       return GetLayoutConstant(LayoutConstant::kTabHeight) +
+              GetLayoutConstant(LayoutConstant::kTabStripPadding);
+--- a/chrome/browser/ui/tabs/tab_style.cc
++++ b/chrome/browser/ui/tabs/tab_style.cc
+@@ -98,7 +98,10 @@
+ }
+ 
+ int TabStyle::GetTopCornerRadius() const {
+-  return 10;
++  // Aerium: 10 -> 12, matching the rounder language of the omnibox below.
++  // Only the top radius moves. GetBottomCornerRadius() feeds GetTabOverlap()
++  // and through it every tab width calculation, so it is left alone.
++  return 12;
+ }
+ 
+ int TabStyle::GetBottomCornerRadius() const {

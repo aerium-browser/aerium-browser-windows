@@ -293,7 +293,7 @@ binding, same single consumer.
 +</settings-section>
 --- /dev/null
 +++ b/chrome/browser/resources/settings/aerium_guard_page/aerium_guard_page.ts
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,154 @@
 +// Copyright 2026 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -386,6 +386,15 @@ binding, same single consumer.
 +      },
 +    };
 +  }
++
++  // Bound through from settings-main so it can be handed to
++  // settings-content-blocker, whose two toggles are ordinary prefs. This
++  // page reads none of them itself, so it takes the property rather than
++  // PrefsMixin. The declaration is required: @webui-eslint's
++  // polymer-property-class-member rule fails lint_ts on a Polymer property
++  // with no matching class member, and the entry in properties() is added
++  // by the content-blocker patch.
++  declare prefs: Record<string, unknown>;
 +
 +  declare private activePreset_: string;
 +  declare private modes_: GuardMode[];

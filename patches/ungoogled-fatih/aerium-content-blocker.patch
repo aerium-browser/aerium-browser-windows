@@ -2023,7 +2023,7 @@ Parsing untrusted text in the browser process
 +import type {CrToggleElement} from 'chrome://resources/cr_elements/cr_toggle/cr_toggle.js';
 +import type {PrefsMixinInterface} from '/shared/settings/prefs/prefs_mixin.js';
 +import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
-+import {addWebUIListener, sendWithPromise} from 'chrome://resources/js/cr.js';
++import {addWebUiListener, sendWithPromise} from 'chrome://resources/js/cr.js';
 +import {loadTimeData} from '../i18n_setup.js';
 +import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 +
@@ -2115,11 +2115,11 @@ Parsing untrusted text in the browser process
 +
 +  override connectedCallback() {
 +    super.connectedCallback();
-+    addWebUIListener(
++    addWebUiListener(
 +        'content-blocker-lists-changed',
 +        (lists: FilterListEntry[]) => this.onListsChanged_(lists));
 +    sendWithPromise('contentBlockerGetLists')
-+        .then((lists: FilterListEntry[]) => this.onListsChanged_(lists));
++        .then(lists => this.onListsChanged_(lists as FilterListEntry[]));
 +  }
 +
 +  private onListsChanged_(lists: FilterListEntry[]) {
@@ -2227,7 +2227,7 @@ Parsing untrusted text in the browser process
 +  private onSubmit_() {
 +    const url = this.newUrl_.trim();
 +    sendWithPromise('contentBlockerAddList', url, this.newTitle_.trim())
-+        .then((added: boolean) => {
++        .then(added => {
 +          if (added) {
 +            this.$.addDialog.close();
 +            return;

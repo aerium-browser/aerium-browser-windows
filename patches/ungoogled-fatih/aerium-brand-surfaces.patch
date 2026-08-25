@@ -1,0 +1,47 @@
+--- a/chrome/browser/ui/color/chrome_color_mixer.cc
++++ b/chrome/browser/ui/color/chrome_color_mixer.cc
+@@ -1141,4 +1141,44 @@
+                                                            : SK_ColorLTGRAY};
+   mixer[ui::kColorFrameActive] = {SK_ColorDKGRAY};
+   mixer[ui::kColorFrameInactive] = {SK_ColorGRAY};
++
++  // --- Aerium: explicit light and dark surface palettes.
++  //
++  // Seeding kUserColor gives Chromium a brand hue, but Material 3 builds its
++  // surfaces from the neutral palette, whose chroma is 4 to 8 - so a blue seed
++  // still lands on near-grey chrome. That is why a seeded Chromium looks like
++  // Chromium with blue buttons rather than like a browser with a palette of its
++  // own. Brave and Opera do not rely on generation for this; they state their
++  // surfaces outright, and so does this.
++  //
++  // Both ladders come from the logo, taken from opposite ends. Dark uses the
++  // swirl navies - #111C42 for the tab strip, #1B2C5E for containers - with a
++  // base a shade below the darkest of them so the strip still reads as raised.
++  // Light uses the lens pale, #E9F1FB, with the tab strip one step down so an
++  // active tab can be white against it.
++  //
++  // Deliberately only surfaces. Text and accent tokens are left to the
++  // generated palette: kColorSysPrimary already resolves to a blue from our
++  // seed, and Chromium tuned its on-surface contrast against surfaces of these
++  // lightnesses, so overriding those as well would be re-deriving readability
++  // by hand for no gain. This is a separate mixer rather than more lines in the
++  // one above so it resolves last, and so anything the browser adds afterwards
++  // - high contrast, in particular - still wins.
++  ui::ColorMixer& aerium_mixer = provider->AddMixer();
++  if (dark_mode) {
++    aerium_mixer[ui::kColorSysBase] = {SkColorSetRGB(0x0C, 0x14, 0x28)};
++    aerium_mixer[ui::kColorSysHeader] = {SkColorSetRGB(0x11, 0x1C, 0x42)};
++    aerium_mixer[ui::kColorSysHeaderInactive] = {SkColorSetRGB(0x0F, 0x18, 0x38)};
++    aerium_mixer[ui::kColorSysSurface] = {SkColorSetRGB(0x16, 0x22, 0x4C)};
++    aerium_mixer[ui::kColorSysBaseContainer] = {SkColorSetRGB(0x1B, 0x2C, 0x5E)};
++    aerium_mixer[ui::kColorSysBaseContainerElevated] = {
++        SkColorSetRGB(0x22, 0x37, 0x6E)};
++  } else {
++    aerium_mixer[ui::kColorSysBase] = {SK_ColorWHITE};
++    aerium_mixer[ui::kColorSysHeader] = {SkColorSetRGB(0xD8, 0xE6, 0xF5)};
++    aerium_mixer[ui::kColorSysHeaderInactive] = {SkColorSetRGB(0xE3, 0xED, 0xF8)};
++    aerium_mixer[ui::kColorSysSurface] = {SkColorSetRGB(0xF2, 0xF7, 0xFD)};
++    aerium_mixer[ui::kColorSysBaseContainer] = {SkColorSetRGB(0xE9, 0xF1, 0xFB)};
++    aerium_mixer[ui::kColorSysBaseContainerElevated] = {SK_ColorWHITE};
++  }
+ }

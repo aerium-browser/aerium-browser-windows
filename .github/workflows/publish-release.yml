@@ -83,6 +83,16 @@ jobs:
             echo "run_number=$run_number"
           } >> "$GITHUB_OUTPUT"
 
+      # For CHANGELOG.md, at the commit the build was made from rather than
+      # whatever master happens to be now. Before the artifact download, since
+      # checkout cleans the workspace it lands in. Submodules are the whole
+      # Chromium tree and none of it is read here.
+      - name: Check out the built commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.src.outputs.head_sha }}
+          submodules: false
+
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
@@ -126,6 +136,32 @@ jobs:
             echo "installer_sha256=$(sha256sum "$installer" | cut -d' ' -f1)"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Compose release notes
+        run: |
+          set -euo pipefail
+          V="${{ steps.meta.outputs.version }}"
+          # Print the body of the CHANGELOG.md section for this version,
+          # stopping at the next heading. The version resolved from the
+          # package filename is the bare Chromium version, while a heading
+          # carries the packaging revision and sometimes a parenthetical -
+          # "## 151.0.7922.173-1 (next release)" - so a heading matches when
+          # its version field is the resolved version or starts with it
+          # followed by a dash. No section is not an error: the release then
+          # carries GitHub's generated commit list alone, as it always has.
+          awk -v v="$V" '
+            BEGIN { f = 0 }
+            /^## / {
+              if (f) exit
+              if ($2 == v || index($2, v "-") == 1) { f = 1; next }
+            }
+            f' CHANGELOG.md > /tmp/notes.md || true
+          if [ -s /tmp/notes.md ]; then
+            echo "Using the CHANGELOG.md section for $V:"
+            cat /tmp/notes.md
+          else
+            echo "No CHANGELOG.md section for $V - publishing with generated notes only."
+          fi
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
@@ -142,6 +178,7 @@ jobs:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: Aerium ${{ steps.meta.outputs.version }} (x64)
           target_commitish: ${{ steps.src.outputs.head_sha }}
+          body_path: /tmp/notes.md
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |

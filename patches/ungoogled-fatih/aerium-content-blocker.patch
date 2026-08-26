@@ -667,8 +667,8 @@ Parsing untrusted text in the browser process
 +  FilterList& operator=(const FilterList&);
 +  ~FilterList();
 +
-+  static FilterList FromValue(const base::Value::Dict& dict);
-+  base::Value::Dict ToValue() const;
++  static FilterList FromValue(const base::DictValue& dict);
++  base::DictValue ToValue() const;
 +
 +  // Identity. The URL is the key: adding a list that is already present
 +  // updates it rather than producing a second copy that would double every
@@ -744,7 +744,7 @@ Parsing untrusted text in the browser process
 +FilterList::~FilterList() = default;
 +
 +// static
-+FilterList FilterList::FromValue(const base::Value::Dict& dict) {
++FilterList FilterList::FromValue(const base::DictValue& dict) {
 +  FilterList list;
 +  if (const std::string* url = dict.FindString(kUrlKey)) {
 +    list.url = *url;
@@ -771,8 +771,8 @@ Parsing untrusted text in the browser process
 +  return list;
 +}
 +
-+base::Value::Dict FilterList::ToValue() const {
-+  base::Value::Dict dict;
++base::DictValue FilterList::ToValue() const {
++  base::DictValue dict;
 +  dict.Set(kUrlKey, url);
 +  dict.Set(kTitleKey, title);
 +  dict.Set(kEnabledKey, enabled);
@@ -867,7 +867,7 @@ Parsing untrusted text in the browser process
 +
 +std::vector<FilterList> GetLists(PrefService* local_state) {
 +  std::vector<FilterList> lists;
-+  const base::Value::List& stored = local_state->GetList(kAeriumBlockerLists);
++  const base::ListValue& stored = local_state->GetList(kAeriumBlockerLists);
 +  for (const base::Value& entry : stored) {
 +    if (!entry.is_dict()) {
 +      continue;
@@ -916,7 +916,7 @@ Parsing untrusted text in the browser process
 +}
 +
 +void SetLists(PrefService* local_state, const std::vector<FilterList>& lists) {
-+  base::Value::List out;
++  base::ListValue out;
 +  for (const FilterList& list : lists) {
 +    out.Append(list.ToValue());
 +  }
@@ -1736,13 +1736,13 @@ Parsing untrusted text in the browser process
 +  void OnBlockerListsChanged() override;
 +
 + private:
-+  void HandleGetLists(const base::Value::List& args);
-+  void HandleAddList(const base::Value::List& args);
-+  void HandleRemoveList(const base::Value::List& args);
-+  void HandleSetListEnabled(const base::Value::List& args);
-+  void HandleUpdateNow(const base::Value::List& args);
++  void HandleGetLists(const base::ListValue& args);
++  void HandleAddList(const base::ListValue& args);
++  void HandleRemoveList(const base::ListValue& args);
++  void HandleSetListEnabled(const base::ListValue& args);
++  void HandleUpdateNow(const base::ListValue& args);
 +
-+  base::Value::List BuildListsValue() const;
++  base::ListValue BuildListsValue() const;
 +
 +  base::ScopedObservation<aerium_blocker::AeriumBlockerService,
 +                          aerium_blocker::AeriumBlockerService::Observer>
@@ -1815,14 +1815,14 @@ Parsing untrusted text in the browser process
 +  FireWebUIListener("content-blocker-lists-changed", BuildListsValue());
 +}
 +
-+base::Value::List AeriumContentBlockerHandler::BuildListsValue() const {
-+  base::Value::List out;
++base::ListValue AeriumContentBlockerHandler::BuildListsValue() const {
++  base::ListValue out;
 +  AeriumBlockerService* const service = AeriumBlockerService::GetInstance();
 +  if (!service) {
 +    return out;
 +  }
 +  for (const FilterList& list : service->GetLists()) {
-+    base::Value::Dict dict;
++    base::DictValue dict;
 +    dict.Set("url", list.url);
 +    dict.Set("title", list.title);
 +    dict.Set("enabled", list.enabled);
@@ -1843,13 +1843,13 @@ Parsing untrusted text in the browser process
 +}
 +
 +void AeriumContentBlockerHandler::HandleGetLists(
-+    const base::Value::List& args) {
++    const base::ListValue& args) {
 +  AllowJavascript();
 +  CHECK_EQ(1u, args.size());
 +  ResolveJavascriptCallback(args[0], BuildListsValue());
 +}
 +
-+void AeriumContentBlockerHandler::HandleAddList(const base::Value::List& args) {
++void AeriumContentBlockerHandler::HandleAddList(const base::ListValue& args) {
 +  AllowJavascript();
 +  CHECK_EQ(3u, args.size());
 +  const std::string& url = args[1].GetString();
@@ -1864,7 +1864,7 @@ Parsing untrusted text in the browser process
 +}
 +
 +void AeriumContentBlockerHandler::HandleRemoveList(
-+    const base::Value::List& args) {
++    const base::ListValue& args) {
 +  AllowJavascript();
 +  CHECK_EQ(1u, args.size());
 +  if (AeriumBlockerService* service = AeriumBlockerService::GetInstance()) {
@@ -1873,7 +1873,7 @@ Parsing untrusted text in the browser process
 +}
 +
 +void AeriumContentBlockerHandler::HandleSetListEnabled(
-+    const base::Value::List& args) {
++    const base::ListValue& args) {
 +  AllowJavascript();
 +  CHECK_EQ(2u, args.size());
 +  if (AeriumBlockerService* service = AeriumBlockerService::GetInstance()) {
@@ -1882,7 +1882,7 @@ Parsing untrusted text in the browser process
 +}
 +
 +void AeriumContentBlockerHandler::HandleUpdateNow(
-+    const base::Value::List& args) {
++    const base::ListValue& args) {
 +  AllowJavascript();
 +  if (AeriumBlockerService* service = AeriumBlockerService::GetInstance()) {
 +    service->UpdateListsNow();

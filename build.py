@@ -32,10 +32,13 @@ _ROOT_DIR = Path(__file__).resolve().parent
 # Deliberately not "everything" - checking all of Chromium would be slow and
 # would surface upstream's problems, which are not ours to fix in a build
 # script. Keep in step with _aerium_check_targets in the Linux repo's
-# scripts/shared.sh; the content blocker patch is byte-identical across both.
-_AERIUM_CHECK_TARGETS = [
-    '//chrome/browser/aerium_blocker:*',
-]
+# scripts/shared.sh.
+#
+# Empty since the content blocker was dropped: every remaining Aerium change
+# lands inside a target Chromium already owns, and no standalone source_set of
+# ours is left to check. Kept, with the loop below, so the next target Aerium
+# adds is one line away from being covered.
+_AERIUM_CHECK_TARGETS = []
 _PATCH_BIN_RELPATH = Path('third_party/git/usr/bin/patch.exe')
 
 # Browser brand name (replaces "Chromium" in product name, UI strings,
@@ -496,6 +499,8 @@ def main():
         # Chromium's .gn excludes only six v8 targets from header checking, so
         # this is a supported thing to ask for - it is simply never run by
         # default. Here, right after gen, nothing has compiled yet.
+        if not _AERIUM_CHECK_TARGETS:
+            get_logger().info('gn check: no Aerium-owned targets to check')
         for target in _AERIUM_CHECK_TARGETS:
             # A target that does not exist is not a pass: it means the patch
             # that should have created it did not apply, and checking nothing

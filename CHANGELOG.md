@@ -20,8 +20,11 @@ behind any of this.
 
 **Content blocker**
 
-- The built-in content blocker's settings page works again. It was failing to
-  build, so the page never shipped.
+- The built-in content blocker has been dropped. It never shipped in a working
+  build, and a browser is a poor place to maintain filter lists: uBlock Origin
+  and uBlock Origin Lite already do the job better, are updated far more often,
+  and let you decide what to block. Aerium's job is to run them well. Aerium
+  Guard keeps its three modes and loses the blocker section.
 
 ## 151.0.7922.173-1-b62 and earlier
 

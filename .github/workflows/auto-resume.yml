@@ -57,8 +57,29 @@ jobs:
               echo "master is now $head_sha - run $RUN_ID was superseded, not interrupted."
               exit 0
             fi
-            live=$(gh api "repos/$REPO/actions/workflows/build-x64.yml/runs?head_sha=$HEAD_SHA&per_page=100" \
-              --jq '[.workflow_runs[] | select(.status != "completed")] | length')
+            # Asked twice, because the run list can lag its own writes and
+            # the window that matters is precisely the narrow one. Cancelling
+            # a run and dispatching its replacement is a two-step act, and
+            # this job starts the moment step one lands: in the Linux repo run
+            # 32935653134 was cancelled at 06:11:5x, its replacement was
+            # created at 06:12:00, and the same check there ran at 06:12:01
+            # and saw nothing active. A second look after a pause covers a
+            # replacement made alongside the cancellation, and costs 30
+            # seconds only when there is genuinely nothing there - which is
+            # the case where the build has already stopped and nobody is
+            # waiting on those seconds.
+            live=0
+            for attempt in 1 2; do
+              if [ "$attempt" -eq 2 ]; then
+                echo "Nothing active for $HEAD_SHA yet - looking again in 30s in case a replacement is still registering."
+                sleep 30
+              fi
+              live=$(gh api "repos/$REPO/actions/workflows/build-x64.yml/runs?head_sha=$HEAD_SHA&per_page=100" \
+                --jq '[.workflow_runs[] | select(.status != "completed")] | length')
+              if [ "$live" -gt 0 ]; then
+                break
+              fi
+            done
             if [ "$live" -gt 0 ]; then
               echo "$live run(s) for $HEAD_SHA still active - run $RUN_ID was a duplicate, not an interruption."
               exit 0

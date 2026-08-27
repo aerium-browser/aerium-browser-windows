@@ -937,12 +937,14 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
  
 --- a/chrome/browser/resources/settings/BUILD.gn
 +++ b/chrome/browser/resources/settings/BUILD.gn
-@@ -132,4 +132,5 @@
+@@ -135,6 +135,7 @@
      "privacy_page/cookies_page.ts",
      "privacy_page/do_not_track_toggle.ts",
      "privacy_page/ephemeral_sites.ts",
 +    "privacy_page/site_rules.ts",
      "privacy_page/personalization_options.ts",
+     "privacy_page/privacy_guide/privacy_guide_ad_topics_fragment.ts",
+     "privacy_page/privacy_guide/privacy_guide_completion_fragment.ts",
 --- a/chrome/browser/resources/settings/privacy_page/privacy_page.ts
 +++ b/chrome/browser/resources/settings/privacy_page/privacy_page.ts
 @@ -15,6 +15,7 @@
@@ -1407,15 +1409,15 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
  #include <utility>
  
  #include "base/command_line.h"
-@@ -21,6 +23,7 @@
- #include "base/task/task_traits.h"
+@@ -22,6 +24,7 @@
  #include "base/values.h"
  #include "build/build_config.h"
+ #include "chrome/browser/browser_features.h"
 +#include "chrome/browser/browsing_data/aerium_site_rules.h"
  #include "chrome/browser/browsing_data/chrome_browsing_data_remover_constants.h"
  #include "chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.h"
  #include "chrome/browser/lifetime/browser_shutdown.h"
-@@ -323,6 +326,31 @@
+@@ -338,6 +341,31 @@
  // open. Folded to eTLD+1 because the deletion filter is built with
  // AddRegisterableDomain(), which DCHECKs on anything that is not an eTLD+1, an
  // IP literal or a single-label host.
@@ -1447,7 +1449,7 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
  std::set<std::string> AeriumOpenRegistrableDomains(Profile* profile) {
    std::set<std::string> result;
    ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
-@@ -442,6 +470,27 @@
+@@ -457,6 +485,27 @@
    return result;
  }
  
@@ -1475,7 +1477,7 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
  // Returns the sync types that might be reuired to be disabled for the browsing
  // data types specified in the policy value.
  syncer::UserSelectableTypeSet GetSyncTypesForPolicyPref(
-@@ -480,6 +529,10 @@
+@@ -495,6 +544,10 @@
    // Order matters: take the windows that already exist first, then subscribe
    // for later ones. The collection does not replay creations to a new observer,
    // so doing it the other way round would miss any window opened in between.
@@ -1486,7 +1488,7 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
    AeriumObserveExistingBrowsers();
    aerium_browser_collection_observation_.Observe(
        GlobalBrowserCollection::GetInstance());
-@@ -557,6 +610,19 @@
+@@ -572,6 +625,19 @@
    AeriumScheduleEphemeralClear();
  }
  
@@ -1506,7 +1508,7 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
  void ChromeBrowsingDataLifetimeManager::OnTabStripModelDestroyed(
      TabStripModel* tab_strip_model) {
    aerium_observed_models_.erase(tab_strip_model);
-@@ -566,6 +632,11 @@
+@@ -581,6 +647,11 @@
      TabStripModel* tab_strip_model,
      const TabStripModelChange& change,
      const TabStripSelectionChange& selection) {
@@ -1518,7 +1520,7 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
    if (change.type() != TabStripModelChange::kRemoved) {
      return;
    }
-@@ -606,15 +677,28 @@
+@@ -621,15 +692,28 @@
    // that toggle's filter. "Keep this until I quit" is a statement about one
    // site; it should not require asking for a general clean-out, and it should
    // not be cancelled by turning that clean-out off.
@@ -1552,7 +1554,7 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
    }
    content::BrowsingDataRemover* const remover =
        profile_->GetBrowsingDataRemover();
-@@ -632,79 +716,79 @@
+@@ -647,79 +731,79 @@
  
  void ChromeBrowsingDataLifetimeManager::AeriumClearClosedEphemeralSites() {
    PrefService* const prefs = profile_->GetPrefs();

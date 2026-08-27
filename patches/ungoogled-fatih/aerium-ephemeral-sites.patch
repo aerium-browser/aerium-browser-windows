@@ -407,12 +407,14 @@ is.
  import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
 --- a/chrome/browser/resources/settings/BUILD.gn
 +++ b/chrome/browser/resources/settings/BUILD.gn
-@@ -131,4 +131,5 @@
+@@ -134,6 +134,7 @@
      "privacy_page/clear_on_exit_sites.ts",
      "privacy_page/cookies_page.ts",
      "privacy_page/do_not_track_toggle.ts",
 +    "privacy_page/ephemeral_sites.ts",
      "privacy_page/personalization_options.ts",
+     "privacy_page/privacy_guide/privacy_guide_ad_topics_fragment.ts",
+     "privacy_page/privacy_guide/privacy_guide_completion_fragment.ts",
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
 @@ -2265,5 +2265,26 @@

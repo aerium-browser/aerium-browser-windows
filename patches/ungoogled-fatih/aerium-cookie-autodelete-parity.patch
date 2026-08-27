@@ -122,10 +122,10 @@ Android.
  
 --- a/components/browsing_data/core/pref_names.cc
 +++ b/components/browsing_data/core/pref_names.cc
-@@ -62,6 +62,15 @@
-   // Aerium: no site is ephemeral by default, so the tab-close observer below
-   // finds an empty list and returns before doing any work.
-   registry->RegisterListPref(kAeriumEphemeralSites);
+@@ -65,6 +65,15 @@
+   // Aerium: off, so tab-close clearing keeps taking cookies and storage
+   // only and nobody's cache is dropped by an update.
+   registry->RegisterBooleanPref(kAeriumEphemeralClearCache, false);
 +  // Aerium: off, so an existing profile keeps behaving exactly as it did. The
 +  // all-sites mode signs the user out of everything not on the keep list, which
 +  // is a thing to opt into rather than to receive in an update.
@@ -206,7 +206,7 @@ Android.
  }
  
  void ChromeBrowsingDataLifetimeManager::OnTabStripModelDestroyed(
-@@ -568,35 +570,120 @@
+@@ -568,35 +570,119 @@
    // Posted, not immediate: at this point the removed tab can still be reachable
    // from the model, so an immediate walk would see the site as still open and
    // clear nothing.
@@ -274,8 +274,7 @@ Android.
 +      profile_->GetBrowsingDataRemover();
 +  remover->RemoveWithFilterAndReply(
 +      base::Time::Min(), base::Time::Max(),
-+      content::BrowsingDataRemover::DATA_TYPE_COOKIES |
-+          content::BrowsingDataRemover::DATA_TYPE_DOM_STORAGE,
++      AeriumSiteDataMask(profile_->GetPrefs()),
 +      content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
 +      std::move(filter),
 +      testing_data_remover_observer_
@@ -378,7 +377,7 @@ Android.
  
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
-@@ -2211,6 +2211,18 @@
+@@ -2211,6 +2211,24 @@
      <message name="IDS_SETTINGS_CLEAR_ON_EXIT_SITES_DUPLICATE" desc="Error shown when the website typed into the add-a-site field is already in the list.">
        This site is already on the list
      </message>
@@ -394,12 +393,18 @@ Android.
 +    <message name="IDS_SETTINGS_EPHEMERAL_DELAY_DESC" desc="Description of the waiting period before a website's data is deleted, explaining why a delay is useful. Sign-in flows often use a tab that closes itself.">
 +      Seconds to wait after the last tab closes. A short delay lets sign-in redirects finish and forgives closing a tab by mistake.
 +    </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_CLEAR_CACHE_LABEL" desc="Label for a setting that also deletes a website's cached files, not just its cookies and storage, when its data is cleared.">
++      Clear cached files too
++    </message>
++    <message name="IDS_SETTINGS_EPHEMERAL_CLEAR_CACHE_DESC" desc="Description of the setting that adds cached files to what is deleted, warning that pages will load more slowly afterwards.">
++      Cached images, fonts and scripts are deleted along with the site's cookies and storage. More thorough, but the site downloads them again on your next visit.
++    </message>
      <message name="IDS_SETTINGS_EPHEMERAL_SITES_HEADER" desc="Header for a list of websites whose cookies and stored data are deleted as soon as the last tab showing that site is closed.">
        Reset these sites when I close their last tab
      </message>
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
-@@ -2434,6 +2434,10 @@
+@@ -2434,6 +2434,12 @@
         IDS_SETTINGS_CLEAR_ON_EXIT_SITES_PLACEHOLDER},
        {"clearOnExitSitesInvalid", IDS_SETTINGS_CLEAR_ON_EXIT_SITES_INVALID},
        {"clearOnExitSitesDuplicate", IDS_SETTINGS_CLEAR_ON_EXIT_SITES_DUPLICATE},
@@ -407,12 +412,14 @@ Android.
 +      {"ephemeralAllSitesDesc", IDS_SETTINGS_EPHEMERAL_ALL_SITES_DESC},
 +      {"ephemeralDelayLabel", IDS_SETTINGS_EPHEMERAL_DELAY_LABEL},
 +      {"ephemeralDelayDesc", IDS_SETTINGS_EPHEMERAL_DELAY_DESC},
++      {"ephemeralClearCacheLabel", IDS_SETTINGS_EPHEMERAL_CLEAR_CACHE_LABEL},
++      {"ephemeralClearCacheDesc", IDS_SETTINGS_EPHEMERAL_CLEAR_CACHE_DESC},
        {"ephemeralSitesHeader", IDS_SETTINGS_EPHEMERAL_SITES_HEADER},
        {"ephemeralSitesDesc", IDS_SETTINGS_EPHEMERAL_SITES_DESC},
        {"ephemeralSitesAddTitle", IDS_SETTINGS_EPHEMERAL_SITES_ADD_TITLE},
 --- a/chrome/browser/resources/settings/privacy_page/ephemeral_sites.html
 +++ b/chrome/browser/resources/settings/privacy_page/ephemeral_sites.html
-@@ -11,7 +11,22 @@
+@@ -11,7 +11,27 @@
      flex: 1;
    }
  </style>
@@ -432,6 +439,11 @@ Android.
 +      aria-label="$i18n{ephemeralDelayLabel}">
 +  </cr-input>
 +</div>
++<settings-toggle-button id="clearCacheToggle"
++    pref="{{prefs.browser.clear_data.aerium_ephemeral_clear_cache}}"
++    label="$i18n{ephemeralClearCacheLabel}"
++    sub-label="$i18n{ephemeralClearCacheDesc}">
++</settings-toggle-button>
 +<div class="cr-row">
    <div class="cr-padded-text">
      $i18n{ephemeralSitesHeader}

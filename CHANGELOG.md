@@ -26,6 +26,11 @@ behind any of this.
   data when its last tab closes**, so anyone using only that second setting
   had no way to see it, let alone add to it. It now appears whenever either
   setting is on.
+- New setting: **Clear cached files too**, off by default. Tab-close clearing
+  took cookies and site storage but never the cache, so a site could still be
+  recognised by what it had left in there. Off by default because clearing
+  cache on every tab close means downloading images, fonts and scripts again
+  on your next visit.
 - The wording around it was misleading too. "Delete site data when its last
   tab closes" referred to "your keep list", a name that appeared nowhere in
   the browser; it now points at the list by the name written above it. And

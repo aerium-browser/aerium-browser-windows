@@ -34,7 +34,7 @@ is.
 
 --- a/components/browsing_data/core/pref_names.h
 +++ b/components/browsing_data/core/pref_names.h
-@@ -69,6 +69,15 @@
+@@ -69,6 +69,25 @@
  inline constexpr char kAeriumClearOnExitExcludedSites[] =
      "browser.clear_data.aerium_on_exit.excluded_sites";
  
@@ -47,24 +47,37 @@ is.
 +inline constexpr char kAeriumEphemeralSites[] =
 +    "browser.clear_data.aerium_ephemeral_sites";
 +
++// Aerium: whether tab-close clearing takes the HTTP cache with it. Cookie
++// AutoDelete clears cache as part of a cleanup; Chromium's own on-exit
++// checkbox offers it too. Off by default, because clearing cache every time a
++// tab closes means re-fetching images, fonts and scripts on the next visit -
++// a speed and data cost that should be asked for rather than arrive in an
++// update. DATA_TYPE_CACHE is in FILTERABLE_DATA_TYPES, so it works with the
++// preserve and delete filters both paths already build.
++inline constexpr char kAeriumEphemeralClearCache[] =
++    "browser.clear_data.aerium_ephemeral_clear_cache";
++
  // Clear browsing data deletion time period.
  inline constexpr char kDeleteTimePeriod[] = "browser.clear_data.time_period";
  
 --- a/components/browsing_data/core/pref_names.cc
 +++ b/components/browsing_data/core/pref_names.cc
-@@ -56,6 +56,9 @@
+@@ -56,6 +56,12 @@
    // Aerium: empty exclusion list by default, i.e. nothing is kept and the
    // toggle behaves exactly as it did before the list existed.
    registry->RegisterListPref(kAeriumClearOnExitExcludedSites);
 +  // Aerium: no site is ephemeral by default, so the tab-close observer below
 +  // finds an empty list and returns before doing any work.
 +  registry->RegisterListPref(kAeriumEphemeralSites);
++  // Aerium: off, so tab-close clearing keeps taking cookies and storage
++  // only and nobody's cache is dropped by an update.
++  registry->RegisterBooleanPref(kAeriumEphemeralClearCache, false);
    // TODO(crbug.com/471197613): When MaybeMigrateToQuickDeletePrefValues is
    // removed, set default value in iOS for the `kDeleteTimePeriod` pref to 15
    // minutes.
 --- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
 +++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
-@@ -625,6 +625,11 @@
+@@ -625,6 +625,13 @@
    // instead, which is what that helper pair exists for.
    (*s_allowlist)[browsing_data::prefs::kAeriumClearOnExitExcludedSites] =
        settings_api::PrefType::kList;
@@ -73,6 +86,8 @@ is.
 +  // write silently and the list looks like it saves but never does.
 +  (*s_allowlist)[browsing_data::prefs::kAeriumEphemeralSites] =
 +      settings_api::PrefType::kList;
++  (*s_allowlist)[browsing_data::prefs::kAeriumEphemeralClearCache] =
++      settings_api::PrefType::kBoolean;
    (*s_allowlist)[browsing_data::prefs::kDeleteTimePeriod] =
        settings_api::PrefType::kNumber;
  
@@ -554,7 +569,7 @@ is.
  #include "chrome/browser/ui/tabs/tab_strip_model.h"
  #else
  #include "chrome/browser/android/tab_android.h"
-@@ -313,6 +314,72 @@
+@@ -313,6 +314,89 @@
    return scheduled_removals_settings;
  }
  
@@ -622,6 +637,23 @@ is.
 +  }
 +  return result;
 +}
++
++// Aerium: what tab-close clearing deletes. Cookies and DOM storage always,
++// the HTTP cache only when the user asked for it - see kAeriumEphemeralClearCache
++// for why that is off by default. Every type here is in FILTERABLE_DATA_TYPES,
++// which the preserve and delete filters both require: handing an unfilterable
++// type to a filtered removal trips a CHECK in
++// ChromeBrowsingDataRemoverDelegate::RemoveEmbedderData() and takes release
++// builds down with it.
++uint64_t AeriumSiteDataMask(PrefService* prefs) {
++  uint64_t mask = content::BrowsingDataRemover::DATA_TYPE_COOKIES |
++                  content::BrowsingDataRemover::DATA_TYPE_DOM_STORAGE;
++  if (prefs &&
++      prefs->GetBoolean(browsing_data::prefs::kAeriumEphemeralClearCache)) {
++    mask |= content::BrowsingDataRemover::DATA_TYPE_CACHE;
++  }
++  return mask;
++}
 +#endif  // !BUILDFLAG(IS_ANDROID)
 +
  std::set<GURL> GetOpenedUrlsAndOngoingDownloads(Profile* profile) {
@@ -642,7 +674,7 @@ is.
    pref_change_registrar_.Init(profile_->GetPrefs());
    pref_change_registrar_.Add(
        browsing_data::prefs::kBrowsingDataLifetime,
-@@ -407,10 +482,130 @@
+@@ -407,10 +482,129 @@
      default;
  
  void ChromeBrowsingDataLifetimeManager::Shutdown() {
@@ -759,8 +791,7 @@ is.
 +      profile_->GetBrowsingDataRemover();
 +  remover->RemoveWithFilterAndReply(
 +      base::Time::Min(), base::Time::Max(),
-+      content::BrowsingDataRemover::DATA_TYPE_COOKIES |
-+          content::BrowsingDataRemover::DATA_TYPE_DOM_STORAGE,
++      AeriumSiteDataMask(profile_->GetPrefs()),
 +      content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
 +      std::move(filter),
 +      testing_data_remover_observer_

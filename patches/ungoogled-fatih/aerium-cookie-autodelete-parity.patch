@@ -74,9 +74,9 @@ reach it), and none of the three earlier patches or this one exists on
 Android.
 --- a/components/browsing_data/core/pref_names.h
 +++ b/components/browsing_data/core/pref_names.h
-@@ -78,6 +78,45 @@
- inline constexpr char kAeriumEphemeralSites[] =
-     "browser.clear_data.aerium_ephemeral_sites";
+@@ -88,6 +88,45 @@
+ inline constexpr char kAeriumEphemeralClearCache[] =
+     "browser.clear_data.aerium_ephemeral_clear_cache";
  
 +// Aerium: turns the list above inside out. With this on, every site is treated
 +// as ephemeral and kAeriumClearOnExitExcludedSites becomes the keep list -
@@ -358,10 +358,10 @@ Android.
  
 --- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
 +++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
-@@ -616,6 +616,16 @@
-   // write silently and the list looks like it saves but never does.
-   (*s_allowlist)[browsing_data::prefs::kAeriumEphemeralSites] =
+@@ -616,6 +616,23 @@
        settings_api::PrefType::kList;
+   (*s_allowlist)[browsing_data::prefs::kAeriumEphemeralClearCache] =
+       settings_api::PrefType::kBoolean;
 +  // Aerium: the all-sites mode, the greylist and the clearing delay, all of
 +  // them driven from the same settings-ephemeral-sites element. Same reason as
 +  // above - a pref missing from this allowlist is not an error the UI can see,
@@ -372,12 +372,19 @@ Android.
 +      settings_api::PrefType::kList;
 +  (*s_allowlist)[browsing_data::prefs::kAeriumEphemeralDelaySeconds] =
 +      settings_api::PrefType::kNumber;
++  // Aerium: the rules table. A list of dictionaries rather than of strings,
++  // which settingsPrivate treats the same way - PrefType::kList describes the
++  // container and PrefsUtil::SetPref() accepts a LIST whatever its elements
++  // are, which is what lets settings-site-rules write the whole array back on
++  // every edit instead of appending one item at a time.
++  (*s_allowlist)[browsing_data::prefs::kAeriumSiteRules] =
++      settings_api::PrefType::kList;
    (*s_allowlist)[browsing_data::prefs::kDeleteTimePeriod] =
        settings_api::PrefType::kNumber;
  
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
-@@ -2211,6 +2211,24 @@
+@@ -2211,6 +2211,84 @@
      <message name="IDS_SETTINGS_CLEAR_ON_EXIT_SITES_DUPLICATE" desc="Error shown when the website typed into the add-a-site field is already in the list.">
        This site is already on the list
      </message>
@@ -399,12 +406,72 @@ Android.
 +    <message name="IDS_SETTINGS_EPHEMERAL_CLEAR_CACHE_DESC" desc="Description of the setting that adds cached files to what is deleted, warning that pages will load more slowly afterwards.">
 +      Cached images, fonts and scripts are deleted along with the site's cookies and storage. More thorough, but the site downloads them again on your next visit.
 +    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_HEADER" desc="Header for a table of per-website rules saying which list a site is on and which kinds of data survive a cleanup.">
++      Site rules
++    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_DESC" desc="Description of the site rules table, explaining that the first matching rule decides and that a site with no rule follows the settings above.">
++      One rule per site, deciding what happens to its data. The first rule that matches a site is the one that applies, so order matters. A site with no rule follows the settings above.
++    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_NONE" desc="Shown in place of the site rules table when no rules have been added.">
++      No rules added
++    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_ADD_ARIA_LABEL" desc="Accessible label for the button that opens the dialog for adding a site rule.">
++      Add a site rule
++    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_ADD_TITLE" desc="Title of the dialog for adding a site rule.">
++      Add a site rule
++    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_PATTERN_LABEL" desc="Label for the field where the user types the website a rule applies to.">
++      Site
++    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_PLACEHOLDER" desc="Example text shown in the empty field where the user types the website a rule applies to.">
++      example.com
++    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_PATTERN_HELP" desc="Help text under the site field, explaining that a plain address covers subdomains and that a pattern between slashes is a regular expression.">
++      A plain address covers its subdomains, so example.com also matches www.example.com. For anything more exact, write a regular expression between slashes, like /^(www\.)?example\.com$/.
++    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_INVALID" desc="Error shown when the text typed into the site field is neither a website address nor a valid regular expression.">
++      Not a site address or a valid regular expression
++    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_DUPLICATE" desc="Error shown when the site typed into the field already has a rule.">
++      This site already has a rule
++    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_LIST_TYPE" desc="Accessible label for the control choosing which list a site rule belongs to.">
++      List
++    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_LIST_KEEP" desc="Name of the list whose sites are never cleared automatically.">
++      Never delete
++    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_LIST_SESSION" desc="Name of the list whose sites are kept while the browser runs and cleared when it closes.">
++      Keep until I close Aerium
++    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_LIST_RESET" desc="Name of the list whose sites are cleared as soon as their last tab closes.">
++      Reset when its last tab closes
++    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_KEEP_COOKIES" desc="Label for the checkbox keeping a site's cookies when its data is cleared.">
++      Keep cookies
++    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_KEEP_CACHE" desc="Label for the checkbox keeping a site's cached files when its data is cleared.">
++      Keep cache
++    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_KEEP_FILE_SYSTEMS" desc="Label for the checkbox keeping a site's file system storage when its data is cleared.">
++      Keep file system
++    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_KEEP_INDEXED_DB" desc="Label for the checkbox keeping a site's IndexedDB databases when its data is cleared.">
++      Keep IndexedDB
++    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_KEEP_LOCAL_STORAGE" desc="Label for the checkbox keeping a site's local storage when its data is cleared.">
++      Keep local storage
++    </message>
++    <message name="IDS_SETTINGS_SITE_RULES_KEEP_SERVICE_WORKERS" desc="Label for the checkbox keeping a site's service workers when its data is cleared.">
++      Keep service workers
++    </message>
      <message name="IDS_SETTINGS_EPHEMERAL_SITES_HEADER" desc="Header for a list of websites whose cookies and stored data are deleted as soon as the last tab showing that site is closed.">
        Reset these sites when I close their last tab
      </message>
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
-@@ -2434,6 +2434,12 @@
+@@ -2434,6 +2434,33 @@
         IDS_SETTINGS_CLEAR_ON_EXIT_SITES_PLACEHOLDER},
        {"clearOnExitSitesInvalid", IDS_SETTINGS_CLEAR_ON_EXIT_SITES_INVALID},
        {"clearOnExitSitesDuplicate", IDS_SETTINGS_CLEAR_ON_EXIT_SITES_DUPLICATE},
@@ -414,6 +481,27 @@ Android.
 +      {"ephemeralDelayDesc", IDS_SETTINGS_EPHEMERAL_DELAY_DESC},
 +      {"ephemeralClearCacheLabel", IDS_SETTINGS_EPHEMERAL_CLEAR_CACHE_LABEL},
 +      {"ephemeralClearCacheDesc", IDS_SETTINGS_EPHEMERAL_CLEAR_CACHE_DESC},
++      {"siteRulesHeader", IDS_SETTINGS_SITE_RULES_HEADER},
++      {"siteRulesDesc", IDS_SETTINGS_SITE_RULES_DESC},
++      {"siteRulesNone", IDS_SETTINGS_SITE_RULES_NONE},
++      {"siteRulesAddAriaLabel", IDS_SETTINGS_SITE_RULES_ADD_ARIA_LABEL},
++      {"siteRulesAddTitle", IDS_SETTINGS_SITE_RULES_ADD_TITLE},
++      {"siteRulesPatternLabel", IDS_SETTINGS_SITE_RULES_PATTERN_LABEL},
++      {"siteRulesPlaceholder", IDS_SETTINGS_SITE_RULES_PLACEHOLDER},
++      {"siteRulesPatternHelp", IDS_SETTINGS_SITE_RULES_PATTERN_HELP},
++      {"siteRulesInvalid", IDS_SETTINGS_SITE_RULES_INVALID},
++      {"siteRulesDuplicate", IDS_SETTINGS_SITE_RULES_DUPLICATE},
++      {"siteRulesListType", IDS_SETTINGS_SITE_RULES_LIST_TYPE},
++      {"siteRulesListKeep", IDS_SETTINGS_SITE_RULES_LIST_KEEP},
++      {"siteRulesListSession", IDS_SETTINGS_SITE_RULES_LIST_SESSION},
++      {"siteRulesListReset", IDS_SETTINGS_SITE_RULES_LIST_RESET},
++      {"siteRulesKeepCookies", IDS_SETTINGS_SITE_RULES_KEEP_COOKIES},
++      {"siteRulesKeepCache", IDS_SETTINGS_SITE_RULES_KEEP_CACHE},
++      {"siteRulesKeepFileSystems", IDS_SETTINGS_SITE_RULES_KEEP_FILE_SYSTEMS},
++      {"siteRulesKeepIndexedDb", IDS_SETTINGS_SITE_RULES_KEEP_INDEXED_DB},
++      {"siteRulesKeepLocalStorage", IDS_SETTINGS_SITE_RULES_KEEP_LOCAL_STORAGE},
++      {"siteRulesKeepServiceWorkers",
++       IDS_SETTINGS_SITE_RULES_KEEP_SERVICE_WORKERS},
        {"ephemeralSitesHeader", IDS_SETTINGS_EPHEMERAL_SITES_HEADER},
        {"ephemeralSitesDesc", IDS_SETTINGS_EPHEMERAL_SITES_DESC},
        {"ephemeralSitesAddTitle", IDS_SETTINGS_EPHEMERAL_SITES_ADD_TITLE},

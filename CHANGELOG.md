@@ -18,6 +18,20 @@ behind any of this.
   address bar with softer corners, and tabs to match. Small on purpose: enough
   to recognise, not enough to fight your muscle memory.
 
+**Privacy and security**
+
+- The **Never delete data for these sites** list is now reachable when it
+  matters. It was only shown while "Delete browsing data when you close
+  Aerium" was on — but the same list is what spares a site from **Delete site
+  data when its last tab closes**, so anyone using only that second setting
+  had no way to see it, let alone add to it. It now appears whenever either
+  setting is on.
+- The wording around it was misleading too. "Delete site data when its last
+  tab closes" referred to "your keep list", a name that appeared nowhere in
+  the browser; it now points at the list by the name written above it. And
+  the list no longer describes itself as protecting only what you ticked
+  above, since it protects both settings.
+
 **Content blocker**
 
 - The built-in content blocker has been dropped. It never shipped in a working

@@ -386,7 +386,7 @@ Android.
 +      Delete site data when its last tab closes
 +    </message>
 +    <message name="IDS_SETTINGS_EPHEMERAL_ALL_SITES_DESC" desc="Description of the setting that deletes every website's data when its last tab closes. Explains that the keep list is what stops a site being cleared, and that the user will be signed out of anything not on it.">
-+      Applies to every site except those on your keep list. You will be signed out of everything else once its last tab is closed.
++      Applies to every site except the ones under "Never delete data for these sites" above. You will be signed out of everything else once its last tab is closed.
 +    </message>
 +    <message name="IDS_SETTINGS_EPHEMERAL_DELAY_LABEL" desc="Label for a setting controlling how many seconds to wait after a website's last tab closes before deleting its data.">
 +      Wait before deleting
@@ -520,3 +520,43 @@ Android.
    private hasSites_(): boolean {
      return this.sites_.length > 0;
    }
+--- a/chrome/browser/resources/settings/privacy_page/clear_on_exit.html
++++ b/chrome/browser/resources/settings/privacy_page/clear_on_exit.html
+@@ -40,6 +40,16 @@
+         label="$i18n{clearHostedAppData}">
+     </settings-checkbox>
+   </div>
++</cr-collapse>
++<!-- Aerium: the never-delete list is shared with the all-sites toggle below,
++     so it gets a collapse of its own rather than living inside the one the
++     checkboxes are in. There it is invisible whenever delete-on-exit is off -
++     exactly the state someone is in when they switch on clearing at tab close
++     and go looking for the way to spare a site. -->
++<cr-collapse id="clearOnExitSitesCollapse"
++    opened="[[shouldShowKeepList_(
++        prefs.browser.clear_data.aerium_clear_on_exit.value,
++        prefs.browser.clear_data.aerium_ephemeral_all_sites.value)]]">
+   <settings-clear-on-exit-sites id="clearOnExitSites" prefs="{{prefs}}">
+   </settings-clear-on-exit-sites>
+ </cr-collapse>
+--- a/chrome/browser/resources/settings/privacy_page/clear_on_exit.ts
++++ b/chrome/browser/resources/settings/privacy_page/clear_on_exit.ts
+@@ -40,6 +40,18 @@
+   static get template() {
+     return getTemplate();
+   }
++
++  /**
++   * Aerium: whether to show the never-delete list. Two features read it - the
++   * toggle above and the all-sites clearing on tab close - so either one being
++   * on is a reason to show it. Compared against true rather than coerced:
++   * Polymer calls this with undefined before prefs arrive, and `!!` on a value
++   * declared boolean is what no-unnecessary-type-conversion rejects.
++   */
++  private shouldShowKeepList_(
++      clearOnExit: boolean|undefined, allSites: boolean|undefined): boolean {
++    return clearOnExit === true || allSites === true;
++  }
+ }
+ 
+ declare global {

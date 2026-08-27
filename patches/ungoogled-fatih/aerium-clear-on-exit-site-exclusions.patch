@@ -125,8 +125,8 @@ and hosted app data are still off.
 +    <message name="IDS_SETTINGS_CLEAR_ON_EXIT_SITES_HEADER" desc="Header for a list of websites whose data is never deleted when the browser closes. Everything not on the list is deleted.">
 +      Never delete data for these sites
 +    </message>
-+    <message name="IDS_SETTINGS_CLEAR_ON_EXIT_SITES_DESC" desc="Description of the list of websites whose data is never deleted when the browser closes. It explains that subdomains are covered too, and which of the categories above the list cannot protect.">
-+      Everything else you selected above gets deleted. Adding a site covers its subdomains too. Browsing history, autofill form data, passwords and site settings can only be deleted for every site at once, so this list does not keep those.
++    <message name="IDS_SETTINGS_CLEAR_ON_EXIT_SITES_DESC" desc="Description of the list of websites whose data is never deleted automatically. It explains that subdomains are covered too, and which categories the list cannot protect.">
++      Nothing on this list is deleted automatically - not when you close the browser, and not when a site's last tab closes. Adding a site covers its subdomains too. Browsing history, autofill form data, passwords and site settings can only be deleted for every site at once, so this list does not keep those.
 +    </message>
 +    <message name="IDS_SETTINGS_CLEAR_ON_EXIT_SITES_ADD_TITLE" desc="Title of the dialog for adding a website to the list of sites whose data is never deleted when the browser closes.">
 +      Add a site to keep

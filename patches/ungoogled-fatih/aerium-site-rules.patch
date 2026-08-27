@@ -144,7 +144,7 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
 +#endif  // CHROME_BROWSER_BROWSING_DATA_AERIUM_SITE_RULES_H_
 --- /dev/null
 +++ b/chrome/browser/browsing_data/aerium_site_rules.cc
-@@ -0,0 +1,249 @@
+@@ -0,0 +1,251 @@
 +// Copyright 2026 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -155,6 +155,8 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
 +#include <utility>
 +
 +#include "base/strings/string_util.h"
++// base::DictValue, not base::Value::Dict: Chromium 151 promoted the nested
++// containers to top-level classes and deleted the aliases outright.
 +#include "base/values.h"
 +#include "components/browsing_data/core/pref_names.h"
 +#include "components/prefs/pref_service.h"
@@ -282,7 +284,7 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
 +  }
 +  for (const base::Value& entry :
 +       prefs->GetList(browsing_data::prefs::kAeriumSiteRules)) {
-+    const base::Value::Dict* dict = entry.GetIfDict();
++    const base::DictValue* dict = entry.GetIfDict();
 +    if (!dict) {
 +      continue;
 +    }
@@ -314,7 +316,7 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
 +        continue;
 +      }
 +    }
-+    if (const base::Value::Dict* keep = dict->FindDict(kKeepKey)) {
++    if (const base::DictValue* keep = dict->FindDict(kKeepKey)) {
 +      for (const TypeEntry& type : kTypes) {
 +        if (keep->FindBool(type.key).value_or(false)) {
 +          rule.keep_mask |= type.type;
@@ -378,11 +380,11 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
 +        if (!entry.is_string() || entry.GetString().empty()) {
 +          continue;
 +        }
-+        base::Value::Dict keep;
++        base::DictValue keep;
 +        for (const TypeEntry& type : kTypes) {
 +          keep.Set(type.key, source.keep_everything && (all & type.type) != 0);
 +        }
-+        base::Value::Dict rule;
++        base::DictValue rule;
 +        rule.Set(kPatternKey, entry.GetString());
 +        rule.Set(kListKey, source.list);
 +        rule.Set(kKeepKey, std::move(keep));
@@ -1417,10 +1419,62 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
  #include "chrome/browser/browsing_data/chrome_browsing_data_remover_constants.h"
  #include "chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.h"
  #include "chrome/browser/lifetime/browser_shutdown.h"
-@@ -338,6 +341,31 @@
+@@ -338,66 +341,29 @@
  // open. Folded to eTLD+1 because the deletion filter is built with
  // AddRegisterableDomain(), which DCHECKs on anything that is not an eTLD+1, an
  // IP literal or a single-label host.
+-std::set<std::string> AeriumOpenRegistrableDomains(Profile* profile) {
+-  std::set<std::string> result;
+-  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
+-      [profile, &result](BrowserWindowInterface* browser) {
+-        if (browser->GetProfile() != profile) {
+-          return true;
+-        }
+-        TabStripModel* const tab_strip_model = browser->GetTabStripModel();
+-        for (int i = 0; i < tab_strip_model->count(); ++i) {
+-          content::WebContents* const contents =
+-              tab_strip_model->GetWebContentsAt(i);
+-          if (!contents) {
+-            continue;
+-          }
+-          const GURL url = contents->GetLastCommittedURL();
+-          if (!url.SchemeIsHTTPOrHTTPS()) {
+-            continue;
+-          }
+-          std::string domain = GetDomainAndRegistry(
+-              url, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
+-          if (domain.empty()) {
+-            domain = url.GetHost();  // IP address or internal hostname.
+-          }
+-          if (!domain.empty()) {
+-            result.insert(std::move(domain));
+-          }
+-        }
+-        return true;
+-      });
+-  return result;
+-}
+-
+-// Aerium: the registrable domains held in one of the site-list prefs,
+-// normalised the same way so comparisons against the open set above are like
+-// for like. Takes the pref name because four lists now share this shape -
+-// ephemeral, the keep list, the greylist, and the on-exit exclusions - and
+-// they must agree on what counts as one site or a domain could end up both
+-// kept and deleted.
+-std::set<std::string> AeriumDomainsFromPref(PrefService* prefs,
+-                                            std::string_view pref_name) {
+-  std::set<std::string> result;
+-  if (!prefs) {
+-    return result;
+-  }
+-  for (const auto& entry : prefs->GetList(std::string(pref_name))) {
+-    if (!entry.is_string()) {
+-      continue;
+-    }
+-    const std::string& host = entry.GetString();
+-    if (host.empty()) {
+-      continue;
+-    }
 +// Aerium: adds hosts to a filter as registrable domains, returning false when
 +// nothing could be added. Domains rather than origins because that is how
 +// cookies are scoped - a cookie set on ".example.com" is not reached by an
@@ -1432,24 +1486,24 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
 +                            content::BrowsingDataFilterBuilder* filter) {
 +  bool any = false;
 +  for (const std::string& host : hosts) {
-+    std::string domain = net::registry_controlled_domains::GetDomainAndRegistry(
-+        host, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
-+    if (domain.empty()) {
-+      domain = host;  // IP address or internal hostname.
-+    }
+     std::string domain = net::registry_controlled_domains::GetDomainAndRegistry(
+         host, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
+     if (domain.empty()) {
+       domain = host;  // IP address or internal hostname.
+     }
+-    result.insert(std::move(domain));
 +    if (domain.empty()) {
 +      continue;
 +    }
 +    filter->AddRegisterableDomain(domain);
 +    any = true;
-+  }
+   }
+-  return result;
 +  return any;
-+}
-+
- std::set<std::string> AeriumOpenRegistrableDomains(Profile* profile) {
-   std::set<std::string> result;
-   ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
-@@ -457,6 +485,27 @@
+ }
+ 
+ // Aerium: what tab-close clearing deletes. Cookies and DOM storage always,
+@@ -457,6 +423,27 @@
    return result;
  }
  
@@ -1477,7 +1531,7 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
  // Returns the sync types that might be reuired to be disabled for the browsing
  // data types specified in the policy value.
  syncer::UserSelectableTypeSet GetSyncTypesForPolicyPref(
-@@ -495,6 +544,10 @@
+@@ -495,6 +482,10 @@
    // Order matters: take the windows that already exist first, then subscribe
    // for later ones. The collection does not replay creations to a new observer,
    // so doing it the other way round would miss any window opened in between.
@@ -1488,7 +1542,7 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
    AeriumObserveExistingBrowsers();
    aerium_browser_collection_observation_.Observe(
        GlobalBrowserCollection::GetInstance());
-@@ -572,6 +625,19 @@
+@@ -572,6 +563,19 @@
    AeriumScheduleEphemeralClear();
  }
  
@@ -1508,7 +1562,7 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
  void ChromeBrowsingDataLifetimeManager::OnTabStripModelDestroyed(
      TabStripModel* tab_strip_model) {
    aerium_observed_models_.erase(tab_strip_model);
-@@ -581,6 +647,11 @@
+@@ -581,6 +585,11 @@
      TabStripModel* tab_strip_model,
      const TabStripModelChange& change,
      const TabStripSelectionChange& selection) {
@@ -1520,7 +1574,7 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
    if (change.type() != TabStripModelChange::kRemoved) {
      return;
    }
-@@ -621,15 +692,28 @@
+@@ -621,15 +630,28 @@
    // that toggle's filter. "Keep this until I quit" is a statement about one
    // site; it should not require asking for a general clean-out, and it should
    // not be cancelled by turning that clean-out off.
@@ -1554,7 +1608,7 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
    }
    content::BrowsingDataRemover* const remover =
        profile_->GetBrowsingDataRemover();
-@@ -647,79 +731,79 @@
+@@ -647,79 +669,79 @@
  
  void ChromeBrowsingDataLifetimeManager::AeriumClearClosedEphemeralSites() {
    PrefService* const prefs = profile_->GetPrefs();

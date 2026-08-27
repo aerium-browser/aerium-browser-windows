@@ -1,0 +1,1336 @@
+Replace the three site lists with one Cookie AutoDelete-style rules table.
+
+Three prefs each held one list of bare hostnames - never delete, keep until I
+quit, reset on tab close. They are the same statement with a different answer,
+and holding them apart cost three things: a site could sit in two lists saying
+contradictory things, the greylist had no Settings UI at all because nobody had
+written a third copy of the same 260-line element, and no list could say which
+KINDS of data it meant.
+
+One pref now holds rules: an expression, a list type, and six keep flags. The
+table is the one in Cookie AutoDelete's screenshots - domain expression,
+per-type Keep checkboxes, list type per row.
+
+Expressions
+-----------
+A pattern written as /.../ is a regular expression, the spelling Cookie
+AutoDelete uses. Anything else is a host expression matching that host and
+anything under it, so example.com covers www.example.com.
+
+Host matching is by suffix rather than by folding both sides to their
+registrable domain, which is what the old lists did. eTLD+1 folding turned
+mail.example.com into example.com and silently widened a rule to the whole
+site; a rule naming one subdomain has to be able to mean that subdomain. The
+suffix test requires a dot boundary, so example.com does not match
+example.com.evil.net.
+
+Regular expressions are matched with RE2, not std::regex, and //third_party/re2
+is already a dep of //chrome/browser. A pattern that does not compile is
+dropped on read: the Settings page refuses to store one, so that path only
+catches a hand-edited Preferences file, and a rule that matches nothing is
+better than one that throws.
+
+Migration
+---------
+The three old lists are folded in once, guarded by a boolean. Keep and session
+entries keep everything, reset entries keep nothing, which is exactly what
+those lists meant - so an upgraded profile behaves on its first launch as it
+did on its last.
+
+What is verified and what is not
+--------------------------------
+The matcher's semantics were checked case by case before being written, and
+site_rules.ts type-checks clean under strict with stubs standing in for the
+chrome:// modules. Neither is a build: there is no C++ compiler here.
+--- /dev/null
++++ b/chrome/browser/browsing_data/aerium_site_rules.h
+@@ -0,0 +1,97 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_BROWSING_DATA_AERIUM_SITE_RULES_H_
++#define CHROME_BROWSER_BROWSING_DATA_AERIUM_SITE_RULES_H_
++
++#include <memory>
++#include <string>
++#include <vector>
++
++#include "content/public/browser/browsing_data_remover.h"
++
++class PrefService;
++class PrefRegistrySimple;
++
++namespace re2 {
++class RE2;
++}
++
++namespace aerium_site_rules {
++
++// Aerium: one row of the site rules table.
++//
++// Cookie AutoDelete's model, which is what people coming to this feature
++// expect: a list of expressions, each saying which list a site belongs to and
++// which kinds of data survive a cleanup. Three earlier prefs each held one
++// list of bare hostnames; this replaces all three, because "keep this site",
++// "keep it until I quit" and "reset it on tab close" are the same statement
++// with a different answer, and holding them apart meant a site could sit in
++// two of them saying contradictory things.
++enum class ListType {
++  // Never cleared automatically.
++  kKeep,
++  // Kept while the browser runs, cleared at shutdown. Cookie AutoDelete calls
++  // this the greylist.
++  kSession,
++  // Cleared as soon as the site's last tab closes.
++  kReset,
++};
++
++struct Rule {
++  Rule();
++  Rule(const Rule&) = delete;
++  Rule& operator=(const Rule&) = delete;
++  Rule(Rule&&);
++  Rule& operator=(Rule&&);
++  ~Rule();
++
++  // As the user typed it, so the UI can show it back unchanged.
++  std::string pattern;
++
++  // Compiled form of `pattern` when it was written as /.../, null otherwise.
++  // Held rather than recompiled per host: a rule is tested once per closing
++  // tab, but the rule set is parsed once per test.
++  std::unique_ptr<re2::RE2> regex;
++
++  // Lower-cased host expression when `regex` is null. Matches the host itself
++  // and anything under it, so "example.com" covers "www.example.com" - which
++  // is what people mean by a site, and what the *.example.com in Cookie
++  // AutoDelete's own examples means.
++  std::string host_suffix;
++
++  ListType list = ListType::kReset;
++
++  // Data types this rule keeps. A cleanup deletes what is NOT listed here.
++  // Meaningful on every list type: on kKeep and kSession they say what
++  // survives, on kReset they say what a reset spares.
++  uint64_t keep_mask = 0;
++};
++
++// Parses the rules pref. Entries that are not dictionaries, carry an empty
++// pattern, or name an unknown list are dropped rather than defaulted: a
++// malformed rule that quietly became "keep everything" would be a data leak
++// and one that became "reset everything" would be data loss, and the pref is
++// reachable through settingsPrivate and by hand-editing Preferences.
++std::vector<Rule> ReadRules(PrefService* prefs);
++
++// The first rule matching `host`, or nullptr. First rather than most
++// specific, so the order shown in Settings is the order that decides - the
++// user can see why a site behaved the way it did by reading down the list.
++const Rule* FindRule(const std::vector<Rule>& rules, const std::string& host);
++
++// True when any rule is a regular expression. Callers that can only build an
++// explicit origin filter use this to decide whether they must enumerate the
++// origins holding data before they can honour the rules.
++bool HasRegexRule(const std::vector<Rule>& rules);
++
++// Folds the three original list prefs into the rules pref, once. Runs before
++// any rule is read, so an upgraded profile behaves on its first launch exactly
++// as it did on its last: keep and session entries keep everything, reset
++// entries keep nothing, which is what those three lists meant.
++void MigrateLegacyLists(PrefService* prefs);
++
++}  // namespace aerium_site_rules
++
++#endif  // CHROME_BROWSER_BROWSING_DATA_AERIUM_SITE_RULES_H_
+--- /dev/null
++++ b/chrome/browser/browsing_data/aerium_site_rules.cc
+@@ -0,0 +1,243 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/browsing_data/aerium_site_rules.h"
++
++#include <string_view>
++#include <utility>
++
++#include "base/strings/string_util.h"
++#include "base/values.h"
++#include "components/browsing_data/core/pref_names.h"
++#include "components/prefs/pref_service.h"
++#include "components/prefs/scoped_user_pref_update.h"
++#include "third_party/re2/src/re2/re2.h"
++
++namespace aerium_site_rules {
++
++namespace {
++
++// Keys in the stored dictionary. Short and stable: this pref is written by
++// the Settings page and read here, and renaming one silently drops the rule.
++constexpr char kPatternKey[] = "pattern";
++constexpr char kListKey[] = "list";
++constexpr char kKeepKey[] = "keep";
++
++constexpr char kListKeep[] = "keep";
++constexpr char kListSession[] = "session";
++constexpr char kListReset[] = "reset";
++
++// The data types a rule can name, in the order the Settings table shows them.
++// Every one is in chrome_browsing_data_remover::FILTERABLE_DATA_TYPES, which
++// is not a detail: handing an unfilterable type to a filtered removal trips a
++// CHECK in ChromeBrowsingDataRemoverDelegate::RemoveEmbedderData() and takes
++// release builds down with it.
++struct TypeEntry {
++  const char* key;
++  uint64_t type;
++};
++
++constexpr TypeEntry kTypes[] = {
++    {"cookies", content::BrowsingDataRemover::DATA_TYPE_COOKIES},
++    {"cache", content::BrowsingDataRemover::DATA_TYPE_CACHE},
++    {"filesystems", content::BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS},
++    {"indexeddb", content::BrowsingDataRemover::DATA_TYPE_INDEXED_DB},
++    {"localstorage", content::BrowsingDataRemover::DATA_TYPE_LOCAL_STORAGE},
++    {"serviceworkers", content::BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS},
++};
++
++// Everything a rule is allowed to keep, which is what the three legacy keep
++// lists meant when they held a bare hostname.
++uint64_t AllTypes() {
++  uint64_t mask = 0;
++  for (const TypeEntry& entry : kTypes) {
++    mask |= entry.type;
++  }
++  return mask;
++}
++
++// A pattern written as /.../ is a regular expression, the same spelling
++// Cookie AutoDelete uses. Anything else is a host expression.
++bool IsRegexPattern(std::string_view pattern) {
++  return pattern.size() >= 2 && pattern.front() == '/' && pattern.back() == '/';
++}
++
++// Strips the sugar people paste in - a leading "*." or "[*.]", a scheme, a
++// trailing slash - and lower-cases what is left. The result is compared
++// against a host, so it has to be a host.
++std::string NormalizeHostExpression(std::string_view pattern) {
++  std::string host = base::ToLowerASCII(base::TrimWhitespaceASCII(
++      pattern, base::TRIM_ALL));
++  if (base::StartsWith(host, "[*.]")) {
++    host = host.substr(4);
++  } else if (base::StartsWith(host, "*.")) {
++    host = host.substr(2);
++  }
++  const size_t scheme_end = host.find("://");
++  if (scheme_end != std::string::npos) {
++    host = host.substr(scheme_end + 3);
++  }
++  const size_t slash = host.find('/');
++  if (slash != std::string::npos) {
++    host = host.substr(0, slash);
++  }
++  while (!host.empty() && host.back() == '.') {
++    host.pop_back();
++  }
++  return host;
++}
++
++bool ParseListType(const std::string* value, ListType* out) {
++  if (!value) {
++    return false;
++  }
++  if (*value == kListKeep) {
++    *out = ListType::kKeep;
++  } else if (*value == kListSession) {
++    *out = ListType::kSession;
++  } else if (*value == kListReset) {
++    *out = ListType::kReset;
++  } else {
++    return false;
++  }
++  return true;
++}
++
++// Host expressions match the host itself and anything under it. Done by
++// suffix rather than by folding both sides to their registrable domain,
++// because a rule naming one subdomain has to be able to mean that subdomain -
++// eTLD+1 folding turned "mail.example.com" into "example.com" and quietly
++// widened the rule to cover the whole site.
++bool HostMatchesSuffix(const std::string& host, const std::string& suffix) {
++  if (suffix.empty()) {
++    return false;
++  }
++  if (host == suffix) {
++    return true;
++  }
++  return host.size() > suffix.size() &&
++         base::EndsWith(host, suffix) &&
++         host[host.size() - suffix.size() - 1] == '.';
++}
++
++}  // namespace
++
++Rule::Rule() = default;
++Rule::Rule(Rule&&) = default;
++Rule& Rule::operator=(Rule&&) = default;
++Rule::~Rule() = default;
++
++std::vector<Rule> ReadRules(PrefService* prefs) {
++  std::vector<Rule> rules;
++  if (!prefs) {
++    return rules;
++  }
++  for (const base::Value& entry :
++       prefs->GetList(browsing_data::prefs::kAeriumSiteRules)) {
++    const base::Value::Dict* dict = entry.GetIfDict();
++    if (!dict) {
++      continue;
++    }
++    const std::string* pattern = dict->FindString(kPatternKey);
++    if (!pattern || pattern->empty()) {
++      continue;
++    }
++    Rule rule;
++    if (!ParseListType(dict->FindString(kListKey), &rule.list)) {
++      continue;
++    }
++    rule.pattern = *pattern;
++    if (IsRegexPattern(*pattern)) {
++      const std::string body = pattern->substr(1, pattern->size() - 2);
++      RE2::Options options;
++      options.set_log_errors(false);
++      options.set_case_sensitive(false);
++      auto compiled = std::make_unique<RE2>(body, options);
++      if (!compiled->ok()) {
++        // A pattern that does not compile matches nothing, so dropping it is
++        // the same behaviour with less to go wrong. The Settings page refuses
++        // to store one, so this only catches a hand-edited Preferences file.
++        continue;
++      }
++      rule.regex = std::move(compiled);
++    } else {
++      rule.host_suffix = NormalizeHostExpression(*pattern);
++      if (rule.host_suffix.empty()) {
++        continue;
++      }
++    }
++    if (const base::Value::Dict* keep = dict->FindDict(kKeepKey)) {
++      for (const TypeEntry& type : kTypes) {
++        if (keep->FindBool(type.key).value_or(false)) {
++          rule.keep_mask |= type.type;
++        }
++      }
++    }
++    rules.push_back(std::move(rule));
++  }
++  return rules;
++}
++
++const Rule* FindRule(const std::vector<Rule>& rules, const std::string& host) {
++  if (host.empty()) {
++    return nullptr;
++  }
++  const std::string lowered = base::ToLowerASCII(host);
++  for (const Rule& rule : rules) {
++    if (rule.regex) {
++      if (RE2::PartialMatch(lowered, *rule.regex)) {
++        return &rule;
++      }
++    } else if (HostMatchesSuffix(lowered, rule.host_suffix)) {
++      return &rule;
++    }
++  }
++  return nullptr;
++}
++
++bool HasRegexRule(const std::vector<Rule>& rules) {
++  for (const Rule& rule : rules) {
++    if (rule.regex) {
++      return true;
++    }
++  }
++  return false;
++}
++
++void MigrateLegacyLists(PrefService* prefs) {
++  if (!prefs ||
++      prefs->GetBoolean(browsing_data::prefs::kAeriumSiteRulesMigrated)) {
++    return;
++  }
++  ScopedListPrefUpdate update(prefs, browsing_data::prefs::kAeriumSiteRules);
++  const uint64_t all = AllTypes();
++  const struct {
++    const char* pref;
++    const char* list;
++    bool keep_everything;
++  } sources[] = {
++      {browsing_data::prefs::kAeriumClearOnExitExcludedSites, kListKeep, true},
++      {browsing_data::prefs::kAeriumSessionOnlySites, kListSession, true},
++      {browsing_data::prefs::kAeriumEphemeralSites, kListReset, false},
++  };
++  for (const auto& source : sources) {
++    for (const base::Value& entry : prefs->GetList(source.pref)) {
++      if (!entry.is_string() || entry.GetString().empty()) {
++        continue;
++      }
++      base::Value::Dict keep;
++      for (const TypeEntry& type : kTypes) {
++        keep.Set(type.key, source.keep_everything && (all & type.type) != 0);
++      }
++      base::Value::Dict rule;
++      rule.Set(kPatternKey, entry.GetString());
++      rule.Set(kListKey, source.list);
++      rule.Set(kKeepKey, std::move(keep));
++      update->Append(std::move(rule));
++    }
++  }
++  prefs->SetBoolean(browsing_data::prefs::kAeriumSiteRulesMigrated, true);
++}
++
++}  // namespace aerium_site_rules
+--- /dev/null
++++ b/chrome/browser/resources/settings/privacy_page/site_rules.html
+@@ -0,0 +1,112 @@
++<style include="cr-shared-style cr-icons settings-shared md-select">
++  .list-frame {
++    padding-inline-start: var(--cr-section-indent-width);
++  }
++
++  #rules > .rule-row:not(:first-of-type) {
++    border-top: var(--cr-separator-line);
++  }
++
++  .rule-row {
++    align-items: flex-start;
++    display: flex;
++    gap: 16px;
++    padding: 12px 0;
++  }
++
++  .rule-pattern {
++    flex: 1 1 40%;
++    min-width: 0;
++    overflow-wrap: anywhere;
++  }
++
++  .rule-keep {
++    display: flex;
++    flex: 1 1 40%;
++    flex-direction: column;
++    gap: 8px;
++  }
++
++  .rule-list-type {
++    flex: 0 0 auto;
++  }
++
++  .rule-remove {
++    flex: 0 0 auto;
++  }
++
++  .cr-padded-text {
++    flex: 1;
++  }
++</style>
++<div class="cr-row first">
++  <div class="cr-padded-text">
++    $i18n{siteRulesHeader}
++    <div class="secondary">$i18n{siteRulesDesc}</div>
++  </div>
++  <cr-button id="addButton" on-click="onAddClick_"
++      aria-label="$i18n{siteRulesAddAriaLabel}">
++    $i18n{add}
++  </cr-button>
++</div>
++<div id="noRules" class="list-frame" hidden$="[[hasRules_(rules_.*)]]">
++  <div class="list-item secondary">$i18n{siteRulesNone}</div>
++</div>
++<div id="rules" class="list-frame" role="list"
++    hidden$="[[!hasRules_(rules_.*)]]">
++  <template is="dom-repeat" items="[[rules_]]">
++    <div class="rule-row" role="listitem">
++      <div class="rule-pattern text-elide">[[item.pattern]]</div>
++      <div class="rule-keep">
++        <template is="dom-repeat" items="[[item.keep]]" as="type"
++            index-as="typeIndex">
++          <cr-checkbox checked="[[type.checked]]"
++              data-rule$="[[index]]" data-type$="[[type.key]]"
++              on-change="onKeepChanged_">
++            [[type.label]]
++          </cr-checkbox>
++        </template>
++      </div>
++      <div class="rule-list-type">
++        <select class="md-select" data-rule$="[[index]]"
++            value="[[item.list]]" on-change="onListChanged_"
++            aria-label="$i18n{siteRulesListType}">
++          <option value="keep">$i18n{siteRulesListKeep}</option>
++          <option value="session">$i18n{siteRulesListSession}</option>
++          <option value="reset">$i18n{siteRulesListReset}</option>
++        </select>
++      </div>
++      <cr-icon-button class="icon-clear rule-remove" data-rule$="[[index]]"
++          on-click="onRemoveClick_" title="$i18n{remove}"
++          aria-label="$i18n{remove}">
++      </cr-icon-button>
++    </div>
++  </template>
++</div>
++<cr-dialog id="addDialog" close-text="$i18n{close}">
++  <div slot="title">$i18n{siteRulesAddTitle}</div>
++  <div slot="body">
++    <cr-input id="patternInput" label="$i18n{siteRulesPatternLabel}"
++        placeholder="$i18n{siteRulesPlaceholder}"
++        value="{{newPattern_}}" on-input="validate_"
++        invalid="[[inputInvalid_]]" error-message="[[errorMessage_]]"
++        spellcheck="false" autofocus>
++    </cr-input>
++    <div class="secondary">$i18n{siteRulesPatternHelp}</div>
++    <select id="newListSelect" class="md-select" value="{{newList_::change}}"
++        aria-label="$i18n{siteRulesListType}">
++      <option value="keep">$i18n{siteRulesListKeep}</option>
++      <option value="session">$i18n{siteRulesListSession}</option>
++      <option value="reset">$i18n{siteRulesListReset}</option>
++    </select>
++  </div>
++  <div slot="button-container">
++    <cr-button class="cancel-button" on-click="onCancelClick_">
++      $i18n{cancel}
++    </cr-button>
++    <cr-button id="addRuleButton" class="action-button" on-click="onSubmit_"
++        disabled="[[addDisabled_]]">
++      $i18n{add}
++    </cr-button>
++  </div>
++</cr-dialog>
+--- /dev/null
++++ b/chrome/browser/resources/settings/privacy_page/site_rules.ts
+@@ -0,0 +1,389 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++/**
++ * @fileoverview
++ * 'settings-site-rules' is the site rules table: one row per expression,
++ * saying which list the site is on and which kinds of data survive a cleanup.
++ *
++ * It replaces three separate lists - never delete, keep until I quit, reset on
++ * tab close - which were the same statement with a different answer and were
++ * held apart only because each arrived in its own patch. Holding them apart
++ * let a site sit in two of them saying contradictory things, and it meant the
++ * greylist had no UI at all because nobody had written a third copy of the
++ * same element.
++ *
++ * Storage is one list pref of dictionaries. settingsPrivate exposes list prefs
++ * as PrefType.LIST and PrefsUtil::SetPref() accepts a LIST, so the whole array
++ * is written back on every edit rather than appended to: PrefsMixin offers
++ * appendPrefListItem()/deletePrefListItem() but nothing that updates an item
++ * in place, and toggling a checkbox is an update.
++ */
++import 'chrome://resources/cr_elements/cr_button/cr_button.js';
++import 'chrome://resources/cr_elements/cr_checkbox/cr_checkbox.js';
++import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
++import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
++import 'chrome://resources/cr_elements/cr_input/cr_input.js';
++import 'chrome://resources/cr_elements/cr_shared_style.css.js';
++import 'chrome://resources/cr_elements/icons.html.js';
++import 'chrome://resources/cr_elements/md_select.css.js';
++import '../settings_shared.css.js';
++
++import type {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
++import type {CrCheckboxElement} from 'chrome://resources/cr_elements/cr_checkbox/cr_checkbox.js';
++import type {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
++import type {CrInputElement} from 'chrome://resources/cr_elements/cr_input/cr_input.js';
++import type {PrefsMixinInterface} from '/shared/settings/prefs/prefs_mixin.js';
++import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
++import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
++
++import {loadTimeData} from '../i18n_setup.js';
++
++import {getTemplate} from './site_rules.html.js';
++
++export const SITE_RULES_PREF: string = 'browser.clear_data.aerium_site_rules';
++
++/**
++ * The data types a rule can keep, in the order the table shows them. The keys
++ * are the ones aerium_site_rules.cc reads; renaming one here drops the flag
++ * silently on the browser side, which is why they are written out once and
++ * used for both storage and rendering.
++ */
++const KEEP_TYPES: Array<{key: string, stringName: string}> = [
++  {key: 'cookies', stringName: 'siteRulesKeepCookies'},
++  {key: 'cache', stringName: 'siteRulesKeepCache'},
++  {key: 'filesystems', stringName: 'siteRulesKeepFileSystems'},
++  {key: 'indexeddb', stringName: 'siteRulesKeepIndexedDb'},
++  {key: 'localstorage', stringName: 'siteRulesKeepLocalStorage'},
++  {key: 'serviceworkers', stringName: 'siteRulesKeepServiceWorkers'},
++];
++
++const LIST_TYPES: string[] = ['keep', 'session', 'reset'];
++
++/** One rule as it is stored in the pref. */
++interface StoredRule {
++  pattern: string;
++  list: string;
++  keep: {[key: string]: boolean};
++}
++
++/** One checkbox in a row. */
++interface KeepView {
++  key: string;
++  label: string;
++  checked: boolean;
++}
++
++/** One row as the template renders it. */
++interface RuleView {
++  pattern: string;
++  list: string;
++  keep: KeepView[];
++}
++
++export interface SiteRulesElement {
++  $: {
++    addButton: CrButtonElement,
++    addDialog: CrDialogElement,
++    addRuleButton: CrButtonElement,
++    patternInput: CrInputElement,
++  };
++}
++
++type Constructor<T> = new (...args: any[]) => T;
++const SiteRulesElementBase = PrefsMixin(PolymerElement) as
++    Constructor<PrefsMixinInterface&PolymerElement>;
++
++export class SiteRulesElement extends SiteRulesElementBase {
++  static get is() {
++    return 'settings-site-rules';
++  }
++
++  static get template() {
++    return getTemplate();
++  }
++
++  static get properties() {
++    return {
++      rules_: {
++        type: Array,
++        value: () => [],
++      },
++
++      newPattern_: {
++        type: String,
++        value: '',
++      },
++
++      newList_: {
++        type: String,
++        value: 'keep',
++      },
++
++      addDisabled_: {
++        type: Boolean,
++        value: true,
++      },
++
++      inputInvalid_: {
++        type: Boolean,
++        value: false,
++      },
++
++      errorMessage_: {
++        type: String,
++        value: '',
++      },
++    };
++  }
++
++  static get observers() {
++    return [`onPrefChanged_(prefs.${SITE_RULES_PREF}.value.*)`];
++  }
++
++  declare private rules_: RuleView[];
++  declare private newPattern_: string;
++  declare private newList_: string;
++  declare private addDisabled_: boolean;
++  declare private inputInvalid_: boolean;
++  declare private errorMessage_: string;
++
++  /**
++   * Reads the pref into the shape the template renders. Anything malformed is
++   * skipped rather than defaulted: a rule that quietly became "keep
++   * everything" would be a data leak and one that became "keep nothing" would
++   * be data loss, and this pref is reachable by hand-editing Preferences.
++   */
++  private onPrefChanged_() {
++    const stored = this.getPref<StoredRule[]>(SITE_RULES_PREF).value;
++    const views: RuleView[] = [];
++    for (const rule of stored) {
++      if (!rule || typeof rule.pattern !== 'string' || rule.pattern === '') {
++        continue;
++      }
++      if (!LIST_TYPES.includes(rule.list)) {
++        continue;
++      }
++      const keepFlags = rule.keep || {};
++      views.push({
++        pattern: rule.pattern,
++        list: rule.list,
++        keep: KEEP_TYPES.map(type => ({
++                               key: type.key,
++                               label: loadTimeData.getString(type.stringName),
++                               checked: keepFlags[type.key] === true,
++                             })),
++      });
++    }
++    this.rules_ = views;
++  }
++
++  private hasRules_(): boolean {
++    return this.rules_.length > 0;
++  }
++
++  /** Turns the rendered rows back into what the pref stores. */
++  private writeRules_(views: RuleView[]) {
++    const stored: StoredRule[] = views.map(view => {
++      const keep: {[key: string]: boolean} = {};
++      for (const type of view.keep) {
++        keep[type.key] = type.checked;
++      }
++      return {pattern: view.pattern, list: view.list, keep};
++    });
++    this.setPrefValue(SITE_RULES_PREF, stored);
++  }
++
++  /** The row a control belongs to, or -1 if the dataset is missing. */
++  private ruleIndex_(e: Event): number {
++    const raw = (e.currentTarget as HTMLElement).dataset['rule'];
++    if (raw === undefined) {
++      return -1;
++    }
++    const index = Number.parseInt(raw, 10);
++    if (!Number.isInteger(index) || index < 0 ||
++        index >= this.rules_.length) {
++      return -1;
++    }
++    return index;
++  }
++
++  private onKeepChanged_(e: Event) {
++    const index = this.ruleIndex_(e);
++    const key = (e.currentTarget as HTMLElement).dataset['type'];
++    if (index === -1 || key === undefined) {
++      return;
++    }
++    const checked = (e.currentTarget as CrCheckboxElement).checked;
++    const views = this.rules_.map(
++        view => ({
++          pattern: view.pattern,
++          list: view.list,
++          keep: view.keep.map(type => ({...type})),
++        }));
++    const row = views[index];
++    if (row === undefined) {
++      return;
++    }
++    for (const type of row.keep) {
++      if (type.key === key) {
++        type.checked = checked;
++      }
++    }
++    this.writeRules_(views);
++  }
++
++  private onListChanged_(e: Event) {
++    const index = this.ruleIndex_(e);
++    if (index === -1) {
++      return;
++    }
++    const value = (e.currentTarget as HTMLSelectElement).value;
++    if (!LIST_TYPES.includes(value)) {
++      return;
++    }
++    const views = this.rules_.map(
++        view => ({
++          pattern: view.pattern,
++          list: view.list,
++          keep: view.keep.map(type => ({...type})),
++        }));
++    const row = views[index];
++    if (row === undefined) {
++      return;
++    }
++    row.list = value;
++    this.writeRules_(views);
++  }
++
++  private onRemoveClick_(e: Event) {
++    const index = this.ruleIndex_(e);
++    if (index === -1) {
++      return;
++    }
++    const views = this.rules_.slice();
++    views.splice(index, 1);
++    this.writeRules_(views);
++  }
++
++  /**
++   * A pattern written as /.../ is a regular expression, the spelling Cookie
++   * AutoDelete uses; anything else is a host expression. Returns the pattern
++   * to store, or null if it cannot be one. Validated with the browser's own
++   * RegExp so that what Settings accepts is what RE2 will be handed - the two
++   * are not the same dialect, but a pattern RegExp rejects is certainly not
++   * one RE2 will like either.
++   */
++  private normalizePattern_(input: string): string|null {
++    const trimmed = input.trim();
++    if (trimmed === '') {
++      return null;
++    }
++    if (trimmed.length >= 2 && trimmed.startsWith('/') &&
++        trimmed.endsWith('/')) {
++      const body = trimmed.substring(1, trimmed.length - 1);
++      if (body === '') {
++        return null;
++      }
++      try {
++        new RegExp(body);
++      } catch (e) {
++        return null;
++      }
++      return trimmed;
++    }
++    let host = trimmed.toLowerCase();
++    if (host.startsWith('[*.]')) {
++      host = host.substring(4);
++    } else if (host.startsWith('*.')) {
++      host = host.substring(2);
++    }
++    if (!host.includes('://')) {
++      host = 'https://' + host;
++    }
++    let url: URL;
++    try {
++      url = new URL(host);
++    } catch (e) {
++      return null;
++    }
++    return url.hostname || null;
++  }
++
++  private validate_() {
++    if (this.newPattern_.trim() === '') {
++      this.inputInvalid_ = false;
++      this.addDisabled_ = true;
++      this.errorMessage_ = '';
++      return;
++    }
++
++    const pattern = this.normalizePattern_(this.newPattern_);
++    if (pattern === null) {
++      this.inputInvalid_ = true;
++      this.addDisabled_ = true;
++      this.errorMessage_ = loadTimeData.getString('siteRulesInvalid');
++      return;
++    }
++
++    if (this.rules_.some(rule => rule.pattern === pattern)) {
++      this.inputInvalid_ = true;
++      this.addDisabled_ = true;
++      this.errorMessage_ = loadTimeData.getString('siteRulesDuplicate');
++      return;
++    }
++
++    this.inputInvalid_ = false;
++    this.addDisabled_ = false;
++    this.errorMessage_ = '';
++  }
++
++  private onAddClick_() {
++    this.newPattern_ = '';
++    this.newList_ = 'keep';
++    this.inputInvalid_ = false;
++    this.addDisabled_ = true;
++    this.errorMessage_ = '';
++    this.$.addDialog.showModal();
++  }
++
++  private onCancelClick_() {
++    this.$.addDialog.cancel();
++  }
++
++  /**
++   * A new rule keeps everything on the two keep lists and nothing on the
++   * reset list, which is what the three lists this table replaced meant. Both
++   * are a starting point: every checkbox is editable in the row afterwards.
++   */
++  private onSubmit_() {
++    const pattern = this.normalizePattern_(this.newPattern_);
++    if (pattern === null ||
++        this.rules_.some(rule => rule.pattern === pattern)) {
++      return;
++    }
++    const list = LIST_TYPES.includes(this.newList_) ? this.newList_ : 'keep';
++    const keepEverything = list !== 'reset';
++    const views = this.rules_.slice();
++    views.push({
++      pattern,
++      list,
++      keep: KEEP_TYPES.map(type => ({
++                             key: type.key,
++                             label: loadTimeData.getString(type.stringName),
++                             checked: keepEverything,
++                           })),
++    });
++    this.writeRules_(views);
++    this.$.addDialog.close();
++  }
++}
++
++declare global {
++  interface HTMLElementTagNameMap {
++    'settings-site-rules': SiteRulesElement;
++  }
++}
++
++customElements.define(SiteRulesElement.is, SiteRulesElement);
+--- a/components/browsing_data/core/pref_names.h
++++ b/components/browsing_data/core/pref_names.h
+@@ -127,6 +127,25 @@
+ inline constexpr char kAeriumEphemeralDelaySeconds[] =
+     "browser.clear_data.aerium_ephemeral_delay_seconds";
+ 
++// Aerium: the site rules table. One list of dictionaries, each carrying the
++// expression the user typed, which list the site is on ("keep", "session" or
++// "reset"), and a "keep" dictionary of per-type booleans naming the data that
++// survives a cleanup.
++//
++// This replaces kAeriumClearOnExitExcludedSites, kAeriumSessionOnlySites and
++// kAeriumEphemeralSites, which held the same information as three lists of
++// bare hostnames and could therefore disagree with one another. Those three
++// are still registered, and still read once by the migration below, so that a
++// profile downgraded to an older build finds its lists where it left them.
++inline constexpr char kAeriumSiteRules[] =
++    "browser.clear_data.aerium_site_rules";
++
++// Aerium: whether the fold-in above has happened. A separate boolean rather
++// than "is the rules list empty", because a user who deletes every rule must
++// not have the old lists poured back in on the next launch.
++inline constexpr char kAeriumSiteRulesMigrated[] =
++    "browser.clear_data.aerium_site_rules_migrated";
++
+ // Clear browsing data deletion time period.
+ inline constexpr char kDeleteTimePeriod[] = "browser.clear_data.time_period";
+ 
+--- a/chrome/browser/resources/settings/BUILD.gn
++++ b/chrome/browser/resources/settings/BUILD.gn
+@@ -132,4 +132,5 @@
+     "privacy_page/cookies_page.ts",
+     "privacy_page/do_not_track_toggle.ts",
+     "privacy_page/ephemeral_sites.ts",
++    "privacy_page/site_rules.ts",
+     "privacy_page/personalization_options.ts",
+--- a/chrome/browser/resources/settings/privacy_page/privacy_page.ts
++++ b/chrome/browser/resources/settings/privacy_page/privacy_page.ts
+@@ -15,6 +15,7 @@
+ import '../settings_shared.css.js';
+ import './clear_on_exit.js';
+ import './ephemeral_sites.js';
++import './site_rules.js';
+ import './privacy_guide/privacy_guide_dialog.js';
+ 
+ import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+--- a/chrome/browser/resources/settings/privacy_page/privacy_page.html
++++ b/chrome/browser/resources/settings/privacy_page/privacy_page.html
+@@ -14,6 +14,8 @@
+     </settings-clear-on-exit>
+     <settings-ephemeral-sites id="ephemeralSites" prefs="{{prefs}}">
+     </settings-ephemeral-sites>
++    <settings-site-rules id="siteRules" prefs="{{prefs}}">
++    </settings-site-rules>
+     <cr-link-row id="clearBrowsingData"
+         start-icon="cr:delete"
+         class="hr" label="$i18n{clearBrowsingData}"
+--- a/chrome/browser/browsing_data/BUILD.gn
++++ b/chrome/browser/browsing_data/BUILD.gn
+@@ -16,6 +16,7 @@
+ 
+ source_set("browsing_data") {
+   public = [
++    "aerium_site_rules.h",
+     "browsing_data_history_observer_service.h",
+     "browsing_data_important_sites_util.h",
+     "browsing_data_lifetime_policy_handler.h",
+@@ -67,6 +68,7 @@
+ 
+ source_set("impl") {
+   sources = [
++    "aerium_site_rules.cc",
+     "browsing_data_history_observer_service.cc",
+     "browsing_data_important_sites_util.cc",
+     "browsing_data_lifetime_policy_handler.cc",
+@@ -170,6 +172,11 @@
+     "//components/web_cache/browser",
+     "//media/mojo/services",
+     "//services/tracing/public/cpp/background_tracing",
++    # Aerium: RE2 backs the regular-expression form of a site rule. Named
++    # here rather than borrowed transitively - //chrome/browser carries this
++    # dep but this is a different target, and gn check does not forgive
++    # using a header a target has not declared.
++    "//third_party/re2",
+     "//ui/strings:ui_strings__strings_grit",
+   ]
+ 
+--- a/chrome/browser/resources/settings/privacy_page/ephemeral_sites.html
++++ b/chrome/browser/resources/settings/privacy_page/ephemeral_sites.html
+@@ -1,12 +1,4 @@
+-<style include="cr-shared-style cr-icons settings-shared">
+-  .list-frame {
+-    padding-inline-start: var(--cr-section-indent-width);
+-  }
+-
+-  #sites > .list-item:not(:first-of-type) {
+-    border-top: var(--cr-separator-line);
+-  }
+-
++<style include="cr-shared-style settings-shared">
+   .cr-padded-text {
+     flex: 1;
+   }
+@@ -31,48 +23,3 @@
+     label="$i18n{ephemeralClearCacheLabel}"
+     sub-label="$i18n{ephemeralClearCacheDesc}">
+ </settings-toggle-button>
+-<div class="cr-row">
+-  <div class="cr-padded-text">
+-    $i18n{ephemeralSitesHeader}
+-    <div class="secondary">$i18n{ephemeralSitesDesc}</div>
+-  </div>
+-  <cr-button id="addButton" on-click="onAddClick_"
+-      aria-label="$i18n{ephemeralSitesAddAriaLabel}">
+-    $i18n{add}
+-  </cr-button>
+-</div>
+-<div id="noSites" class="list-frame" hidden$="[[hasSites_(sites_.*)]]">
+-  <div class="list-item secondary">$i18n{noSitesAdded}</div>
+-</div>
+-<div id="sites" class="list-frame" role="list"
+-    hidden$="[[!hasSites_(sites_.*)]]">
+-  <template is="dom-repeat" items="[[sites_]]">
+-    <div class="list-item" role="listitem">
+-      <div class="start text-elide">[[item]]</div>
+-      <cr-icon-button class="icon-clear" data-site$="[[item]]"
+-          on-click="onRemoveClick_" title="$i18n{remove}"
+-          aria-label="$i18n{remove}">
+-      </cr-icon-button>
+-    </div>
+-  </template>
+-</div>
+-<cr-dialog id="addDialog" close-text="$i18n{close}">
+-  <div slot="title">$i18n{ephemeralSitesAddTitle}</div>
+-  <div slot="body">
+-    <cr-input id="siteInput" label="$i18n{addSite}"
+-        placeholder="$i18n{ephemeralSitesPlaceholder}"
+-        value="{{newSite_}}" on-input="validate_"
+-        invalid="[[inputInvalid_]]" error-message="[[errorMessage_]]"
+-        spellcheck="false" autofocus>
+-    </cr-input>
+-  </div>
+-  <div slot="button-container">
+-    <cr-button class="cancel-button" on-click="onCancelClick_">
+-      $i18n{cancel}
+-    </cr-button>
+-    <cr-button id="addSiteButton" class="action-button" on-click="onSubmit_"
+-        disabled="[[addDisabled_]]">
+-      $i18n{add}
+-    </cr-button>
+-  </div>
+-</cr-dialog>
+--- a/chrome/browser/resources/settings/privacy_page/ephemeral_sites.ts
++++ b/chrome/browser/resources/settings/privacy_page/ephemeral_sites.ts
+@@ -4,48 +4,29 @@
+ 
+ /**
+  * @fileoverview
+- * 'settings-ephemeral-sites' is the "reset these sites when their last tab
+- * closes" list. It is the mirror image of settings-clear-on-exit-sites next to
+- * it: that one names sites to keep when the browser quits, this one names
+- * sites that should never persist at all.
++ * 'settings-ephemeral-sites' is the tab-close clearing block: whether every
++ * site is cleared when its last tab closes, how long to wait first, and
++ * whether the cache goes with it.
+  *
+- * Deliberately independent of the delete-on-exit toggle, and so rendered
+- * outside its cr-collapse - being ephemeral is a property of the site, not of
+- * the session, and the feature works whether or not that toggle is on.
++ * It used to carry a list of sites as well. That list, and the two others
++ * beside it, are now rows in settings-site-rules, which can say which kinds
++ * of data a site keeps rather than only whether it is listed. What is left
++ * here is the part that is not per-site.
+  *
+- * Same storage mechanics as its sibling: a single list pref, which
+- * settingsPrivate exposes as PrefType.LIST and which therefore cannot be bound
+- * by settings-toggle-button or settings-checkbox, so this goes through
+- * PrefsMixin's appendPrefListItem()/deletePrefListItem() instead.
+- *
+- * The description string promises cookies and site storage and nothing more,
+- * because that is all the browser can honestly deliver: history, autofill,
+- * passwords and site settings ignore the origin filter, so they can only be
+- * cleared for every site at once.
++ * Composes PrefsMixin: the delay is bound through a local property rather
++ * than straight to the pref, for the reason on EPHEMERAL_DELAY_PREF below.
+  */
+-import 'chrome://resources/cr_elements/cr_button/cr_button.js';
+-import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
+-import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
+ import 'chrome://resources/cr_elements/cr_input/cr_input.js';
+ import 'chrome://resources/cr_elements/cr_shared_style.css.js';
+-import 'chrome://resources/cr_elements/icons.html.js';
+-import '../settings_shared.css.js';
+ import '../controls/settings_toggle_button.js';
++import '../settings_shared.css.js';
+ 
+-import type {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
+-import type {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
+-import type {CrInputElement} from 'chrome://resources/cr_elements/cr_input/cr_input.js';
+ import type {PrefsMixinInterface} from '/shared/settings/prefs/prefs_mixin.js';
+ import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+ import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+ 
+-import {loadTimeData} from '../i18n_setup.js';
+-
+ import {getTemplate} from './ephemeral_sites.html.js';
+ 
+-export const EPHEMERAL_SITES_PREF: string =
+-    'browser.clear_data.aerium_ephemeral_sites';
+-
+ /**
+  * Aerium: how long after a site's last tab closes before its data goes. Bound
+  * through a local property rather than straight to the pref because a
+@@ -56,15 +37,6 @@
+ const EPHEMERAL_DELAY_PREF: string =
+     'browser.clear_data.aerium_ephemeral_delay_seconds';
+ 
+-export interface EphemeralSitesElement {
+-  $: {
+-    addButton: CrButtonElement,
+-    addDialog: CrDialogElement,
+-    addSiteButton: CrButtonElement,
+-    siteInput: CrInputElement,
+-  };
+-}
+-
+ type Constructor<T> = new (...args: any[]) => T;
+ const EphemeralSitesElementBase = PrefsMixin(PolymerElement) as
+     Constructor<PrefsMixinInterface&PolymerElement>;
+@@ -80,31 +52,6 @@
+ 
+   static get properties() {
+     return {
+-      sites_: {
+-        type: Array,
+-        value: () => [],
+-      },
+-
+-      newSite_: {
+-        type: String,
+-        value: '',
+-      },
+-
+-      addDisabled_: {
+-        type: Boolean,
+-        value: true,
+-      },
+-
+-      inputInvalid_: {
+-        type: Boolean,
+-        value: false,
+-      },
+-
+-      errorMessage_: {
+-        type: String,
+-        value: '',
+-      },
+-
+       delaySeconds_: {
+         type: Number,
+         value: 0,
+@@ -113,23 +60,11 @@
+   }
+ 
+   static get observers() {
+-    return [
+-      `onPrefChanged_(prefs.${EPHEMERAL_SITES_PREF}.value.*)`,
+-      `onDelayPrefChanged_(prefs.${EPHEMERAL_DELAY_PREF}.value)`,
+-    ];
++    return [`onDelayPrefChanged_(prefs.${EPHEMERAL_DELAY_PREF}.value)`];
+   }
+ 
+-  declare private sites_: string[];
+-  declare private newSite_: string;
+-  declare private addDisabled_: boolean;
+-  declare private inputInvalid_: boolean;
+-  declare private errorMessage_: string;
+   declare private delaySeconds_: number;
+ 
+-  private onPrefChanged_() {
+-    this.sites_ = this.getPref<string[]>(EPHEMERAL_SITES_PREF).value.slice();
+-  }
+-
+   private onDelayPrefChanged_() {
+     this.delaySeconds_ = this.getPref<number>(EPHEMERAL_DELAY_PREF).value;
+   }
+@@ -154,93 +89,6 @@
+     }
+     this.setPrefValue(EPHEMERAL_DELAY_PREF, raw);
+   }
+-
+-  private hasSites_(): boolean {
+-    return this.sites_.length > 0;
+-  }
+-
+-  /**
+-   * Turns whatever the user typed into a bare hostname, or null if it cannot
+-   * be one. Accepts a pasted URL and a content-settings style "[*.]example.com"
+-   * pattern as well as a plain hostname, because people will type all three.
+-   * The URL parser does the actual work, so IDN, IPv6 literals and ports are
+-   * handled the same way the browser handles them everywhere else.
+-   */
+-  private normalizeSite_(input: string): string|null {
+-    const trimmed = input.trim();
+-    if (!trimmed) {
+-      return null;
+-    }
+-    let candidate = trimmed.replace(/^\[\*\.\]/, '').replace(/^\*\./, '');
+-    if (!candidate.includes('://')) {
+-      candidate = 'https://' + candidate;
+-    }
+-    let url: URL;
+-    try {
+-      url = new URL(candidate);
+-    } catch (e) {
+-      return null;
+-    }
+-    return url.hostname || null;
+-  }
+-
+-  private validate_() {
+-    if (this.newSite_.trim() === '') {
+-      // Empty input disables the action button without shouting at the user.
+-      this.inputInvalid_ = false;
+-      this.addDisabled_ = true;
+-      this.errorMessage_ = '';
+-      return;
+-    }
+-
+-    const site = this.normalizeSite_(this.newSite_);
+-    if (site === null) {
+-      this.inputInvalid_ = true;
+-      this.addDisabled_ = true;
+-      this.errorMessage_ = loadTimeData.getString('ephemeralSitesInvalid');
+-      return;
+-    }
+-
+-    if (this.sites_.includes(site)) {
+-      this.inputInvalid_ = true;
+-      this.addDisabled_ = true;
+-      this.errorMessage_ = loadTimeData.getString('ephemeralSitesDuplicate');
+-      return;
+-    }
+-
+-    this.inputInvalid_ = false;
+-    this.addDisabled_ = false;
+-    this.errorMessage_ = '';
+-  }
+-
+-  private onAddClick_() {
+-    this.newSite_ = '';
+-    this.inputInvalid_ = false;
+-    this.addDisabled_ = true;
+-    this.errorMessage_ = '';
+-    this.$.addDialog.showModal();
+-  }
+-
+-  private onCancelClick_() {
+-    this.$.addDialog.cancel();
+-  }
+-
+-  private onSubmit_() {
+-    const site = this.normalizeSite_(this.newSite_);
+-    if (site === null || this.sites_.includes(site)) {
+-      return;
+-    }
+-    this.appendPrefListItem(EPHEMERAL_SITES_PREF, site);
+-    this.$.addDialog.close();
+-  }
+-
+-  private onRemoveClick_(e: Event) {
+-    const site = (e.currentTarget as HTMLElement).dataset['site'];
+-    if (site === undefined) {
+-      return;
+-    }
+-    this.deletePrefListItem(EPHEMERAL_SITES_PREF, site);
+-  }
+ }
+ 
+ declare global {
+--- a/chrome/browser/resources/settings/privacy_page/clear_on_exit.html
++++ b/chrome/browser/resources/settings/privacy_page/clear_on_exit.html
+@@ -41,15 +41,3 @@
+     </settings-checkbox>
+   </div>
+ </cr-collapse>
+-<!-- Aerium: the never-delete list is shared with the all-sites toggle below,
+-     so it gets a collapse of its own rather than living inside the one the
+-     checkboxes are in. There it is invisible whenever delete-on-exit is off -
+-     exactly the state someone is in when they switch on clearing at tab close
+-     and go looking for the way to spare a site. -->
+-<cr-collapse id="clearOnExitSitesCollapse"
+-    opened="[[shouldShowKeepList_(
+-        prefs.browser.clear_data.aerium_clear_on_exit.value,
+-        prefs.browser.clear_data.aerium_ephemeral_all_sites.value)]]">
+-  <settings-clear-on-exit-sites id="clearOnExitSites" prefs="{{prefs}}">
+-  </settings-clear-on-exit-sites>
+-</cr-collapse>
+--- a/chrome/browser/resources/settings/privacy_page/clear_on_exit.ts
++++ b/chrome/browser/resources/settings/privacy_page/clear_on_exit.ts
+@@ -22,7 +22,6 @@
+ import '../controls/settings_checkbox.js';
+ import '../controls/settings_toggle_button.js';
+ import '../settings_shared.css.js';
+-import './clear_on_exit_sites.js';
+ 
+ import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+ import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+@@ -41,17 +40,6 @@
+     return getTemplate();
+   }
+ 
+-  /**
+-   * Aerium: whether to show the never-delete list. Two features read it - the
+-   * toggle above and the all-sites clearing on tab close - so either one being
+-   * on is a reason to show it. Compared against true rather than coerced:
+-   * Polymer calls this with undefined before prefs arrive, and `!!` on a value
+-   * declared boolean is what no-unnecessary-type-conversion rejects.
+-   */
+-  private shouldShowKeepList_(
+-      clearOnExit: boolean|undefined, allSites: boolean|undefined): boolean {
+-    return clearOnExit === true || allSites === true;
+-  }
+ }
+ 
+ declare global {
+--- a/components/browsing_data/core/pref_names.cc
++++ b/components/browsing_data/core/pref_names.cc
+@@ -74,6 +74,10 @@
+   // self-closing tab to come back, short enough that the data is gone before
+   // the user has moved on.
+   registry->RegisterIntegerPref(kAeriumEphemeralDelaySeconds, 10);
++  // Aerium: the rules table, empty until the migration in aerium_site_rules.cc
++  // fills it from the three lists it replaces.
++  registry->RegisterListPref(kAeriumSiteRules);
++  registry->RegisterBooleanPref(kAeriumSiteRulesMigrated, false);
+   // TODO(crbug.com/471197613): When MaybeMigrateToQuickDeletePrefValues is
+   // removed, set default value in iOS for the `kDeleteTimePeriod` pref to 15
+   // minutes.

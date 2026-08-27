@@ -26,6 +26,21 @@ behind any of this.
   data when its last tab closes**, so anyone using only that second setting
   had no way to see it, let alone add to it. It now appears whenever either
   setting is on.
+- **Site rules** replaces the three separate site lists with one table, the
+  shape Cookie AutoDelete uses. Each row names a site, says which list it is
+  on — **Never delete**, **Keep until I close Aerium**, or **Reset when its
+  last tab closes** — and ticks which kinds of data survive: cookies, cache,
+  file system, IndexedDB, local storage, service workers.
+- **The greylist finally has a UI.** "Keep until I close Aerium" — stay signed
+  in while you work, signed out tomorrow — has worked under the covers for a
+  while but there was no way to add a site to it. It is a row type now.
+- **Sites can be matched with a regular expression.** A plain address still
+  covers its subdomains, so example.com matches www.example.com. For anything
+  more exact, write a pattern between slashes: `/^(www\.)?example\.com$/`.
+- Rules match on the host rather than being folded to the registrable domain
+  first, so a rule naming one subdomain now means that subdomain instead of
+  quietly widening to the whole site. Your existing lists are carried over
+  automatically, keeping everything they kept before.
 - New setting: **Clear cached files too**, off by default. Tab-close clearing
   took cookies and site storage but never the cache, so a site could still be
   recognised by what it had left in there. Off by default because clearing

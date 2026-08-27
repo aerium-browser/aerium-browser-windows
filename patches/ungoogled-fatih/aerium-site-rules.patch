@@ -144,7 +144,7 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
 +#endif  // CHROME_BROWSER_BROWSING_DATA_AERIUM_SITE_RULES_H_
 --- /dev/null
 +++ b/chrome/browser/browsing_data/aerium_site_rules.cc
-@@ -0,0 +1,243 @@
+@@ -0,0 +1,249 @@
 +// Copyright 2026 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -357,7 +357,6 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
 +      prefs->GetBoolean(browsing_data::prefs::kAeriumSiteRulesMigrated)) {
 +    return;
 +  }
-+  ScopedListPrefUpdate update(prefs, browsing_data::prefs::kAeriumSiteRules);
 +  const uint64_t all = AllTypes();
 +  const struct {
 +    const char* pref;
@@ -368,20 +367,27 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
 +      {browsing_data::prefs::kAeriumSessionOnlySites, kListSession, true},
 +      {browsing_data::prefs::kAeriumEphemeralSites, kListReset, false},
 +  };
-+  for (const auto& source : sources) {
-+    for (const base::Value& entry : prefs->GetList(source.pref)) {
-+      if (!entry.is_string() || entry.GetString().empty()) {
-+        continue;
++  {
++    // Scoped so the list is committed - and its change notification sent -
++    // before the flag below says the migration happened. Flipping the flag
++    // first would leave a window in which a reader sees "migrated" and an
++    // empty table.
++    ScopedListPrefUpdate update(prefs, browsing_data::prefs::kAeriumSiteRules);
++    for (const auto& source : sources) {
++      for (const base::Value& entry : prefs->GetList(source.pref)) {
++        if (!entry.is_string() || entry.GetString().empty()) {
++          continue;
++        }
++        base::Value::Dict keep;
++        for (const TypeEntry& type : kTypes) {
++          keep.Set(type.key, source.keep_everything && (all & type.type) != 0);
++        }
++        base::Value::Dict rule;
++        rule.Set(kPatternKey, entry.GetString());
++        rule.Set(kListKey, source.list);
++        rule.Set(kKeepKey, std::move(keep));
++        update->Append(std::move(rule));
 +      }
-+      base::Value::Dict keep;
-+      for (const TypeEntry& type : kTypes) {
-+        keep.Set(type.key, source.keep_everything && (all & type.type) != 0);
-+      }
-+      base::Value::Dict rule;
-+      rule.Set(kPatternKey, entry.GetString());
-+      rule.Set(kListKey, source.list);
-+      rule.Set(kKeepKey, std::move(keep));
-+      update->Append(std::move(rule));
 +    }
 +  }
 +  prefs->SetBoolean(browsing_data::prefs::kAeriumSiteRulesMigrated, true);
@@ -505,7 +511,7 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
 +</cr-dialog>
 --- /dev/null
 +++ b/chrome/browser/resources/settings/privacy_page/site_rules.ts
-@@ -0,0 +1,389 @@
+@@ -0,0 +1,395 @@
 +// Copyright 2026 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -666,6 +672,12 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
 +  private onPrefChanged_() {
 +    const stored = this.getPref<StoredRule[]>(SITE_RULES_PREF).value;
 +    const views: RuleView[] = [];
++    if (!Array.isArray(stored)) {
++      // A hand-edited Preferences file can put anything here, and for..of on a
++      // non-iterable throws where a wrong-shaped rule merely gets skipped.
++      this.rules_ = views;
++      return;
++    }
 +    for (const rule of stored) {
 +      if (!rule || typeof rule.pattern !== 'string' || rule.pattern === '') {
 +        continue;
@@ -1334,3 +1346,350 @@ chrome:// modules. Neither is a build: there is no C++ compiler here.
    // TODO(crbug.com/471197613): When MaybeMigrateToQuickDeletePrefValues is
    // removed, set default value in iOS for the `kDeleteTimePeriod` pref to 15
    // minutes.
+--- a/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.h
++++ b/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.h
+@@ -87,6 +87,13 @@
+                               const TabStripModelChange& change,
+                               const TabStripSelectionChange& selection) override;
+   void OnTabStripModelDestroyed(TabStripModel* tab_strip_model) override;
++  // Aerium: a tab navigating is not a tab-strip change, so without this the
++  // only host ever recorded for a tab is whatever it happened to be showing
++  // when some other tab opened or closed. In a single-tab session that meant
++  // every site but the last one was never a candidate for clearing.
++  void OnTabChangedAt(tabs::TabInterface* tab,
++                      int index,
++                      TabChangeType change_type) override;
+ #endif
+ 
+   // Sets the end time of the period for which data must be deleted, for all
+@@ -145,6 +152,9 @@
+ 
+   void AeriumClearClosedEphemeralSites();
+ 
++  // Aerium: folds the hosts currently open into aerium_seen_hosts_.
++  void AeriumRecordOpenHosts();
++
+   // Aerium: which models this service has called AddObserver() on, purely to
+   // keep that call idempotent. Lifetime is NOT managed here - TabStripModelObserver
+   // tracks its own observations and drops them when a model is destroyed, which
+@@ -153,6 +163,19 @@
+   // in OnTabStripModelDestroyed() so this never holds a dangling model.
+   std::set<raw_ptr<TabStripModel>> aerium_observed_models_;
+ 
++  // Aerium: hosts that have been open at some point this run, less the ones
++  // already dealt with. A rule is tested against a host, so a sweep needs the
++  // hosts that have gone away - and the only way to know a host has gone is to
++  // have noticed it was there. Hosts rather than registrable domains, because
++  // a rule naming one subdomain has to be able to mean that subdomain.
++  std::set<std::string> aerium_seen_hosts_;
++
++  // Aerium: hosts a session ("keep until I quit") rule spared during this run,
++  // cleared at shutdown. Recorded as they are spared rather than recomputed at
++  // the end, because a regular expression cannot be turned back into the set
++  // of hosts it matched without walking every origin holding data.
++  std::set<std::string> aerium_session_hosts_;
++
+   // Aerium: BrowserCollection::AddObserver()/RemoveObserver() are protected,
+   // and both BrowserCollection and GlobalBrowserCollection befriend
+   // base::ScopedObservationTraits for exactly this pair, so a ScopedObservation
+--- a/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc
++++ b/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc
+@@ -6,10 +6,12 @@
+ 
+ #include <algorithm>
+ #include <limits>
++#include <map>
+ #include <memory>
+ #include <set>
+ #include <string>
+ #include <string_view>
++#include <vector>
+ #include <utility>
+ 
+ #include "base/command_line.h"
+@@ -21,6 +23,7 @@
+ #include "base/task/task_traits.h"
+ #include "base/values.h"
+ #include "build/build_config.h"
++#include "chrome/browser/browsing_data/aerium_site_rules.h"
+ #include "chrome/browser/browsing_data/chrome_browsing_data_remover_constants.h"
+ #include "chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.h"
+ #include "chrome/browser/lifetime/browser_shutdown.h"
+@@ -323,6 +326,31 @@
+ // open. Folded to eTLD+1 because the deletion filter is built with
+ // AddRegisterableDomain(), which DCHECKs on anything that is not an eTLD+1, an
+ // IP literal or a single-label host.
++// Aerium: adds hosts to a filter as registrable domains, returning false when
++// nothing could be added. Domains rather than origins because that is how
++// cookies are scoped - a cookie set on ".example.com" is not reached by an
++// origin filter for www.example.com - and because it is what these paths did
++// before rules existed. The consequence is worth stating: clearing one
++// subdomain clears the whole registrable domain with it, so a rule keeping a
++// sibling subdomain does not survive its neighbour being reset.
++bool AeriumAddHostsToFilter(const std::set<std::string>& hosts,
++                            content::BrowsingDataFilterBuilder* filter) {
++  bool any = false;
++  for (const std::string& host : hosts) {
++    std::string domain = net::registry_controlled_domains::GetDomainAndRegistry(
++        host, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
++    if (domain.empty()) {
++      domain = host;  // IP address or internal hostname.
++    }
++    if (domain.empty()) {
++      continue;
++    }
++    filter->AddRegisterableDomain(domain);
++    any = true;
++  }
++  return any;
++}
++
+ std::set<std::string> AeriumOpenRegistrableDomains(Profile* profile) {
+   std::set<std::string> result;
+   ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
+@@ -442,6 +470,27 @@
+   return result;
+ }
+ 
++#if !BUILDFLAG(IS_ANDROID)
++// Aerium: the hosts currently showing in a tab of this profile. The
++// registrable-domain sibling above is what the old lists compared against;
++// rules compare against a host, and neither spelling can be derived from the
++// other. Defined here rather than beside it because it reads the function
++// above and C++ wants that declared first.
++std::set<std::string> AeriumOpenHosts(Profile* profile) {
++  std::set<std::string> result;
++  for (const GURL& url : GetOpenedUrlsAndOngoingDownloads(profile)) {
++    if (!url.SchemeIsHTTPOrHTTPS()) {
++      continue;
++    }
++    std::string host = url.GetHost();
++    if (!host.empty()) {
++      result.insert(std::move(host));
++    }
++  }
++  return result;
++}
++#endif  // !BUILDFLAG(IS_ANDROID)
++
+ // Returns the sync types that might be reuired to be disabled for the browsing
+ // data types specified in the policy value.
+ syncer::UserSelectableTypeSet GetSyncTypesForPolicyPref(
+@@ -480,6 +529,10 @@
+   // Order matters: take the windows that already exist first, then subscribe
+   // for later ones. The collection does not replay creations to a new observer,
+   // so doing it the other way round would miss any window opened in between.
++  // Aerium: folds the three lists this feature used to keep into the rules
++  // table, once per profile. Ahead of the observers, so nothing can read a
++  // half-migrated rule set.
++  aerium_site_rules::MigrateLegacyLists(profile_->GetPrefs());
+   AeriumObserveExistingBrowsers();
+   aerium_browser_collection_observation_.Observe(
+       GlobalBrowserCollection::GetInstance());
+@@ -557,6 +610,19 @@
+   AeriumScheduleEphemeralClear();
+ }
+ 
++void ChromeBrowsingDataLifetimeManager::OnTabChangedAt(tabs::TabInterface*,
++                                                       int,
++                                                       TabChangeType) {
++  // Aerium: a navigation inside an existing tab is not a tab-strip change, so
++  // without this the site a tab moves to is never recorded and never cleared.
++  AeriumRecordOpenHosts();
++}
++
++void ChromeBrowsingDataLifetimeManager::AeriumRecordOpenHosts() {
++  const std::set<std::string> open_now = AeriumOpenHosts(profile_);
++  aerium_seen_hosts_.insert(open_now.begin(), open_now.end());
++}
++
+ void ChromeBrowsingDataLifetimeManager::OnTabStripModelDestroyed(
+     TabStripModel* tab_strip_model) {
+   aerium_observed_models_.erase(tab_strip_model);
+@@ -566,6 +632,11 @@
+     TabStripModel* tab_strip_model,
+     const TabStripModelChange& change,
+     const TabStripSelectionChange& selection) {
++  // Aerium: on every change, not only removals. This is where the set of hosts
++  // that have been open is kept current, and a closing tab is still reachable
++  // from the model at this point - which is exactly why its host is captured
++  // here rather than from the removal payload.
++  AeriumRecordOpenHosts();
+   if (change.type() != TabStripModelChange::kRemoved) {
+     return;
+   }
+@@ -606,15 +677,28 @@
+   // that toggle's filter. "Keep this until I quit" is a statement about one
+   // site; it should not require asking for a general clean-out, and it should
+   // not be cancelled by turning that clean-out off.
+-  const std::set<std::string> session_only = AeriumDomainsFromPref(
+-      profile_->GetPrefs(), browsing_data::prefs::kAeriumSessionOnlySites);
+-  if (session_only.empty()) {
++  //
++  // Two sources. Hosts a session rule spared earlier in the run, recorded as
++  // they were spared; and hosts still open now, which never reached a sweep
++  // because their tab outlived it. Without the second, quitting with the tab
++  // still open would keep the data the greylist promised to drop.
++  std::set<std::string> hosts = aerium_session_hosts_;
++  const std::vector<aerium_site_rules::Rule> rules =
++      aerium_site_rules::ReadRules(profile_->GetPrefs());
++  for (const std::string& host : AeriumOpenHosts(profile_)) {
++    const aerium_site_rules::Rule* const rule =
++        aerium_site_rules::FindRule(rules, host);
++    if (rule && rule->list == aerium_site_rules::ListType::kSession) {
++      hosts.insert(host);
++    }
++  }
++  if (hosts.empty()) {
+     return;
+   }
+   auto filter = content::BrowsingDataFilterBuilder::Create(
+       content::BrowsingDataFilterBuilder::Mode::kDelete);
+-  for (const std::string& domain : session_only) {
+-    filter->AddRegisterableDomain(domain);
++  if (!AeriumAddHostsToFilter(hosts, filter.get())) {
++    return;
+   }
+   content::BrowsingDataRemover* const remover =
+       profile_->GetBrowsingDataRemover();
+@@ -632,79 +716,79 @@
+ 
+ void ChromeBrowsingDataLifetimeManager::AeriumClearClosedEphemeralSites() {
+   PrefService* const prefs = profile_->GetPrefs();
++  const std::vector<aerium_site_rules::Rule> rules =
++      aerium_site_rules::ReadRules(prefs);
+   const bool all_sites =
+       prefs->GetBoolean(browsing_data::prefs::kAeriumEphemeralAllSites);
+-  const std::set<std::string> ephemeral = AeriumDomainsFromPref(
+-      prefs, browsing_data::prefs::kAeriumEphemeralSites);
+-  if (!all_sites && ephemeral.empty()) {
++  if (!all_sites && rules.empty()) {
++    aerium_seen_hosts_.clear();
+     return;
+   }
+-  const std::set<std::string> still_open =
+-      AeriumOpenRegistrableDomains(profile_);
+ 
+-  std::unique_ptr<content::BrowsingDataFilterBuilder> filter;
+-  if (all_sites) {
+-    // Cookie AutoDelete's model: delete every site except the ones being kept.
+-    // Expressed as a kPreserve filter rather than by enumerating what to
+-    // delete, because the set of domains holding data is not knowable from
+-    // here - and even if it were, listing it would be a much larger filter
+-    // than listing the handful being spared.
+-    //
+-    // Three things are spared. The keep list, because the user said so. The
+-    // greylist, because it is kept until shutdown and this is not shutdown.
+-    // And whatever is still open, because clearing a site out from under a tab
+-    // that is displaying it logs the user out mid-session - the explicit-list
+-    // path has always protected open sites and this one must too, all the more
+-    // so now that every site is a candidate.
+-    filter = content::BrowsingDataFilterBuilder::Create(
+-        content::BrowsingDataFilterBuilder::Mode::kPreserve);
+-    std::set<std::string> keep = AeriumDomainsFromPref(
+-        prefs, browsing_data::prefs::kAeriumClearOnExitExcludedSites);
+-    const std::set<std::string> session_only = AeriumDomainsFromPref(
+-        prefs, browsing_data::prefs::kAeriumSessionOnlySites);
+-    keep.insert(session_only.begin(), session_only.end());
+-    keep.insert(still_open.begin(), still_open.end());
+-    for (const std::string& domain : keep) {
+-      filter->AddRegisterableDomain(domain);
+-    }
+-    // No early return on an empty keep set: preserving nothing is a valid and
+-    // meaningful request here - clear everything - unlike the kDelete path
+-    // below, where an empty filter would delete nothing at all.
+-  } else {
+-    filter = content::BrowsingDataFilterBuilder::Create(
+-        content::BrowsingDataFilterBuilder::Mode::kDelete);
+-    bool any = false;
+-    for (const std::string& domain : ephemeral) {
+-      if (still_open.count(domain)) {
+-        continue;
++  const std::set<std::string> still_open = AeriumOpenHosts(profile_);
++  const uint64_t site_data = AeriumSiteDataMask(prefs);
++
++  // Grouped by the mask each host is to be cleared for, because a rule says
++  // which types it keeps and the remover takes one mask per call. In practice
++  // that is one or two groups: the masks come from a handful of rules, not
++  // from the hosts.
++  std::map<uint64_t, std::set<std::string>> by_mask;
++  std::set<std::string> still_candidates;
++  for (const std::string& host : aerium_seen_hosts_) {
++    if (still_open.count(host)) {
++      // Clearing a site out from under a tab displaying it logs the user out
++      // mid-session. It stays a candidate for when that tab does close.
++      still_candidates.insert(host);
++      continue;
++    }
++    const aerium_site_rules::Rule* const rule =
++        aerium_site_rules::FindRule(rules, host);
++    if (!rule) {
++      // No rule at all: everything goes when the all-sites switch is on, and
++      // nothing does when it is off, which is what the explicit list did.
++      if (all_sites) {
++        by_mask[site_data].insert(host);
+       }
+-      filter->AddRegisterableDomain(domain);
+-      any = true;
++      continue;
+     }
+-    if (!any) {
+-      return;
++    switch (rule->list) {
++      case aerium_site_rules::ListType::kKeep:
++        break;
++      case aerium_site_rules::ListType::kSession:
++        // Spared now, cleared at shutdown, which is what the greylist means.
++        aerium_session_hosts_.insert(host);
++        break;
++      case aerium_site_rules::ListType::kReset: {
++        const uint64_t mask = site_data & ~rule->keep_mask;
++        if (mask != 0) {
++          by_mask[mask].insert(host);
++        }
++        break;
++      }
+     }
+   }
++  aerium_seen_hosts_ = std::move(still_candidates);
+ 
+-  // Cookies and storage only. Both are in FILTERABLE_DATA_TYPES; anything else
+-  // would trip the CHECK in
+-  // ChromeBrowsingDataRemoverDelegate::RemoveEmbedderData(), which aborts
+-  // release builds rather than merely failing the deletion.
+-  //
+-  // The observer is not optional - RemoveWithFilterAndReply() calls into it
+-  // unconditionally - but no keep-alive variant is needed: unlike the on-exit
+-  // path this runs while the browser is plainly still up.
++  if (by_mask.empty()) {
++    return;
++  }
+   content::BrowsingDataRemover* const remover =
+       profile_->GetBrowsingDataRemover();
+-  remover->RemoveWithFilterAndReply(
+-      base::Time::Min(), base::Time::Max(),
+-      AeriumSiteDataMask(profile_->GetPrefs()),
+-      content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
+-      std::move(filter),
+-      testing_data_remover_observer_
+-          ? testing_data_remover_observer_.get()
+-          : BrowsingDataRemoverObserver::Create(
+-                remover, /*filterable_deletion=*/true, profile_));
++  for (const auto& entry : by_mask) {
++    auto filter = content::BrowsingDataFilterBuilder::Create(
++        content::BrowsingDataFilterBuilder::Mode::kDelete);
++    if (!AeriumAddHostsToFilter(entry.second, filter.get())) {
++      continue;
++    }
++    remover->RemoveWithFilterAndReply(
++        base::Time::Min(), base::Time::Max(), entry.first,
++        content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
++        std::move(filter),
++        testing_data_remover_observer_
++            ? testing_data_remover_observer_.get()
++            : BrowsingDataRemoverObserver::Create(
++                  remover, /*filterable_deletion=*/true, profile_));
++  }
+ }
+ #endif  // !BUILDFLAG(IS_ANDROID)
+ 

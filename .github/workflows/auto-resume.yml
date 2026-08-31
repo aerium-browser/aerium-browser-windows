@@ -96,8 +96,20 @@ jobs:
           # compile error slower than the threshold self-corrects, since the
           # next stage restores the tree, re-hits it within minutes and trips
           # the same check.
+          #
+          # That reading was briefly wrong, and it cost a build. Run
+          # 33089940410 was killed by the six-hour job cap eight seconds into
+          # its checkpoint upload, moments after deleting the previous one, so
+          # the run held no artifact for a reason that had nothing to do with
+          # the compile - and this check sent it to a human who was not
+          # watching. The stage now alternates between two slots and deletes
+          # the old one only after the new one is stored, so an interrupted
+          # upload leaves the earlier checkpoint in place and a run with
+          # neither slot really did withhold it on purpose. Both names are
+          # matched here because which slot is current alternates by stage.
           if ! gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts" \
-               --jq '.artifacts[] | select(.expired == false) | .name' | grep -qx 'build-artifact'; then
+               --jq '.artifacts[] | select(.expired == false) | .name' \
+               | grep -qxE 'build-artifact(-b)?'; then
             {
               echo "## Build needs a human, not a resume"
               echo

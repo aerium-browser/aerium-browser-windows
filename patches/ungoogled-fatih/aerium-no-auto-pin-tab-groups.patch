@@ -1,0 +1,61 @@
+Stop pinning new tab groups to the bookmarks bar, and drop the toggle for it.
+
+Chromium registers kAutoPinNewTabGroups as true, so every tab group anyone
+creates - on this machine or, through sync, on any other - is pinned to the
+bookmarks bar without being asked. The bookmarks bar is a place people arrange
+themselves; a browser writing to it on its own initiative is the kind of thing
+that gets noticed only after it has happened a few times.
+
+Two changes, and the second is the reason for the first.
+
+The default goes to false. That alone would be enough to stop the behaviour,
+but it would leave a switch in Settings whose only job is to turn something
+back on that nobody asked for.
+
+So the switch goes too. "Automatically pin new tab groups created on any
+device to the bookmarks bar" is removed from Settings > Appearance. It sits
+between "Show tab groups in bookmarks bar" and the Ctrl-Tab MRU toggle, both
+of which stay - they describe how existing things are displayed rather than
+authorising the browser to create bookmarks.
+
+Nothing in appearance_page.ts refers to the element, so removing it from the
+template is the whole change on that side. IDS_SETTINGS_AUTO_PIN_NEW_TAB_GROUPS
+stays registered and simply goes unused, which costs a string in the .pak and
+avoids touching settings_localized_strings_provider.cc, which several other
+patches in this series already edit.
+
+The pref stays SYNCABLE_PREF. Aerium ships no sync, so it never travels, and
+leaving the registration shape alone keeps the diff to the one value that
+matters.
+
+--- a/components/saved_tab_groups/public/pref_names.cc
++++ b/components/saved_tab_groups/public/pref_names.cc
+@@ -32,8 +32,12 @@
+       prefs::kStopShowingTabGroupConfirmationOnTabClose, false);
+ #endif  // BUILDFLAG(IS_ANDROID)
+ 
++  // Aerium: off by default. Upstream pins every new tab group to the bookmarks
++  // bar without being asked, and the settings toggle that undid it is removed
++  // too - a browser should not rearrange someone's bookmarks bar on its own,
++  // and an option to stop it doing that is not the same as not doing it.
+   registry->RegisterBooleanPref(
+-      kAutoPinNewTabGroups, true,
++      kAutoPinNewTabGroups, false,
+       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+ 
+   registry->RegisterBooleanPref(prefs::kSavedTabGroupSpecificsToDataMigration,
+--- a/chrome/browser/resources/settings/appearance_page/appearance_page.html
++++ b/chrome/browser/resources/settings/appearance_page/appearance_page.html
+@@ -245,12 +245,6 @@
+             hidden="[[showProjectsPanelEnabled_]]">
+         </settings-toggle-button>
+ 
+-        <settings-toggle-button class="hr" id="autoPinNewTabGroups"
+-            pref="{{prefs.auto_pin_new_tab_groups}}"
+-            label="$i18n{autoPinNewTabGroups}"
+-            hidden="[[showProjectsPanelEnabled_]]">
+-        </settings-toggle-button>
+-
+         <template is="dom-if" if="[[showCtrlTabMru_]]">
+           <settings-toggle-button class="hr" id="ctrlTabMru"
+               pref="{{prefs.browser.ctrl_tab_mru}}"

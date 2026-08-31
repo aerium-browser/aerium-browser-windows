@@ -1,0 +1,280 @@
+Put the automatic-cleanup settings behind one row instead of five on the page.
+
+Privacy and security had grown three Aerium blocks stacked inline above
+"Delete browsing data": the delete-on-exit toggle with its eight data types and
+its never-delete list, the delete-when-the-last-tab-closes toggle with its
+delay field and its cache option, and the per-site rules table with its Add
+button. Between the page title and the first upstream row there were five
+switches, a number input and a table. Each control is worth having; all of them
+at once, before you have decided you want any of them, is not a privacy page.
+
+So they move behind a single row, "Automatic cleanup", which opens a subpage
+holding the same three elements in the same order. Nothing is removed and no
+control changes behaviour - this is regrouping. Someone who wants the defaults
+now reads one line instead of scrolling past a form; someone who wants to
+configure it goes in and configures all of it in one place, which is where it
+belonged.
+
+Mechanics
+
+  The subpage is a cr-view-manager view like every other Privacy subpage:
+  registered in privacy_page_index.html with data-parent-view-id="privacy",
+  routed by AERIUM_CLEANUP (declared in router.ts, created in route.ts as a
+  child of PRIVACY at /automaticCleanup), and imported in lazy_load.ts, which
+  is where the sibling subpage elements are imported rather than in
+  privacy_page_index.ts.
+
+  The element composes SettingsViewMixin for the routePath every view forwards
+  to its settings-subpage, and PrefsMixin because it passes prefs through to
+  all three children. It holds no controls of its own - the three elements are
+  untouched, still own their prefs, and still have exactly one host each.
+
+  privacy_page.ts loses the three imports (they move to the new page), and
+  gains the click handler, the focus-config entry that returns focus to the row
+  on back-navigation, and the getAssociatedControlFor case that ties the view
+  id to the row.
+
+Two details that are easy to get wrong here
+
+  Divider bookkeeping. Rows in this section draw their separator as a top
+  border via class="hr", and the convention is that the first row omits it. The
+  Aerium block was first and carried no "hr"; the new row takes that position
+  and likewise carries none, so clearBrowsingData keeps the "hr" it was given
+  when the block moved above it. The visible structure of the page is
+  unchanged.
+
+  The icon is cr:delete, the same as the row below it. That is deliberate
+  rather than an oversight: the two rows are the automatic and the one-shot
+  version of the same act, and they read as a pair. It is also an icon known
+  to resolve - cr-icon draws nothing at all for an iconset:id pair that does
+  not, which is a silent failure this page has been bitten by before.
+
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -2287,6 +2287,12 @@
+     <message name="IDS_SETTINGS_EPHEMERAL_CLEAR_CACHE_DESC" desc="Description of the setting that adds cached files to what is deleted, warning that pages will load more slowly afterwards.">
+       Cached images, fonts and scripts are deleted along with the site's cookies and storage. More thorough, but the site downloads them again on your next visit.
+     </message>
++    <message name="IDS_SETTINGS_AERIUM_CLEANUP_PAGE_TITLE" desc="Title of the settings subpage holding every setting that deletes browsing data automatically, and the label of the row that opens it.">
++      Automatic cleanup
++    </message>
++    <message name="IDS_SETTINGS_AERIUM_CLEANUP_DESC" desc="Summary under that row, saying when the deletions it configures happen.">
++      What gets deleted when you close a tab or close the browser
++    </message>
+     <message name="IDS_SETTINGS_SITE_RULES_HEADER" desc="Header for a table of per-website rules saying which list a site is on and which kinds of data survive a cleanup.">
+       Site rules
+     </message>
+--- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
++++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+@@ -2457,6 +2457,8 @@
+       {"ephemeralDelayDesc", IDS_SETTINGS_EPHEMERAL_DELAY_DESC},
+       {"ephemeralClearCacheLabel", IDS_SETTINGS_EPHEMERAL_CLEAR_CACHE_LABEL},
+       {"ephemeralClearCacheDesc", IDS_SETTINGS_EPHEMERAL_CLEAR_CACHE_DESC},
++      {"aeriumCleanupPageTitle", IDS_SETTINGS_AERIUM_CLEANUP_PAGE_TITLE},
++      {"aeriumCleanupDesc", IDS_SETTINGS_AERIUM_CLEANUP_DESC},
+       {"siteRulesHeader", IDS_SETTINGS_SITE_RULES_HEADER},
+       {"siteRulesDesc", IDS_SETTINGS_SITE_RULES_DESC},
+       {"siteRulesNone", IDS_SETTINGS_SITE_RULES_NONE},
+--- a/chrome/browser/resources/settings/BUILD.gn
++++ b/chrome/browser/resources/settings/BUILD.gn
+@@ -130,6 +130,7 @@
+     "performance_page/tab_discard/exception_entry.ts",
+     "performance_page/tab_discard/exception_list.ts",
+     "performance_page/tab_discard/exception_tabbed_add_dialog.ts",
++    "privacy_page/aerium_cleanup_page.ts",
+     "privacy_page/clear_on_exit.ts",
+     "privacy_page/clear_on_exit_sites.ts",
+     "privacy_page/cookies_page.ts",
+--- a/chrome/browser/resources/settings/route.ts
++++ b/chrome/browser/resources/settings/route.ts
+@@ -32,6 +32,12 @@
+ 
+   r.COOKIES = r.PRIVACY.createChild('/cookies');
+ 
++  // Aerium: everything the browser deletes without being asked each time -
++  // on exit, when a tab closes, and the per-site rules over both. Not behind
++  // a pageVisibility flag: the controls it hosts are Aerium's, so there is no
++  // upstream configuration that would ever want them hidden.
++  r.AERIUM_CLEANUP = r.PRIVACY.createChild('/automaticCleanup');
++
+   if (loadTimeData.getBoolean('isAdPrivacyAvailable')) {
+     r.PRIVACY_SANDBOX = r.PRIVACY.createChild('/adPrivacy');
+     if (!loadTimeData.getBoolean('isPrivacySandboxRestricted')) {
+--- a/chrome/browser/resources/settings/router.ts
++++ b/chrome/browser/resources/settings/router.ts
+@@ -15,6 +15,7 @@
+ export interface SettingsRoutes {
+   ABOUT: Route;
+   ACCESSIBILITY: Route;
++  AERIUM_CLEANUP: Route;
+   AERIUM_GUARD: Route;
+   ADDRESSES: Route;
+   ADVANCED: Route;
+--- a/chrome/browser/resources/settings/lazy_load.ts
++++ b/chrome/browser/resources/settings/lazy_load.ts
+@@ -23,6 +23,7 @@
+ import './clear_browsing_data_dialog/clear_browsing_data_dialog.js';
+ import './clear_browsing_data_dialog/clear_browsing_data_time_picker.js';
+ import './glic_page/glic_login_permissions_page.js';
++import './privacy_page/aerium_cleanup_page.js';
+ import './privacy_page/cookies_page.js';
+ import './privacy_page/privacy_guide/privacy_guide_dialog.js';
+ import './privacy_page/privacy_guide/privacy_guide_page.js';
+--- a/chrome/browser/resources/settings/privacy_page/privacy_page.html
++++ b/chrome/browser/resources/settings/privacy_page/privacy_page.html
+@@ -11,12 +11,13 @@
+           on-close="onPrivacyGuideDialogClosed_">
+       </settings-privacy-guide-dialog>
+     </template>
+-    <settings-clear-on-exit id="clearOnExit" prefs="{{prefs}}">
+-    </settings-clear-on-exit>
+-    <settings-ephemeral-sites id="ephemeralSites" prefs="{{prefs}}">
+-    </settings-ephemeral-sites>
+-    <settings-site-rules id="siteRules" prefs="{{prefs}}">
+-    </settings-site-rules>
++    <cr-link-row id="aeriumCleanupLinkRow"
++        start-icon="cr:delete"
++        label="$i18n{aeriumCleanupPageTitle}"
++        sub-label="$i18n{aeriumCleanupDesc}"
++        on-click="onAeriumCleanupClick_"
++        role-description="$i18n{subpageArrowRoleDescription}">
++    </cr-link-row>
+     <cr-link-row id="clearBrowsingData"
+         start-icon="cr:delete"
+         class="hr" label="$i18n{clearBrowsingData}"
+--- a/chrome/browser/resources/settings/privacy_page/privacy_page.ts
++++ b/chrome/browser/resources/settings/privacy_page/privacy_page.ts
+@@ -16,9 +16,6 @@
+ import '../privacy_icons.html.js';
+ import '../settings_page/settings_section.js';
+ import '../settings_shared.css.js';
+-import './clear_on_exit.js';
+-import './ephemeral_sites.js';
+-import './site_rules.js';
+ import './privacy_guide/privacy_guide_dialog.js';
+ 
+ import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+@@ -168,6 +165,11 @@
+     Router.getInstance().navigateTo(routes.SITE_SETTINGS);
+   }
+ 
++  private onAeriumCleanupClick_() {
++    this.interactedWithPage_();
++    Router.getInstance().navigateTo(routes.AERIUM_CLEANUP);
++  }
++
+   private onSecurityPageClick_() {
+     this.interactedWithPage_();
+     this.metricsBrowserProxy_.recordAction(
+@@ -242,6 +244,10 @@
+       map.set(routes.PRIVACY_SANDBOX.path, '#privacySandboxLinkRow');
+     }
+ 
++    if (routes.AERIUM_CLEANUP) {
++      map.set(routes.AERIUM_CLEANUP.path, '#aeriumCleanupLinkRow');
++    }
++
+     if (routes.SECURITY) {
+       map.set(routes.SECURITY.path, '#securityLinkRow');
+     }
+@@ -257,6 +263,9 @@
+   override getAssociatedControlFor(childViewId: string): HTMLElement {
+     let triggerId: string|null = null;
+     switch (childViewId) {
++      case 'aeriumCleanup':
++        triggerId = 'aeriumCleanupLinkRow';
++        break;
+       case 'cookies':
+         triggerId = 'thirdPartyCookiesLinkRow';
+         break;
+--- a/chrome/browser/resources/settings/privacy_page/privacy_page_index.html
++++ b/chrome/browser/resources/settings/privacy_page/privacy_page_index.html
+@@ -95,6 +95,15 @@
+   <!-- Keep entries below sorted based on the route name. -->
+ 
+   <template is="dom-if" if="[[renderView_(
++      routes_.AERIUM_CLEANUP, currentRoute, inSearchMode)]]"
++      update-when-false>
++    <settings-aerium-cleanup-page slot="view" id="aeriumCleanup"
++        data-parent-view-id="privacy" prefs="{{prefs}}"
++        route-path$="[[routes_.AERIUM_CLEANUP.path]]">
++    </settings-aerium-cleanup-page>
++  </template>
++
++  <template is="dom-if" if="[[renderView_(
+       routes_.COOKIES, currentRoute, inSearchMode)]]"
+       update-when-false>
+     <settings-cookies-page slot="view" id="cookies"
+--- /dev/null
++++ b/chrome/browser/resources/settings/privacy_page/aerium_cleanup_page.html
+@@ -0,0 +1,10 @@
++<style include="settings-shared"></style>
++<settings-subpage page-title="$i18n{aeriumCleanupPageTitle}"
++    route-path$="[[routePath]]">
++  <settings-clear-on-exit id="clearOnExit" prefs="{{prefs}}">
++  </settings-clear-on-exit>
++  <settings-ephemeral-sites id="ephemeralSites" prefs="{{prefs}}">
++  </settings-ephemeral-sites>
++  <settings-site-rules id="siteRules" prefs="{{prefs}}">
++  </settings-site-rules>
++</settings-subpage>
+--- /dev/null
++++ b/chrome/browser/resources/settings/privacy_page/aerium_cleanup_page.ts
+@@ -0,0 +1,57 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++/**
++ * @fileoverview
++ * 'settings-aerium-cleanup-page' is the subpage behind the "Automatic cleanup"
++ * row on Privacy and security. It holds the three blocks that decide what
++ * Aerium deletes on its own: the delete-on-exit toggle with its eight data
++ * types and its never-delete list, the delete-when-the-last-tab-closes toggle
++ * with its delay and cache options, and the per-site rules table.
++ *
++ * They used to sit inline on Privacy and security, one after another, which
++ * put five switches, a number field and a table between the page title and
++ * "Delete browsing data". Behind one row they are a thing you go and set up,
++ * which is what they are.
++ *
++ * The three elements are unchanged and still own their own prefs; this page
++ * only groups them and gives them a title and a back arrow. It composes
++ * PrefsMixin because it forwards prefs to all three, and SettingsViewMixin
++ * because every cr-view-manager view needs the routePath it supplies.
++ */
++import '../settings_page/settings_subpage.js';
++import '../settings_shared.css.js';
++import './clear_on_exit.js';
++import './ephemeral_sites.js';
++import './site_rules.js';
++
++import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
++import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
++
++import {SettingsViewMixin} from '../settings_page/settings_view_mixin.js';
++
++import {getTemplate} from './aerium_cleanup_page.html.js';
++
++const SettingsAeriumCleanupPageElementBase =
++    SettingsViewMixin(PrefsMixin(PolymerElement));
++
++export class SettingsAeriumCleanupPageElement extends
++    SettingsAeriumCleanupPageElementBase {
++  static get is() {
++    return 'settings-aerium-cleanup-page';
++  }
++
++  static get template() {
++    return getTemplate();
++  }
++}
++
++declare global {
++  interface HTMLElementTagNameMap {
++    'settings-aerium-cleanup-page': SettingsAeriumCleanupPageElement;
++  }
++}
++
++customElements.define(
++    SettingsAeriumCleanupPageElement.is, SettingsAeriumCleanupPageElement);

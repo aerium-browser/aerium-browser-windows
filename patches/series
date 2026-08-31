@@ -52,3 +52,5 @@ ungoogled-fatih/aerium-site-rules.patch
 ungoogled-fatih/aerium-brand-theme.patch
 ungoogled-fatih/aerium-brand-shape.patch
 ungoogled-fatih/aerium-brand-surfaces.patch
+ungoogled-fatih/aerium-no-auto-pin-tab-groups.patch
+ungoogled-fatih/aerium-cleanup-subpage.patch

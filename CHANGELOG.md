@@ -18,6 +18,18 @@ behind any of this.
   address bar with softer corners, and tabs to match. Small on purpose: enough
   to recognise, not enough to fight your muscle memory.
 
+**Settings, tidied**
+
+- Everything Aerium deletes on its own — on exit, when a tab's last window
+  closes, and the per-site rules over both — now lives behind one **Automatic
+  cleanup** row on Privacy and security instead of five switches, a number
+  field and a table stacked on the page. Nothing was removed; open the row and
+  every option is where it was.
+- **Automatically pin new tab groups created on any device to the bookmarks
+  bar** is gone from Appearance, and the behaviour is off. Chromium turned it
+  on by default, which meant the browser rearranged your bookmarks bar without
+  being asked; an option to stop that is not the same as not doing it.
+
 **Privacy and security**
 
 - The **Never delete data for these sites** list is now reachable when it

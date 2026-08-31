@@ -305,6 +305,16 @@ def main():
         action='store_true'
     )
     parser.add_argument(
+        '--ninja-timeout',
+        type=float,
+        default=3.5 * 60 * 60,
+        dest='ninja_timeout',
+        help=('Seconds to let ninja compile before stopping it gracefully so the '
+              'stage can checkpoint. The stage action passes what is left of the '
+              'six-hour job limit after restoring the tree, minus the time the '
+              'checkpoint needs; the default is the fixed budget this used to '
+              'have. Default: %(default)s'))
+    parser.add_argument(
         '--x86',
         action='store_true'
     )
@@ -527,7 +537,13 @@ def main():
 
     # Run ninja
     if args.ci:
-        _run_build_process_timeout(*ninja_commandline, timeout=3.5*60*60)
+        # Not a constant any more: a stage spends whatever the tree restore
+        # costs before it compiles anything, and that grows with the tree. On
+        # run 33089940410 the restore took 1h59m, so a fixed 3.5h of ninja put
+        # the checkpoint upload past GitHub's six-hour job cap and the stage
+        # was killed eight seconds into it. The caller measures what is
+        # actually left and passes it in.
+        _run_build_process_timeout(*ninja_commandline, timeout=args.ninja_timeout)
         # package
         os.chdir(_ROOT_DIR)
         # check=True: without it a failing package.py (missing mini_installer,

@@ -67,6 +67,7 @@ async function run() {
     process.on('SIGINT', function() {
     })
     const finished = core.getBooleanInput('finished', {required: true});
+    const stageStartMs = Date.now();
     const from_artifact = core.getBooleanInput('from_artifact', {required: true});
     const resumeRunId = core.getInput('resume_run_id', {required: false});
     const githubToken = core.getInput('github_token', {required: false});
@@ -81,6 +82,40 @@ async function run() {
     const artifact = new DefaultArtifactClient();
     const artifactName = x86 ? 'build-artifact-x86' : (arm ? 'build-artifact-arm' : 'build-artifact');
 
+    // The checkpoint lives in one of two slots, alternating between stages.
+    //
+    // A run cannot hold two artifacts with the same name, so saving to a fixed
+    // name means deleting the old checkpoint before uploading the new one -
+    // and anything that interrupts that window leaves the run with no
+    // checkpoint at all. That is not hypothetical: on run 33089940410 the
+    // stage stopped ninja gracefully at its 3.5h limit with 2418 edges left,
+    // spent 23 minutes packing the tree, deleted the previous checkpoint at
+    // 02:13:12, started the upload at 02:13:13, and was killed by GitHub's
+    // six-hour job cap at 02:13:22. Zero artifacts survived, auto-resume
+    // correctly reported there was nothing to resume from, and five stages of
+    // compiling were gone.
+    //
+    // With two slots the new checkpoint is written to whichever slot is not
+    // holding the current one, and the old slot is deleted only after the
+    // upload has actually succeeded. There is always at least one complete
+    // checkpoint on disk, so the same kill loses one stage rather than all of
+    // them.
+    //
+    // The first slot keeps the historical name, so a cross-run resume that
+    // reaches back into a run made before this change still finds it.
+    const artifactSlots = [artifactName, `${artifactName}-b`];
+
+    // getArtifact() throws when the name is absent, which is an ordinary
+    // answer here rather than an error - a fresh run has neither slot.
+    async function findSlot(name, findBy) {
+        try {
+            const found = await artifact.getArtifact(name, findBy ? {findBy} : undefined);
+            return found.artifact;
+        } catch (e) {
+            return null;
+        }
+    }
+
     if (from_artifact) {
         // Cross-run resume (build-1 of a fresh dispatch picking up a dead
         // run's last checkpoint) needs findBy - same-run lookups (build-2
@@ -94,8 +129,23 @@ async function run() {
             repositoryOwner: process.env.GITHUB_REPOSITORY.split('/')[0],
             repositoryName: process.env.GITHUB_REPOSITORY.split('/')[1],
         } : undefined;
-        const artifactInfo = await artifact.getArtifact(artifactName, findBy ? {findBy} : undefined);
-        await artifact.downloadArtifact(artifactInfo.artifact.id, {path: 'C:\\ungoogled-chromium-windows\\build', findBy});
+        // Whichever slot holds the newer checkpoint. Artifact ids increase
+        // monotonically, so the larger id is the later upload; a run written
+        // before the two-slot scheme has only the first slot and picks it.
+        const found = [];
+        for (const slot of artifactSlots) {
+            const info = await findSlot(slot, findBy);
+            if (info) {
+                found.push(info);
+            }
+        }
+        if (found.length === 0) {
+            throw new Error(
+                `no checkpoint to resume from: neither ${artifactSlots.join(' nor ')} exists`);
+        }
+        const newest = found.reduce((a, b) => (b.id > a.id ? b : a));
+        console.log(`resuming from ${newest.name} (artifact ${newest.id})`);
+        await artifact.downloadArtifact(newest.id, {path: 'C:\\ungoogled-chromium-windows\\build', findBy});
 
         // Immediately after a large download, Windows Defender's on-access
         // scanner can still hold a lock on the freshly-written zip for a
@@ -149,7 +199,38 @@ async function run() {
     // is serialised by GN's own concurrent_links pool regardless of -j. If a
     // compile does get OOM-killed, the retry loop below resumes ninja in
     // place rather than losing the stage.
-    const args = ['build.py', '--ci', '-j', '4']
+    // How long ninja may run, rather than a fixed 3.5h.
+    //
+    // A stage does not start compiling when it starts: it downloads and
+    // extracts a multi-gigabyte tree first, and that cost grows with the
+    // tree. On run 33089940410 the restore took 1h59m, so 3.5h of ninja on
+    // top of it left the 23-minute pack and the upload straddling GitHub's
+    // six-hour job cap - the stage was killed eight seconds into the upload
+    // and the run lost five stages of work.
+    //
+    // So the budget is measured, not assumed: six hours, minus what this
+    // stage has already spent, minus what the checkpoint still needs. The
+    // reserve covers the post-build edge count, the pack, the upload and the
+    // setup steps that ran before this action did, with room to spare -
+    // overrunning the cap costs a whole stage, while reserving a few minutes
+    // too many costs a few minutes.
+    //
+    // Capped at the old 3.5h so this can only ever shorten a stage, and
+    // floored at 30 minutes so a pathologically slow restore still makes some
+    // progress instead of checkpointing an unchanged tree forever.
+    const JOB_LIMIT_SECONDS = 6 * 60 * 60;
+    const CHECKPOINT_RESERVE_SECONDS = 55 * 60;
+    const MAX_NINJA_SECONDS = 3.5 * 60 * 60;
+    const MIN_NINJA_SECONDS = 30 * 60;
+    const spentSeconds = Math.round((Date.now() - stageStartMs) / 1000);
+    const ninjaSeconds = Math.max(
+        MIN_NINJA_SECONDS,
+        Math.min(MAX_NINJA_SECONDS,
+                 JOB_LIMIT_SECONDS - spentSeconds - CHECKPOINT_RESERVE_SECONDS));
+    appendSummary(`- **compile budget**: ${(ninjaSeconds / 3600).toFixed(2)}h`
+        + ` (${(spentSeconds / 60).toFixed(0)} min already spent restoring)`);
+
+    const args = ['build.py', '--ci', '-j', '4', '--ninja-timeout', String(ninjaSeconds)]
     if (x86)
         args.push('--x86')
     if (arm)
@@ -237,21 +318,68 @@ async function run() {
         await new Promise(r => setTimeout(r, 5000));
         await exec.exec('7z', ['a', '-tzip', 'C:\\ungoogled-chromium-windows\\artifacts.zip',
             'C:\\ungoogled-chromium-windows\\build\\src', '-mx=3', '-mtc=on'], {ignoreReturnCode: true});
+        // Write to the free slot, keeping the existing checkpoint intact for
+        // the whole of the pack-and-upload window, and only drop it once the
+        // replacement is actually stored. See the slot comment above for the
+        // run this is here to stop repeating.
+        const current = {};
+        for (const slot of artifactSlots) {
+            current[slot] = await findSlot(slot);
+        }
+        const occupied = artifactSlots.filter(slot => current[slot]);
+        let target;
+        let previous = null;
+        if (occupied.length === 0) {
+            // Nothing to lose - first checkpoint of the run.
+            target = artifactSlots[0];
+        } else if (occupied.length === 1) {
+            previous = occupied[0];
+            target = artifactSlots.find(slot => slot !== previous);
+        } else {
+            // Both occupied, which means a previous stage was interrupted
+            // after uploading but before it could clear the older slot.
+            // Overwrite the older one and keep the newer as the fallback.
+            const older = current[artifactSlots[0]].id < current[artifactSlots[1]].id
+                ? artifactSlots[0] : artifactSlots[1];
+            target = older;
+            previous = artifactSlots.find(slot => slot !== older);
+            try {
+                await artifact.deleteArtifact(target);
+            } catch (e) {
+                // ignored - the upload below reports the real failure
+            }
+        }
+
+        let uploaded = false;
         for (let i = 0; i < 5; ++i) {
             try {
-                await artifact.deleteArtifact(artifactName);
-            } catch (e) {
-                // ignored
-            }
-            try {
-                await artifact.uploadArtifact(artifactName, ['C:\\ungoogled-chromium-windows\\artifacts.zip'],
+                await artifact.uploadArtifact(target, ['C:\\ungoogled-chromium-windows\\artifacts.zip'],
                     'C:\\ungoogled-chromium-windows', {retentionDays: 10, compressionLevel: 0});
+                uploaded = true;
                 break;
             } catch (e) {
                 console.error(`Upload artifact failed: ${e}`);
                 // Wait 10 seconds between the attempts
                 await new Promise(r => setTimeout(r, 10000));
             }
+        }
+
+        if (uploaded) {
+            appendSummary(`- **checkpoint**: saved to \`${target}\``);
+            if (previous) {
+                try {
+                    await artifact.deleteArtifact(previous);
+                } catch (e) {
+                    // Leaving the old slot behind costs one checkpoint of
+                    // storage for its retention period and nothing else - the
+                    // next stage picks the newer of the two by id.
+                    console.log(`could not remove the previous checkpoint ${previous}: ${e}`);
+                }
+            }
+        } else if (previous) {
+            appendSummary(`- **checkpoint**: upload failed, resuming from \`${previous}\``);
+        } else {
+            appendSummary('- **checkpoint**: upload failed and there was no earlier one');
         }
         core.setOutput('finished', false);
     }

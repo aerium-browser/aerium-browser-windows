@@ -28,9 +28,29 @@ The pref stays SYNCABLE_PREF. Aerium ships no sync, so it never travels, and
 leaving the registration shape alone keeps the diff to the one value that
 matters.
 
+# Rebased onto Chromium 152: appearance_page.html became
+# appearance_page.html.ts when that page moved to Lit, and the toggle's
+# pref binding moved with it - pref="{{prefs.auto_pin_new_tab_groups}}" is now
+# pref-key="auto_pin_new_tab_groups". The element removed is the same one.
+
+--- a/chrome/browser/resources/settings/appearance_page/appearance_page.html.ts
++++ b/chrome/browser/resources/settings/appearance_page/appearance_page.html.ts
+@@ -213,12 +213,6 @@ export function getHtml(this: SettingsAppearancePageElement) {
+         ?hidden="${this.showOrganizerPanelEnabled_}">
+     </settings-toggle-button>
+ 
+-    <settings-toggle-button class="hr" id="autoPinNewTabGroups"
+-        pref-key="auto_pin_new_tab_groups"
+-        label="$i18n{autoPinNewTabGroups}"
+-        ?hidden="${this.showOrganizerPanelEnabled_}">
+-    </settings-toggle-button>
+-
+     ${this.showCtrlTabMru_ ? html`
+       <settings-toggle-button class="hr" id="ctrlTabMru"
+           pref-key="browser.ctrl_tab_mru"
 --- a/components/saved_tab_groups/public/pref_names.cc
 +++ b/components/saved_tab_groups/public/pref_names.cc
-@@ -32,8 +32,12 @@
+@@ -32,8 +32,12 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
        prefs::kStopShowingTabGroupConfirmationOnTabClose, false);
  #endif  // BUILDFLAG(IS_ANDROID)
  
@@ -44,18 +64,3 @@ matters.
        user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
  
    registry->RegisterBooleanPref(prefs::kSavedTabGroupSpecificsToDataMigration,
---- a/chrome/browser/resources/settings/appearance_page/appearance_page.html
-+++ b/chrome/browser/resources/settings/appearance_page/appearance_page.html
-@@ -245,12 +245,6 @@
-             hidden="[[showProjectsPanelEnabled_]]">
-         </settings-toggle-button>
- 
--        <settings-toggle-button class="hr" id="autoPinNewTabGroups"
--            pref="{{prefs.auto_pin_new_tab_groups}}"
--            label="$i18n{autoPinNewTabGroups}"
--            hidden="[[showProjectsPanelEnabled_]]">
--        </settings-toggle-button>
--
-         <template is="dom-if" if="[[showCtrlTabMru_]]">
-           <settings-toggle-button class="hr" id="ctrlTabMru"
-               pref="{{prefs.browser.ctrl_tab_mru}}"

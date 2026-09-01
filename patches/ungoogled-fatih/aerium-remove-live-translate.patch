@@ -50,63 +50,75 @@ them, and they are emitted from the *shared* captions strings provider that
 also feeds the Live Caption UI we keep, so stripping them there would risk
 the captions subpage for no user-visible gain.
 
+# Rebased onto Chromium 152, where the settings pages this touches moved from
+# Polymer to Lit. live_caption.html is now live_caption.html.ts and the
+# dom-if wrapper around <settings-live-translate> is a template literal, so the
+# element is removed from the new file rather than re-anchored in the old one.
+# The BUILD.gn entries moved with it: live_translate's .ts and generated
+# .html.ts belong to ts_files now instead of web_component_files, and its .css
+# is listed separately again, so all three come out.
+
 --- a/chrome/browser/resources/settings/BUILD.gn
 +++ b/chrome/browser/resources/settings/BUILD.gn
-@@ -273,7 +273,6 @@
-   if (!is_chromeos) {
-     web_component_files += [
+@@ -394,8 +394,6 @@ build_webui("build") {
+     ts_files += [
+       "a11y_page/live_caption.html.ts",
        "a11y_page/live_caption.ts",
+-      "a11y_page/live_translate.html.ts",
 -      "a11y_page/live_translate.ts",
-       "clear_browsing_data_dialog/clear_browsing_data_account_indicator.ts",
+       "default_browser_page/default_browser_browser_proxy.ts",
+       "default_browser_page/default_browser_page.html.ts",
        "default_browser_page/default_browser_page.ts",
-       "languages_page/add_languages_dialog.ts",
---- a/chrome/browser/resources/settings/a11y_page/live_caption.html
-+++ b/chrome/browser/resources/settings/a11y_page/live_caption.html
-@@ -89,9 +89,6 @@
+@@ -456,7 +454,6 @@ build_webui("build") {
+     "a11y_page/a11y_page_index.css",
+     "a11y_page/captions_page.css",
+     "a11y_page/live_caption.css",
+-    "a11y_page/live_translate.css",
+     "about_page/about_page.css",
+     "appearance_page/appearance_fonts_page.css",
+     "appearance_page/appearance_page.css",
+--- a/chrome/browser/resources/settings/a11y_page/live_caption.html.ts
++++ b/chrome/browser/resources/settings/a11y_page/live_caption.html.ts
+@@ -77,9 +77,6 @@ ${this.enableLiveCaptionMultiLanguage_ ? html`
          label="$i18n{captionsMaskOffensiveWordsTitle}">
      </settings-toggle-button>
    </cr-collapse>
--  <template is="dom-if" if="[[enableLiveTranslate_]]">
--    <settings-live-translate prefs="{{prefs}}"></settings-live-translate>
--  </template>
- </template>
- <template is="dom-if" if="[[showAddLanguagesDialog_]]" restamp>
+-  ${this.enableLiveTranslate_ ? html`
+-    <settings-live-translate></settings-live-translate>
+-  ` : ''}
+ ` : ''}
+ ${this.showAddLanguagesDialog_ ? html`
    <settings-add-languages-dialog id="addLanguagesDialog"
 --- a/chrome/browser/resources/settings/a11y_page/live_caption.ts
 +++ b/chrome/browser/resources/settings/a11y_page/live_caption.ts
-@@ -36,7 +36,6 @@
- import type {CrActionMenuElement} from '//resources/cr_elements/cr_action_menu/cr_action_menu.js';
- import type {CrLazyRenderElement} from 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.js';
- 
--import './live_translate.js';
+@@ -35,7 +35,6 @@ import {getHtml} from './live_caption.html.js';
+ import 'chrome://resources/cr_elements/cr_action_menu/cr_action_menu.js';
+ import '//resources/cr_elements/cr_lazy_render/cr_lazy_render_lit.js';
  import '../languages_page/add_languages_dialog.js';
+-import './live_translate.js';
  
- import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-@@ -92,13 +91,6 @@
-       },
+ import type {CrActionMenuElement} from '//resources/cr_elements/cr_action_menu/cr_action_menu.js';
+ import type {CrLazyRenderLitElement} from '//resources/cr_elements/cr_lazy_render/cr_lazy_render_lit.js';
+@@ -88,7 +87,6 @@ export class SettingsLiveCaptionElement extends SettingsLiveCaptionElementBase {
  
        // <if expr="not is_chromeos">
--      enableLiveTranslate_: {
--        type: Boolean,
--        value: function() {
--          return loadTimeData.getBoolean('enableLiveTranslate');
--        },
--      },
--
-       installedLanguagePacks_: {
-         type: Array,
-         value: () => [],
-@@ -120,7 +112,6 @@
-   }
- 
+       liveCaptionLanguagePref_: {type: Object},
+-      enableLiveTranslate_: {type: Boolean},
+       installedLanguagePacks_: {type: Array},
+       availableLanguagePacks_: {type: Array},
+       detailLanguage_: {type: Object},
+@@ -105,8 +103,6 @@ export class SettingsLiveCaptionElement extends SettingsLiveCaptionElementBase {
    // <if expr="not is_chromeos">
--  declare private enableLiveTranslate_: boolean;
-   declare private installedLanguagePacks_: LiveCaptionLanguageList;
-   declare private availableLanguagePacks_: LiveCaptionLanguageList;
-   declare private detailLanguage_?: LiveCaptionLanguage;
+   protected accessor liveCaptionLanguagePref_:
+       chrome.settingsPrivate.PrefObject<string>|undefined;
+-  protected accessor enableLiveTranslate_: boolean =
+-      loadTimeData.getBoolean('enableLiveTranslate');
+   protected accessor installedLanguagePacks_: LiveCaptionLanguageList = [];
+   protected accessor availableLanguagePacks_: LiveCaptionLanguageList = [];
+   protected accessor detailLanguage_: LiveCaptionLanguage|undefined;
 --- a/chrome/browser/resources/settings/lazy_load.ts
 +++ b/chrome/browser/resources/settings/lazy_load.ts
-@@ -159,7 +159,6 @@
+@@ -155,7 +155,6 @@ export {SettingsAxAnnotationsSectionElement} from './a11y_page/ax_annotations_se
  // </if>
  // <if expr="not is_chromeos">
  export {SettingsLiveCaptionElement} from './a11y_page/live_caption.js';

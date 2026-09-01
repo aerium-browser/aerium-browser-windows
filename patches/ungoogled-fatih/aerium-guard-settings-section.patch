@@ -183,6 +183,11 @@ where the page decides the divider rather than the row deciding it for itself.
 The element is otherwise untouched: same template, same id, same prefs
 binding, same single consumer.
 
+# Rebased onto Chromium 152: the a11y_page entries that anchored the
+# web_component_files insertion moved to ts_files when those pages became Lit,
+# so the entry now goes at the head of the list. Alphabetically it belongs
+# there anyway - aerium_guard_page sorts before ai_page.
+
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
 @@ -2211,6 +2211,48 @@
@@ -236,10 +241,11 @@ binding, same single consumer.
      </message>
 --- a/chrome/browser/resources/settings/BUILD.gn
 +++ b/chrome/browser/resources/settings/BUILD.gn
-@@ -54,6 +54,7 @@
+@@ -49,7 +49,8 @@
+   ]
+ 
+   # -----------------web_component_files start ---------------------------------
    web_component_files = [
-     "a11y_page/a11y_page.ts",
-     "a11y_page/a11y_page_index.ts",
 +    "aerium_guard_page/aerium_guard_page.ts",
      "ai_page/ai_info_card.ts",
      "ai_page/ai_logging_info_bullet.ts",

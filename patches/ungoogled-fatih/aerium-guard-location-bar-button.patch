@@ -88,6 +88,10 @@ Aerium Guard block: the button's tooltip, the bubble's one-line description, and
 the line shown when the current settings match no mode. Everything else the
 bubble displays - its title, the three mode names, the note about flags needing a
 restart - reuses the messages the settings page already defines.
+# Rebased onto Chromium 152: ai_mode_page_action_icon_view left both lists, so
+# the entries anchor on content_setting_image_view instead. Alphabetical order
+# is unchanged - aerium_guard_icon_view still sorts first.
+
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
 @@ -2253,6 +2253,22 @@
@@ -120,17 +124,17 @@ restart - reuses the messages the settings page already defines.
    if (toolkit_views) {
      public += [
 +      "aerium_guard_icon_view.h",
-       "ai_mode_page_action_icon_view.h",
        "content_setting_image_view.h",
        "custom_tab_bar_view.h",
-@@ -80,6 +81,7 @@
+       "lens_overlay_homework_page_action_controller.h",
+@@ -78,6 +79,7 @@
  
    if (toolkit_views) {
      sources += [
 +      "aerium_guard_icon_view.cc",
-       "ai_mode_page_action_icon_view.cc",
        "content_setting_image_view.cc",
        "custom_tab_bar_view.cc",
+       "lens_overlay_homework_page_action_controller.cc",
 @@ -179,6 +181,7 @@
        "//components/security_state/core",
        "//components/strings:components_strings",

@@ -49,6 +49,12 @@ Two details that are easy to get wrong here
   to resolve - cr-icon draws nothing at all for an iconset:id pair that does
   not, which is a silent failure this page has been bitten by before.
 
+
+# Rebased onto Chromium 152: the isAdPrivacyAvailable block that followed
+# r.COOKIES is gone from route.ts, so the new route anchors on the
+# enableSecurityKeysSubpage block that follows it now. Same position, same
+# parent.
+
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
 @@ -2287,6 +2287,12 @@
@@ -87,7 +93,7 @@ Two details that are easy to get wrong here
      "privacy_page/cookies_page.ts",
 --- a/chrome/browser/resources/settings/route.ts
 +++ b/chrome/browser/resources/settings/route.ts
-@@ -32,6 +32,12 @@
+@@ -32,6 +32,12 @@ function addPrivacyChildRoutes(r: Partial<SettingsRoutes>) {
  
    r.COOKIES = r.PRIVACY.createChild('/cookies');
  
@@ -97,9 +103,9 @@ Two details that are easy to get wrong here
 +  // upstream configuration that would ever want them hidden.
 +  r.AERIUM_CLEANUP = r.PRIVACY.createChild('/automaticCleanup');
 +
-   if (loadTimeData.getBoolean('isAdPrivacyAvailable')) {
-     r.PRIVACY_SANDBOX = r.PRIVACY.createChild('/adPrivacy');
-     if (!loadTimeData.getBoolean('isPrivacySandboxRestricted')) {
+   if (loadTimeData.getBoolean('enableSecurityKeysSubpage')) {
+     r.SECURITY_KEYS = r.SECURITY.createChild('/securityKeys');
+   }
 --- a/chrome/browser/resources/settings/router.ts
 +++ b/chrome/browser/resources/settings/router.ts
 @@ -15,6 +15,7 @@

@@ -1,115 +1,41 @@
-# Sec-GPC injection at the render_frame_impl.cc site below feeds into every
-# renderer-initiated navigation's BeginNavigation IPC to the browser process.
-# content/browser/renderer_host/ipc_utils.cc's VerifyNavigationHeaders()
-# strictly allowlists which headers a navigation may carry - DNT is on that
-# list (which is why the DNT injection at this same call site is safe), but
-# Sec-GPC never was, since it doesn't exist upstream. Without the
-# ipc_utils.cc hunk below, the browser process kills the renderer
-# (bad_message.h reason 342, RFH_INVALID_NAVIGATION_HEADERS) on every single
-# navigation - reproduced as RESULT_CODE_KILLED_BAD_MESSAGE on any URL entry.
+Global Privacy Control, now that Chromium ships it.
 
---- a/third_party/blink/renderer/core/frame/navigator.idl
-+++ b/third_party/blink/renderer/core/frame/navigator.idl
-@@ -26,6 +26,8 @@
-     [MeasureAs=NavigatorVendorSub] readonly attribute DOMString vendorSub;
-     [MeasureAs=NavigatorProductSub] readonly attribute DOMString productSub;
-     [MeasureAs=NavigatorVendor] readonly attribute DOMString vendor;
-+    // https://w3c.github.io/gpc/#dom-navigator-globalprivacycontrol
-+    readonly attribute boolean globalPrivacyControl;
- };
- 
- Navigator includes NavigatorConcurrentHardware;
---- a/third_party/blink/renderer/core/frame/navigator.h
-+++ b/third_party/blink/renderer/core/frame/navigator.h
-@@ -44,6 +44,7 @@
-   String productSub() const;
-   String vendor() const;
-   String vendorSub() const;
-+  bool globalPrivacyControl() const;
- 
-   String platform() const override;
- 
---- a/third_party/blink/renderer/core/frame/navigator.cc
-+++ b/third_party/blink/renderer/core/frame/navigator.cc
-@@ -55,6 +55,12 @@
-   return "";
- }
- 
-+bool Navigator::globalPrivacyControl() const {
-+  // https://w3c.github.io/gpc/#dom-navigator-globalprivacycontrol
-+  // Aerium always opts users out; there's no per-site toggle to check.
-+  return true;
-+}
-+
- String Navigator::platform() const {
-   // TODO(955620): Consider changing devtools overrides to only allow overriding
-   // the platform with a frozen platform to distinguish between
---- a/content/browser/loader/browser_initiated_resource_request.cc
-+++ b/content/browser/loader/browser_initiated_resource_request.cc
-@@ -31,6 +31,14 @@
-     headers->SetHeaderIfMissing(blink::kDoNotTrackHeader, "1");
-   }
- 
-+  // Global Privacy Control opt-out signal (https://w3c.github.io/gpc/),
-+  // legally recognized under CCPA. Sent unconditionally, matching
-+  // Brave/DuckDuckGo's default behavior - there's no per-site toggle.
-+  if (should_update_existing_headers) {
-+    headers->RemoveHeader("Sec-GPC");
-+  }
-+  headers->SetHeaderIfMissing("Sec-GPC", "1");
-+
-   // TODO(crbug.com/40833603): WARNING: This bypasses the permissions policy.
-   // Unfortunately, workers lack a permissions policy and to derive proper hints
-   // https://github.com/w3c/webappsec-permissions-policy/issues/207.
---- a/content/renderer/render_frame_impl.cc
-+++ b/content/renderer/render_frame_impl.cc
-@@ -4559,6 +4559,10 @@
-         blink::WebString::FromUtf8(blink::kDoNotTrackHeader), "1");
-   }
- 
-+  // Global Privacy Control - see content/browser/loader/
-+  // browser_initiated_resource_request.cc for the browser-initiated case.
-+  request.SetHttpHeaderField(blink::WebString::FromUtf8("Sec-GPC"), "1");
-+
-   // The request's extra data may indicate that we should set a custom user
-   // agent. This needs to be done here, after WebKit is through with setting the
-   // user agent on its own.
---- a/content/browser/renderer_host/ipc_utils.cc
-+++ b/content/browser/renderer_host/ipc_utils.cc
-@@ -480,7 +480,15 @@
-         header.name() != net::HttpRequestHeaders::kContentType &&
-         header.name() != net::HttpRequestHeaders::kUserAgent &&
-         header.name() != net::HttpRequestHeaders::kSecPurpose &&
--        header.name() != net::HttpRequestHeaders::kDNT) {
-+        header.name() != net::HttpRequestHeaders::kDNT &&
-+        // Aerium: Sec-GPC is injected unconditionally alongside DNT at the
-+        // same renderer call sites (see FinalizeRequestInternal in
-+        // content/renderer/render_frame_impl.cc), so it must be allowlisted
-+        // here the same way DNT is - otherwise every renderer-initiated
-+        // navigation carries a header this allowlist doesn't recognize and
-+        // gets RFH_INVALID_NAVIGATION_HEADERS-killed
-+        // (content/browser/bad_message.h reason 342).
-+        header.name() != "Sec-GPC") {
-       if (base::FeatureList::IsEnabled(
-               features::kKillOnInvalidNavigationHeaders)) {
-         SCOPED_CRASH_KEY_STRING64("Bug487795397", "invalid_header",
---- a/third_party/blink/renderer/platform/loader/fetch/url_loader/dedicated_or_shared_worker_global_scope_context_impl.cc
-+++ b/third_party/blink/renderer/platform/loader/fetch/url_loader/dedicated_or_shared_worker_global_scope_context_impl.cc
-@@ -377,6 +377,7 @@
-   if (renderer_preferences_.enable_do_not_track) {
-     request.SetHttpHeaderField(WebString::FromUtf8(kDoNotTrackHeader), "1");
-   }
-+  request.SetHttpHeaderField(WebString::FromUtf8("Sec-GPC"), "1");
- 
-   auto url_request_extra_data = base::MakeRefCounted<WebURLRequestExtraData>();
-   request.SetURLRequestExtraData(std::move(url_request_extra_data));
---- a/third_party/blink/renderer/modules/service_worker/web_service_worker_fetch_context_impl.cc
-+++ b/third_party/blink/renderer/modules/service_worker/web_service_worker_fetch_context_impl.cc
-@@ -150,6 +150,7 @@
-   if (renderer_preferences_.enable_do_not_track) {
-     request.SetHttpHeaderField(WebString::FromUtf8(kDoNotTrackHeader), "1");
-   }
-+  request.SetHttpHeaderField(WebString::FromUtf8("Sec-GPC"), "1");
-   auto url_request_extra_data = base::MakeRefCounted<WebURLRequestExtraData>();
-   url_request_extra_data->set_originated_from_service_worker(true);
- 
+Chromium 152 implements GPC itself. blink::IsGlobalPrivacyControlEnabled() in
+third_party/blink/common/global_privacy_control/global_privacy_control_util.cc
+gates the Sec-GPC header at all four call sites this patch used to edit by
+hand - browser_initiated_resource_request.cc, render_frame_impl.cc, and the
+dedicated/shared and service worker fetch contexts - and ipc_utils.cc already
+allowlists kSecGPC, so the bad-message kill this patch's header warned about
+cannot happen any more either. The navigator.globalPrivacyControl attribute is
+upstream too, behind the GlobalPrivacyControl runtime feature.
+
+All of which is implied by one flag. GlobalPrivacyControlForce has no status in
+runtime_enabled_features.json5, so it is off, and two things follow from
+turning it on: GlobalPrivacyControl lists it in implied_by, so the DOM
+attribute becomes true, and the generator gives a base::Feature whose default
+is FEATURE_ENABLED_BY_DEFAULT when status is "stable" (see the schema comment
+above base_feature_status in that file), so IsGlobalPrivacyControlEnabled()
+becomes true and the header is sent.
+
+So nine files of re-implementation become one line, and the parts most likely
+to rot at a Chromium bump - a hand-edited allowlist in ipc_utils.cc, an IDL
+attribute, four header-injection sites - go back to being upstream's problem.
+
+The behaviour is unchanged: the signal is sent unconditionally, with no
+per-site toggle, which is what Brave and DuckDuckGo do and what the CCPA
+recognises.
+
+--- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
++++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+@@ -3467,10 +3467,11 @@
+       implied_by: ["GlobalPrivacyControlForce"],
+       base_feature: "none",
+     },
+     {
+       name: "GlobalPrivacyControlForce",
++      status: "stable",
+     },
+     {
+       name: "GraphemeClusterBoundsCheck",
+       status: "stable",
+     },

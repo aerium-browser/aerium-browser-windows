@@ -457,6 +457,16 @@ def main():
         # descriptions into the unreachable placeholder domain.
         _generate_patch_manifest(source_tree)
 
+        # Put clang-format where gn expects it. Inside the prepare block, not
+        # beside the ninja call: it copies out of third_party/llvm-build, which
+        # only exists once the downloads above have been unpacked. Run
+        # unconditionally it raised on a --ci retry, where the tree exists so
+        # this block is skipped but a failure earlier in prepare meant LLVM had
+        # never been unpacked - turning someone else's error into mine two
+        # attempts later. A resumed CI tree comes from a checkpoint that
+        # already contains buildtools, so skipping it there is correct.
+        _provide_clang_format(source_tree)
+
     # Check if rust-toolchain folder has been populated
     HOST_CPU_IS_64BIT = sys.maxsize > 2**32
     RUST_DIR_DST = source_tree / 'third_party' / 'rust-toolchain'
@@ -507,10 +517,6 @@ def main():
             windows_flags += '\nchrome_pgo_phase=0\n'
         gn_flags += windows_flags
         (source_tree / 'out/Default/args.gn').write_text(gn_flags, encoding=ENCODING)
-
-    # Put clang-format where gn expects it. Unconditional and idempotent: a
-    # restored CI tree already has it, and a copy costs nothing.
-    _provide_clang_format(source_tree)
 
     # Stage bundled extensions (Chromium Web Store)
     _stage_bundled_extensions(source_tree)

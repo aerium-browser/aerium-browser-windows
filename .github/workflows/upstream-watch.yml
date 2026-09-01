@@ -172,7 +172,21 @@ jobs:
           git checkout -b "$BRANCH"
 
           git -C ungoogled-chromium checkout --quiet "$LATEST"
-          git add ungoogled-chromium
+
+          # pruning.list at the repository root is a copy of the submodule's,
+          # and build.py reads the copy for every build this CI runs - the
+          # submodule's own list is used only under --tarball, which nothing
+          # here passes. So a bump that moves the submodule and leaves the copy
+          # alone ships a list describing the previous Chromium.
+          #
+          # That is not a warning, it is a hard failure: prune_files() reports
+          # every listed-but-absent path and build.py exits 1 on a non-empty
+          # result. The 152 bump did exactly this - 159 entries naming files
+          # 152 no longer ships, 203 new ones missing - and the first build
+          # after the merge died in the prepare stage after 28 minutes.
+          cp ungoogled-chromium/pruning.list pruning.list
+
+          git add ungoogled-chromium pruning.list
           git -C ungoogled-chromium diff --stat "$PINNED" "$LATEST" | tail -20 > /tmp/diff.txt
 
           {
@@ -180,9 +194,10 @@ jobs:
             echo
             echo "Chromium $OLD_CR -> $NEW_CR."
             echo
-            echo "Opened automatically by upstream-watch. The submodule pointer is the only"
-            echo "change: downloads.ini pins toolchains rather than the Chromium source, and"
-            echo "the version is read from ungoogled-chromium/chromium_version.txt."
+            echo "Opened automatically by upstream-watch. The submodule pointer and the"
+            echo "pruning.list copy beside it are the only changes: downloads.ini pins"
+            echo "toolchains rather than the Chromium source, and the version is read from"
+            echo "ungoogled-chromium/chromium_version.txt."
             echo
             echo "$VERDICT"
           } > /tmp/commit.txt

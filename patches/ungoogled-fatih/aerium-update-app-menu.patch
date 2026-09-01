@@ -1,0 +1,178 @@
+Say a new release exists in the app menu, not only on the About page.
+
+The daily release check has been writing aerium.update.latest_version and
+aerium.update.latest_url since it landed, and the only thing that ever read
+them was a row on chrome://settings/help. That row is correct and nobody sees
+it: the About page is where you go once, to find out what version you are on,
+and there is no reason to return.
+
+Android does not have this problem - it posts a notification - so the two
+platforms have been finding out about the same release in very different ways.
+
+So the app menu gets a row, in the place Chrome puts its own update row, with
+the same icon and the same emphasis. The difference is what it does. Chrome's
+IDC_UPGRADE_DIALOG relaunches to apply an update that has already been
+downloaded and installed by an updater Aerium does not ship; this opens the
+release page, because downloading it is the user's job and always was. Reusing
+IDC_UPGRADE_DIALOG would have been shorter and would have meant the menu item
+lied about what clicking it does.
+
+Not wired through BrowserCommandController
+------------------------------------------
+AppMenuModel::ExecuteCommand and ::IsCommandIdEnabled both delegate to
+chrome::ExecuteCommandWithContext and chrome::IsCommandEnabled, which answer
+for ids the command controller knows. Registering another one means touching
+browser_command_controller.cc, browser_commands.cc and their headers to add a
+command that exists in exactly one menu and has no accelerator, no policy and
+no enabled/disabled states worth tracking.
+
+Both functions already have a place to intercept before that delegation -
+ExecuteCommand does it for IDC_VIEW_PASSWORDS, IsCommandIdEnabled for
+IDC_NEW_INCOGNITO_WINDOW - so this uses them. The row is only built when there
+is something to open, so "enabled" is unconditionally true, and the execute
+branch returns before LogMenuMetrics because there is no WrenchMenu histogram
+bucket for it and inventing one would be worse than recording nothing.
+
+The prefs are read as string literals, the same way prefs_util.cc reads them:
+including aerium_update_checker.h pulls the network service into whatever
+includes it, and app_menu_model.cc is not a place to do that. Both prefs are
+written together and both are cleared when the check finds this build is the
+newest, so testing either for empty is enough - and an offer that has been
+superseded disappears on its own.
+
+The URL is checked for https at the point it becomes a navigation. The checker
+only writes it after matching the release API's response shape, but that
+validation happened in a different process lifetime, and this is where a string
+from the network turns into a page load.
+
+--- a/chrome/app/chrome_command_ids.h
++++ b/chrome/app/chrome_command_ids.h
+@@ -547,6 +547,11 @@
+ #define IDC_OMNIBOX_CONTEXT_SHARED_TABS_SUBMENU               54019
+ #define IDC_OMNIBOX_CONTEXT_SMART_TAB_SHARING                 54020
+ 
++// Aerium: opens the release the daily update check found. Not IDC_UPGRADE_DIALOG
++// - that one relaunches to apply an update the browser has already installed,
++// and Aerium does not install anything.
++#define IDC_AERIUM_UPDATE_AVAILABLE                           54021
++
+ // NOTE: The last valid command value is 57343 (0xDFFF)
+ // See http://msdn.microsoft.com/en-us/library/t2zechd4(VS.71).aspx
+ 
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -2306,6 +2306,14 @@
+     <message name="IDS_SETTINGS_AERIUM_UPDATE_AVAILABLE_LABEL" desc="Label of the About-page row that appears when a newer release exists. Clicking it opens that release.">
+       Update available
+     </message>
++    <!-- The app-menu row, which is not a settings string. It lives here because
++         this file is a <part> of generated_resources.grd, so it lands in the
++         same chrome/grit/generated_resources.h the browser UI reads, and
++         because keeping it beside the About-page wording is what stops the two
++         places describing the same event differently. -->
++    <message name="IDS_AERIUM_UPDATE_AVAILABLE_MENU_ITEM" desc="App-menu row shown when the daily check has found a newer release. The placeholder is that release's version. Clicking it opens the release page.">
++      Aerium <ph name="VERSION">$1<ex>152.0.7977.64</ex></ph> is available
++    </message>
+     <message name="IDS_SETTINGS_SITE_RULES_HEADER" desc="Header for a table of per-website rules saying which list a site is on and which kinds of data survive a cleanup.">
+       Site rules
+     </message>
+--- a/chrome/browser/ui/toolbar/app_menu_model.cc
++++ b/chrome/browser/ui/toolbar/app_menu_model.cc
+@@ -56,6 +56,7 @@
+ #include "chrome/browser/ui/browser.h"
+ #include "chrome/browser/ui/browser_commands.h"
+ #include "chrome/browser/ui/browser_window.h"
++#include "chrome/browser/ui/singleton_tabs.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+ #include "chrome/browser/ui/global_error/global_error.h"
+@@ -164,6 +165,8 @@
+ #include "ui/gfx/paint_vector_icon.h"
+ #include "ui/gfx/text_elider.h"
+ #include "ui/menus/simple_menu_model.h"
++#include "url/gurl.h"
++#include "url/url_constants.h"
+ 
+ #if BUILDFLAG(GOOGLE_CHROME_BRANDING) || BUILDFLAG(IS_CHROMEOS)
+ #include "base/feature_list.h"
+@@ -253,6 +256,18 @@
+                                            : kDevicesChromeRefreshOldIcon;
+ }
+ 
++// Aerium: whether the daily release check has something to report. Both prefs
++// are written together and both are cleared when this build turns out to be the
++// newest, so either being empty means there is nothing to offer. Spelled out
++// rather than read from chrome/browser/aerium/aerium_update_checker.h, which
++// drags the network service into anything that includes it - the same reason
++// prefs_util.cc lists them as literals.
++bool AeriumUpdateAvailable(Profile* profile) {
++  const PrefService* prefs = profile->GetPrefs();
++  return !prefs->GetString("aerium.update.latest_version").empty() &&
++         !prefs->GetString("aerium.update.latest_url").empty();
++}
++
+ // Conditionally return the update app menu item title based on upgrade detector
+ // state.
+ std::u16string GetUpgradeDialogTitleText() {
+@@ -1201,6 +1216,21 @@
+     return;
+   }
+ 
++  // Aerium: handled here rather than through the command controller, which
++  // knows nothing about this id. Returns before LogMenuMetrics for the same
++  // reason - there is no WrenchMenu histogram bucket for it.
++  if (command_id == IDC_AERIUM_UPDATE_AVAILABLE) {
++    const GURL url(browser_->GetProfile()->GetPrefs()->GetString(
++        "aerium.update.latest_url"));
++    // The URL came off the network. It is written by the checker only after it
++    // has matched the release API's shape, but this is the point where it turns
++    // into a navigation, so the scheme is checked here too.
++    if (url.is_valid() && url.SchemeIs(url::kHttpsScheme)) {
++      ShowSingletonTab(browser_, url);
++    }
++    return;
++  }
++
+   if (command_id == IDC_VIEW_PASSWORDS) {
+     browser()->GetProfile()->GetPrefs()->SetBoolean(
+         password_manager::prefs::kPasswordsPrefWithNewLabelUsed, true);
+@@ -1924,6 +1954,11 @@
+   }
+ 
+   switch (command_id) {
++    // Aerium: the row only exists when there is something to open, and
++    // chrome::IsCommandEnabled would say no to an id the command controller has
++    // never heard of.
++    case IDC_AERIUM_UPDATE_AVAILABLE:
++      return true;
+     case IDC_NEW_INCOGNITO_WINDOW:
+       return IncognitoModePrefs::IsIncognitoAllowed(browser_->GetProfile());
+     default:
+@@ -1970,6 +2005,27 @@
+   // Build (and, by extension, Init) should only be called once.
+   DCHECK_EQ(0u, GetItemCount());
+ 
++  // Aerium: see chrome/browser/aerium/aerium_update_checker.h. Placed where
++  // Chrome puts its own update row, and styled the same way, because it answers
++  // the same question - the difference is only that this one opens the release
++  // instead of relaunching. Until now the answer lived on chrome://settings/help
++  // and nowhere else, which is to say nowhere anybody looks.
++  if (AeriumUpdateAvailable(browser_->GetProfile())) {
++    AddSeparator(ui::SPACING_SEPARATOR);
++    AddItemWithIcon(
++        IDC_AERIUM_UPDATE_AVAILABLE,
++        l10n_util::GetStringFUTF16(
++            IDS_AERIUM_UPDATE_AVAILABLE_MENU_ITEM,
++            base::UTF8ToUTF16(browser_->GetProfile()->GetPrefs()->GetString(
++                "aerium.update.latest_version"))),
++        ui::ImageModel::FromVectorIcon(
++            features::IsRoundedIconsEnabled()
++                ? kRocketLaunchIcon
++                : kBrowserToolsUpdateChromeRefreshOldIcon,
++            ui::kColorMenuIconOnEmphasizedBackground, kDefaultIconSize));
++    AddSeparator(ui::SPACING_SEPARATOR);
++  }
++
+   if (app_menu_icon_controller_ &&
+       app_menu_icon_controller_->GetTypeAndSeverity().type ==
+           AppMenuIconController::IconType::kUpgradeNotification) {

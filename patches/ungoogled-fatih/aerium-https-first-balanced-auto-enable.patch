@@ -1,0 +1,48 @@
+Actually turn HTTPS-First Balanced Mode on by default.
+
+aerium-https-first-balanced.patch already sets the registered default of
+prefs::kHttpsFirstBalancedMode to true, but that alone does nothing, and
+"Always use secure connections" still reads off on a fresh profile.
+
+The reason is in IsBalancedModeEnabled() in
+chrome/browser/ssl/https_upgrades_util.cc:
+
+  bool user_has_modified_settings =
+      prefs->HasPrefPath(prefs::kHttpsOnlyModeEnabled) ||
+      prefs->HasPrefPath(prefs::kHttpsFirstBalancedMode);
+  if (!user_has_modified_settings) {
+    ... return base::FeatureList::IsEnabled(
+        features::kHttpsFirstBalancedModeAutoEnable);
+  }
+  return prefs->GetBoolean(prefs::kHttpsFirstBalancedMode);
+
+HasPrefPath() is true only for a value the user has actually written, not
+for one that merely has a non-default registered default. So on a fresh
+profile the pref branch is never reached: the decision falls to
+kHttpsFirstBalancedModeAutoEnable, which upstream ships disabled. The pref
+reads true in chrome://prefs-internals while the feature stays off, which
+is exactly the mismatch that was reported.
+
+kHttpsFirstBalancedMode itself is already FEATURE_ENABLED_BY_DEFAULT, so
+the balanced mode is available - it just is not being switched on for
+anyone who has not visited the setting. Flipping the auto-enable feature
+does that, and does not take the choice away: once the user toggles the
+setting themselves, HasPrefPath() becomes true and their value wins.
+
+Balanced rather than strict is deliberate. Strict mode
+(kHttpsOnlyModeEnabled) also warns on private and local hosts - router
+admin pages, localhost, NAS boxes, printers, intranet names - which cannot
+hold a publicly trusted certificate and so become interstitials on every
+visit. Balanced upgrades and warns on public sites only.
+
+--- a/chrome/common/chrome_features.cc
++++ b/chrome/common/chrome_features.cc
+@@ -1200,7 +1200,7 @@
+ // Automatically enables HTTPS-First Mode in a balanced configuration when
+ // possible.
+ BASE_FEATURE(kHttpsFirstBalancedModeAutoEnable,
+-             base::FEATURE_DISABLED_BY_DEFAULT);
++             base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+ // Kill switch for crbug.com/40892208.
+ BASE_FEATURE(kHttpsFirstModeForAdvancedProtectionUsers,

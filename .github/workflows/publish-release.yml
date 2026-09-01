@@ -1,0 +1,382 @@
+name: publish-release
+on:
+  workflow_run:
+    workflows:
+      - build-x64
+    types:
+      - completed
+  # A build that auto-resume dispatched finishes WITHOUT emitting any
+  # workflow_run event - GitHub deliberately suppresses those for anything
+  # triggered with GITHUB_TOKEN, which every auto-resume dispatch is. Run
+  # 31993640908 built 151.0.7922.137 successfully on 2026-08-17 and
+  # published nothing for exactly this reason, while the failed
+  # push-triggered run before it did fire the event (and correctly skipped).
+  # Until then no auto-resumed build had ever succeeded, so the gap was
+  # invisible. Manual dispatch is the recovery path for any build whose
+  # event never arrived.
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'build-x64 run ID whose artifacts should be published. Find it in the run URL.'
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: publish-release-${{ github.event.workflow_run.head_sha || inputs.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  publish-release:
+    # Publish after every successful build-x64 run that came from our own
+    # repo (push or manual dispatch), not just tag builds.
+    #
+    # The head_branch check is the second half of the loop fix in
+    # build-x64.yml: a build that somehow ran off a tag must not mint another
+    # release, or it tags again and the cycle restarts. build-x64 no longer
+    # triggers on tags, so this should never be what stops it - it is here so
+    # that re-adding a tag trigger cannot silently recreate the loop.
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          (github.event.workflow_run.conclusion == 'success' &&
+           github.event.workflow_run.head_repository.full_name == github.repository &&
+           github.event.workflow_run.head_branch == 'master') }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      installer_name: ${{ steps.sums.outputs.installer_name }}
+      installer_sha256: ${{ steps.sums.outputs.installer_sha256 }}
+    steps:
+      - name: Resolve source build run
+        id: src
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          INPUT_RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            run_id="$INPUT_RUN_ID"
+            read -r conclusion head_sha run_number < <(gh api "repos/$REPO/actions/runs/$run_id" \
+              --jq '"\(.conclusion) \(.head_sha) \(.run_number)"')
+            # A dispatch names the run explicitly, so the success check the
+            # workflow_run path gets from its `if:` has to happen here
+            # instead - publishing a failed build's partial artifacts would
+            # ship a broken release under a real version tag.
+            if [ "$conclusion" != "success" ]; then
+              echo "Run $run_id concluded '$conclusion' - refusing to publish a build that did not succeed." >&2
+              exit 1
+            fi
+          else
+            run_id='${{ github.event.workflow_run.id }}'
+            head_sha='${{ github.event.workflow_run.head_sha }}'
+            run_number='${{ github.event.workflow_run.run_number }}'
+          fi
+          echo "Publishing from build-x64 run $run_id (#$run_number, $head_sha)"
+          {
+            echo "run_id=$run_id"
+            echo "head_sha=$head_sha"
+            echo "run_number=$run_number"
+          } >> "$GITHUB_OUTPUT"
+
+      # For CHANGELOG.md, at the commit the build was made from rather than
+      # whatever master happens to be now. Before the artifact download, since
+      # checkout cleans the workspace it lands in. Submodules are the whole
+      # Chromium tree and none of it is read here.
+      - name: Check out the built commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.src.outputs.head_sha }}
+          submodules: false
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: chromium
+          path: artifacts
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.src.outputs.run_id }}
+
+      - name: Resolve version and tag
+        id: meta
+        run: |
+          set -euo pipefail
+          # Package filenames look like:
+          #   aerium_150.0.7871.124-1.3_installer_x64.exe
+          #   aerium_150.0.7871.124-1.3_windows_x64.zip
+          file="$(ls artifacts/aerium_*_installer_x64.exe artifacts/aerium_*_windows_x64.zip 2>/dev/null | head -n1)"
+          if [ -z "$file" ]; then
+            echo "No Aerium package found in artifacts" >&2
+            ls -R artifacts || true
+            exit 1
+          fi
+          version="$(basename "$file" | sed -E 's/^aerium_([0-9.]+)-.*/\1/')"
+          run="${{ steps.src.outputs.run_number }}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v${version}-b${run}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version $version, tag v${version}-b${run}"
+
+      - name: Compute checksums
+        id: sums
+        run: |
+          set -euo pipefail
+          cd artifacts
+          sha256sum $(ls aerium_*_installer_x64.exe aerium_*_windows_x64.zip 2>/dev/null) > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          # Handed to the winget job so it can fill InstallerSha256 without
+          # re-downloading 126 MB of installer to hash it again.
+          installer="$(ls aerium_*_installer_x64.exe | head -n1)"
+          {
+            echo "installer_name=$installer"
+            echo "installer_sha256=$(sha256sum "$installer" | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Compose release notes
+        run: |
+          set -euo pipefail
+          V="${{ steps.meta.outputs.version }}"
+          # Print the body of the CHANGELOG.md section for this version,
+          # stopping at the next heading. The version resolved from the
+          # package filename is the bare Chromium version, while a heading
+          # carries the packaging revision and sometimes a parenthetical -
+          # "## 151.0.7922.173-1 (next release)" - so a heading matches when
+          # its version field is the resolved version or starts with it
+          # followed by a dash. No section is not an error: the release then
+          # carries GitHub's generated commit list alone, as it always has.
+          awk -v v="$V" '
+            BEGIN { f = 0 }
+            /^## / {
+              if (f) exit
+              if ($2 == v || index($2, v "-") == 1) { f = 1; next }
+            }
+            f' CHANGELOG.md > /tmp/notes.md || true
+          if [ -s /tmp/notes.md ]; then
+            echo "Using the CHANGELOG.md section for $V:"
+            cat /tmp/notes.md
+          else
+            echo "No CHANGELOG.md section for $V - publishing with generated notes only."
+          fi
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          # GITHUB_TOKEN's permissions are capped by the enterprise/org/repo
+          # default, and a workflow's own `permissions:` block cannot raise
+          # them past it - so `contents: write` above is a request, not a
+          # guarantee. Runs 32048400682 and 32049844042 both reached this
+          # step with the artifacts downloaded and the tag resolved, and both
+          # got 403 "Resource not accessible by integration" creating the
+          # release. A PAT in a secret is not subject to that cap. Falls back
+          # to GITHUB_TOKEN when the secret is absent, so this is inert until
+          # RELEASE_TOKEN actually exists.
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: Aerium ${{ steps.meta.outputs.version }} (x64)
+          target_commitish: ${{ steps.src.outputs.head_sha }}
+          body_path: /tmp/notes.md
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/aerium_*_installer_x64.exe
+            artifacts/aerium_*_windows_x64.zip
+            artifacts/SHA256SUMS.txt
+
+  # --- winget -----------------------------------------------------------------
+  # Opens the microsoft/winget-pkgs pull request for the release the job above
+  # just published, so `winget install Dioide.Aerium` tracks Aerium instead of
+  # freezing at whatever version someone last submitted by hand.
+  #
+  # That failure mode is not hypothetical: eloston.ungoogled-chromium has been
+  # in winget since 2022 and its newest manifest is 126.0.6478.182 from mid
+  # 2024. Everyone installing it today gets a build with a year of unpatched
+  # Chromium CVEs, presented as current. Wiring the submission to the release
+  # rather than to a person is the whole point of this job.
+  #
+  # It is inert until WINGET_TOKEN exists, and says so in the summary instead
+  # of failing - same shape as RELEASE_TOKEN above.
+  winget:
+    needs: publish-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the submission is configured
+        id: cfg
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          WINGET_FORK: ${{ vars.WINGET_FORK }}
+        run: |
+          set -euo pipefail
+          fork="${WINGET_FORK:-${{ github.repository_owner }}/winget-pkgs}"
+          echo "fork=$fork" >> "$GITHUB_OUTPUT"
+          if [ -z "$WINGET_TOKEN" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### winget submission skipped"
+              echo
+              echo "\`WINGET_TOKEN\` is not set, so there is no way to push to a"
+              echo "fork of \`microsoft/winget-pkgs\` - \`GITHUB_TOKEN\` cannot"
+              echo "write outside this repository. See \`winget/README.md\` for"
+              echo "the one-time setup."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if this version is already in winget
+        id: dedupe
+        if: steps.cfg.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          VERSION: ${{ needs.publish-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Manifests are immutable and there is one folder per version, so a
+          # rebuild of the same Chromium version (-b95 after -b94) has nowhere
+          # to go. Detect it here rather than opening a PR that gets rejected.
+          if gh api "repos/microsoft/winget-pkgs/contents/manifests/d/Dioide/Aerium/$VERSION" \
+               --silent >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### winget already has $VERSION"
+              echo
+              echo "This release rebuilds a Chromium version that is already"
+              echo "published, and winget manifests cannot be replaced. The fix"
+              echo "reaches winget users on the next Chromium bump."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Render the manifests
+        id: render
+        if: steps.cfg.outputs.ready == 'true' && steps.dedupe.outputs.exists == 'false'
+        env:
+          VERSION: ${{ needs.publish-release.outputs.version }}
+          TAG: ${{ needs.publish-release.outputs.tag }}
+          INSTALLER: ${{ needs.publish-release.outputs.installer_name }}
+          SHA256: ${{ needs.publish-release.outputs.installer_sha256 }}
+        run: |
+          set -euo pipefail
+          for v in VERSION TAG INSTALLER SHA256; do
+            if [ -z "${!v}" ]; then
+              echo "$v came through empty from the publish job - refusing to" >&2
+              echo "render a manifest with a hole in it." >&2
+              exit 1
+            fi
+          done
+
+          URL="https://github.com/${{ github.repository }}/releases/download/$TAG/$INSTALLER"
+          NOTES="https://github.com/${{ github.repository }}/releases/tag/$TAG"
+
+          # The URL has to actually serve the asset: a 404 here becomes a
+          # winget PR that fails validation hours later, and the digest below
+          # would then be describing a file nobody can fetch.
+          code=$(curl -sSL -o /dev/null -w '%{http_code}' --max-time 60 "$URL" || echo 000)
+          if [ "$code" != "200" ]; then
+            echo "$URL returned HTTP $code - the release asset is not downloadable." >&2
+            exit 1
+          fi
+
+          mkdir -p out
+          for f in winget/Dioide.Aerium*.yaml; do
+            sed -e "s|@VERSION@|$VERSION|g" \
+                -e "s|@URL@|$URL|g" \
+                -e "s|@SHA256@|$SHA256|g" \
+                -e "s|@RELEASEDATE@|$(date -u +%F)|g" \
+                -e "s|@RELEASENOTESURL@|$NOTES|g" \
+                "$f" > "out/$(basename "$f")"
+          done
+
+          if grep -rn '@[A-Z]*@' out/; then
+            echo "A placeholder survived rendering - see above." >&2
+            exit 1
+          fi
+          # Validate against Microsoft's own JSON schemas rather than merely
+          # checking the YAML parses. winget's validation bot runs these
+          # anyway, hours later and on a PR that is already open - failing
+          # here instead keeps a bad manifest out of winget-pkgs entirely,
+          # and catches the day a schema version is retired.
+          pip install --quiet jsonschema
+          python3 -c "
+          import glob, json, subprocess, sys, yaml, jsonschema
+          cache, bad = {}, 0
+          for f in sorted(glob.glob('out/*.yaml')):
+              d = yaml.safe_load(open(f))
+              t = d['ManifestType']
+              if t not in cache:
+                  u = 'https://aka.ms/winget-manifest.%s.1.10.0.schema.json' % t
+                  r = subprocess.run(['curl', '-sSLf', u], capture_output=True, text=True)
+                  if r.returncode:
+                      sys.exit('could not fetch the %s schema: %s' % (t, u))
+                  cache[t] = json.loads(r.stdout)
+              try:
+                  jsonschema.validate(d, cache[t])
+                  print('PASS', f, d['PackageVersion'])
+              except jsonschema.ValidationError as e:
+                  bad += 1
+                  print('FAIL', f, '->', e.message, '| at', list(e.absolute_path))
+          sys.exit(1 if bad else 0)
+          "
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Open the winget-pkgs pull request
+        if: steps.cfg.outputs.ready == 'true' && steps.dedupe.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          FORK: ${{ steps.cfg.outputs.fork }}
+          VERSION: ${{ needs.publish-release.outputs.version }}
+          TAG: ${{ needs.publish-release.outputs.tag }}
+          URL: ${{ steps.render.outputs.url }}
+        run: |
+          set -euo pipefail
+          BRANCH="aerium-$VERSION"
+          DIR="manifests/d/Dioide/Aerium/$VERSION"
+
+          # winget-pkgs is enormous. Blobless + sparse keeps the clone to the
+          # one directory this job writes.
+          gh repo sync "$FORK" --source microsoft/winget-pkgs --branch master --force
+          git clone --depth 1 --filter=blob:none --sparse \
+            "https://x-access-token:$GH_TOKEN@github.com/$FORK.git" wp
+          cd wp
+          git sparse-checkout set "manifests/d/Dioide/Aerium"
+          git config user.name  'fatih-gh'
+          git config user.email 'me@mehmetfatihyaman.me'
+          git checkout -b "$BRANCH"
+
+          mkdir -p "$DIR"
+          cp ../out/*.yaml "$DIR/"
+          git add "$DIR"
+          git commit -q -m "New version: Dioide.Aerium version $VERSION"
+          git push -u origin "$BRANCH"
+
+          {
+            echo "Aerium $VERSION, built from ungoogled-chromium and published at"
+            echo "$URL"
+            echo
+            echo "Submitted automatically by the release workflow in"
+            echo "https://github.com/${{ github.repository }}, so the manifest"
+            echo "tracks the release rather than waiting on a manual submission."
+            echo
+            echo "- [x] Have you signed the [Contributor License Agreement](https://cla.opensource.microsoft.com/microsoft/winget-pkgs)?"
+            echo "- [x] Have you checked that there aren't other open [pull requests](https://github.com/microsoft/winget-pkgs/pulls) for the same manifest update/change?"
+            echo "- [x] Have you validated your manifest locally with \`winget validate --manifest <path>\`?"
+            echo "- [x] Have you tested your manifest locally with \`winget install --manifest <path>\`?"
+            echo "- [x] Does your manifest conform to the [1.10 schema](https://github.com/microsoft/winget-pkgs/tree/master/doc/manifest/schema/1.10.0)?"
+          } > /tmp/pr.md
+
+          gh pr create --repo microsoft/winget-pkgs \
+            --base master --head "${FORK%%/*}:$BRANCH" \
+            --title "New version: Dioide.Aerium version $VERSION" \
+            --body-file /tmp/pr.md
+
+          {
+            echo "### winget PR opened for $VERSION"
+            echo
+            echo "Branch \`$BRANCH\` on \`$FORK\`."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,41 @@
+Global Privacy Control, now that Chromium ships it.
+
+Chromium 152 implements GPC itself. blink::IsGlobalPrivacyControlEnabled() in
+third_party/blink/common/global_privacy_control/global_privacy_control_util.cc
+gates the Sec-GPC header at all four call sites this patch used to edit by
+hand - browser_initiated_resource_request.cc, render_frame_impl.cc, and the
+dedicated/shared and service worker fetch contexts - and ipc_utils.cc already
+allowlists kSecGPC, so the bad-message kill this patch's header warned about
+cannot happen any more either. The navigator.globalPrivacyControl attribute is
+upstream too, behind the GlobalPrivacyControl runtime feature.
+
+All of which is implied by one flag. GlobalPrivacyControlForce has no status in
+runtime_enabled_features.json5, so it is off, and two things follow from
+turning it on: GlobalPrivacyControl lists it in implied_by, so the DOM
+attribute becomes true, and the generator gives a base::Feature whose default
+is FEATURE_ENABLED_BY_DEFAULT when status is "stable" (see the schema comment
+above base_feature_status in that file), so IsGlobalPrivacyControlEnabled()
+becomes true and the header is sent.
+
+So nine files of re-implementation become one line, and the parts most likely
+to rot at a Chromium bump - a hand-edited allowlist in ipc_utils.cc, an IDL
+attribute, four header-injection sites - go back to being upstream's problem.
+
+The behaviour is unchanged: the signal is sent unconditionally, with no
+per-site toggle, which is what Brave and DuckDuckGo do and what the CCPA
+recognises.
+
+--- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
++++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+@@ -3467,10 +3467,11 @@
+       implied_by: ["GlobalPrivacyControlForce"],
+       base_feature: "none",
+     },
+     {
+       name: "GlobalPrivacyControlForce",
++      status: "stable",
+     },
+     {
+       name: "GraphemeClusterBoundsCheck",
+       status: "stable",
+     },

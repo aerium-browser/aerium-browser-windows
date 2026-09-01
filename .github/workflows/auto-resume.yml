@@ -1,0 +1,142 @@
+name: auto-resume
+# When a build stops AND left a checkpoint behind, re-dispatch it with
+# resume_run_id so transient runner deaths (VM preemption, one-off process
+# crashes) self-heal without a human noticing. A run that failed WITHOUT a
+# checkpoint hit a real error at its first stage (patch/gn/clone failure) -
+# resuming or retrying that would fail identically, so it is left alone.
+#
+# "Stops" means cancelled as well as failed. Run 32725589546 finished build-1
+# and build-2 - nine hours of work, grit fix proven, checkpoint uploaded - and
+# was then cancelled by something outside this repo. Nothing picked it up,
+# because a cancelled run reports conclusion 'cancelled' and this job only
+# matched 'failure'. The checkpoint sat there unread. See the guard in the
+# step below for why cancelled needs more care than failed.
+on:
+  workflow_run:
+    workflows: [build-x64]
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  resume:
+    if: >-
+      (github.event.workflow_run.conclusion == 'failure' ||
+       github.event.workflow_run.conclusion == 'cancelled') &&
+      github.event.workflow_run.head_branch == 'master'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resume from the failed run's checkpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          # A cancelled run is not the same event as a failed one. Two kinds of
+          # cancellation are routine here and must NOT be resumed: superseding
+          # an in-flight build by pushing a newer commit, and killing a
+          # duplicate run on the same commit. Resuming either would fight the
+          # rule that only the newest commit builds, and would undo a
+          # deliberate cancellation seconds after someone made it.
+          #
+          # The third kind is the one worth resuming: nobody cancelled it, the
+          # infrastructure took it away. Telling them apart needs no guessing -
+          # a superseded run is one whose commit is no longer the branch head,
+          # and a duplicate is one that still has a sibling running. Anything
+          # else was interrupted.
+          #
+          # These exit 0, not 1: declining to resume a build someone cancelled
+          # on purpose is this job working, and marking it red would put a
+          # failure in the Actions list every time a superseded run is killed.
+          if [ "$CONCLUSION" = cancelled ]; then
+            head_sha=$(gh api "repos/$REPO/commits/master" --jq '.sha')
+            if [ "$head_sha" != "$HEAD_SHA" ]; then
+              echo "master is now $head_sha - run $RUN_ID was superseded, not interrupted."
+              exit 0
+            fi
+            # Asked twice, because the run list can lag its own writes and
+            # the window that matters is precisely the narrow one. Cancelling
+            # a run and dispatching its replacement is a two-step act, and
+            # this job starts the moment step one lands: in the Linux repo run
+            # 32935653134 was cancelled at 06:11:5x, its replacement was
+            # created at 06:12:00, and the same check there ran at 06:12:01
+            # and saw nothing active. A second look after a pause covers a
+            # replacement made alongside the cancellation, and costs 30
+            # seconds only when there is genuinely nothing there - which is
+            # the case where the build has already stopped and nobody is
+            # waiting on those seconds.
+            live=0
+            for attempt in 1 2; do
+              if [ "$attempt" -eq 2 ]; then
+                echo "Nothing active for $HEAD_SHA yet - looking again in 30s in case a replacement is still registering."
+                sleep 30
+              fi
+              live=$(gh api "repos/$REPO/actions/workflows/build-x64.yml/runs?head_sha=$HEAD_SHA&per_page=100" \
+                --jq '[.workflow_runs[] | select(.status != "completed")] | length')
+              if [ "$live" -gt 0 ]; then
+                break
+              fi
+            done
+            if [ "$live" -gt 0 ]; then
+              echo "$live run(s) for $HEAD_SHA still active - run $RUN_ID was a duplicate, not an interruption."
+              exit 0
+            fi
+            echo "Run $RUN_ID was cancelled with nothing replacing it - treating as an interruption."
+          fi
+
+          # No checkpoint means the stage action classified this as a real
+          # error and deliberately skipped the upload - see the fast-fail
+          # branch in .github/actions/stage/index.js, which refuses to
+          # checkpoint a build.py that died in under an hour. That is why this
+          # repo needs no separate deterministic-failure marker the way Linux
+          # and Android do: the stage already withholds the checkpoint, and a
+          # compile error slower than the threshold self-corrects, since the
+          # next stage restores the tree, re-hits it within minutes and trips
+          # the same check.
+          #
+          # That reading was briefly wrong, and it cost a build. Run
+          # 33089940410 was killed by the six-hour job cap eight seconds into
+          # its checkpoint upload, moments after deleting the previous one, so
+          # the run held no artifact for a reason that had nothing to do with
+          # the compile - and this check sent it to a human who was not
+          # watching. The stage now alternates between two slots and deletes
+          # the old one only after the new one is stored, so an interrupted
+          # upload leaves the earlier checkpoint in place and a run with
+          # neither slot really did withhold it on purpose. Both names are
+          # matched here because which slot is current alternates by stage.
+          if ! gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts" \
+               --jq '.artifacts[] | select(.expired == false) | .name' \
+               | grep -qxE 'build-artifact(-b)?'; then
+            {
+              echo "## Build needs a human, not a resume"
+              echo
+              echo "Run \`$RUN_ID\` for \`$HEAD_SHA\` saved no checkpoint, which the"
+              echo "stage action only does when it judged the failure a real error"
+              echo "rather than a stage timeout. Resuming would fail the same way."
+              echo
+              echo "Check that run's log for the build.py exit code."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "Run $RUN_ID saved no checkpoint - not resuming."
+            exit 1
+          fi
+          # Cap the auto-retry chain per commit. Dispatches made with the
+          # workflow token show actor github-actions[bot], so manual resumes
+          # by a human don't count against the cap.
+          attempts=$(gh api "repos/$REPO/actions/workflows/build-x64.yml/runs?head_sha=$HEAD_SHA&per_page=100" \
+            --jq '[.workflow_runs[] | select(.actor.login == "github-actions[bot]")] | length')
+          if [ "$attempts" -ge 2 ]; then
+            {
+              echo "## Auto-resume cap reached"
+              echo
+              echo "\`$HEAD_SHA\` has been auto-resumed $attempts times without"
+              echo "finishing. Something is wrong that resuming does not fix."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "Already auto-resumed $attempts times for $HEAD_SHA - giving up, this needs a human."
+            exit 1
+          fi
+          echo "Dispatching resume of run $RUN_ID (auto-attempt $((attempts + 1)))"
+          gh api -X POST "repos/$REPO/actions/workflows/build-x64.yml/dispatches" \
+            -f ref=master -f "inputs[resume_run_id]=$RUN_ID"

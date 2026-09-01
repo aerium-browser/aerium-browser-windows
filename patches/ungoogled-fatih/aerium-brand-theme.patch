@@ -1,0 +1,39 @@
+--- a/chrome/browser/themes/theme_service.cc
++++ b/chrome/browser/themes/theme_service.cc
+@@ -296,14 +296,34 @@
+   registry->RegisterIntegerPref(
+       prefs::kDeprecatedUserColorDoNotUse, SK_ColorTRANSPARENT,
+       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+-  registry->RegisterIntegerPref(prefs::kUserColor, SK_ColorTRANSPARENT);
++  // Aerium: seed Chromium's Material 3 palette with the brand blue instead of
++  // leaving it unseeded. SK_ColorTRANSPARENT is the "no colour chosen"
++  // sentinel - CurrentThemeUserColor() returns nullopt for it and the browser
++  // falls back to Chromium's grey. Giving it a real colour means the toolbar,
++  // tabs, omnibox, menus and bubbles are all generated from one hue rather
++  // than themed piece by piece.
++  //
++  // 0x2C6BAE is the core of the lens in the logo. The mark runs from #7FC4E4
++  // through #2C6BAE to the #111C42 of the outer swirl - hues 199 to 227 - and
++  // this one sits in the middle of that family at hue 211, so a palette
++  // generated from it agrees with the icon on every surface.
++  //
++  // This is a default, not a lock: Settings > Appearance writes the same pref,
++  // so choosing another colour or a Chrome theme still overrides it.
++  registry->RegisterIntegerPref(prefs::kUserColor,
++                                SkColorSetRGB(0x2C, 0x6B, 0xAE));
+   registry->RegisterIntegerPref(
+       prefs::kDeprecatedBrowserColorVariantDoNotUse,
+       static_cast<int>(ui::mojom::BrowserColorVariant::kSystem),
+       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
++  // Aerium: kSystem leaves the tonal variant to the platform, which on desktop
++  // means no generated palette at all. kTonalSpot is Material 3's balanced
++  // variant - it keeps the brand hue across every surface without the chroma
++  // that kVibrant puts on large areas like the toolbar, where a saturated fill
++  // stops being a brand colour and starts being a wall.
+   registry->RegisterIntegerPref(
+       prefs::kBrowserColorVariant,
+-      static_cast<int>(ui::mojom::BrowserColorVariant::kSystem));
++      static_cast<int>(ui::mojom::BrowserColorVariant::kTonalSpot));
+   registry->RegisterBooleanPref(
+       prefs::kDeprecatedGrayscaleThemeEnabledDoNotUse, false,
+       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);

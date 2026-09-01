@@ -1,0 +1,57 @@
+﻿name: Prepare Build Environment
+description: Checkout sources, set up Python, copy workspace, and install stage dependencies
+inputs:
+  python-version:
+    description: Python version
+    required: false
+    default: '3.12'
+runs:
+  using: composite
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+      with:
+        submodules: recursive
+
+    - name: Set up Python ${{ inputs.python-version }}
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Init
+      shell: pwsh
+      run: Copy-Item -Path . -Destination 'C:\ungoogled-chromium-windows' -Recurse
+
+    - name: Exclude build tree from Windows Defender
+      shell: pwsh
+      run: |
+        # Defender's real-time scanner is on by default on windows-2022
+        # runners and scans every file read/write - a well-documented major
+        # tax on Chromium compile times. Best-effort: never fail the build
+        # over this, it's a speed optimization, not correctness.
+        try {
+          Add-MpPreference -ExclusionPath 'C:\ungoogled-chromium-windows' -ErrorAction Stop
+          Add-MpPreference -ExclusionPath "${env:GITHUB_WORKSPACE}" -ErrorAction Stop
+        } catch {
+          Write-Host "Defender exclusion failed (non-fatal): $_"
+        }
+
+    - name: Disk space report (before stage)
+      shell: pwsh
+      run: |
+        # Cheap, instant (no recursive file walk - the build tree can have
+        # 1M+ files, so du-style per-folder sizing here would burn real
+        # minutes off every stage's compile budget for a nice-to-have).
+        # Goal: confirm/refute whether C: (where the build tree lives, see
+        # the Init step above) is the tighter drive relative to D: (where
+        # GITHUB_WORKSPACE / the actual checkout lives) - a stage that dies
+        # with zero surviving log looks a lot like the runner running out of
+        # disk on C: earlier than expected.
+        Get-Volume | Where-Object { $_.DriveLetter } | ForEach-Object {
+          "{0}: {1:N1} GB free / {2:N1} GB total" -f $_.DriveLetter, ($_.SizeRemaining / 1GB), ($_.Size / 1GB)
+        }
+
+    - name: Setup Stage
+      shell: pwsh
+      run: npm install
+      working-directory: ./.github/actions/stage

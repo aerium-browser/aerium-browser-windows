@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+PackageIdentifier: Dioide.Aerium
+PackageVersion: "@VERSION@"
+InstallerType: exe
+# Chromium's mini_installer defaults to a per-user install under
+# %LOCALAPPDATA% and needs no elevation. `--system-level` would put it in
+# Program Files, but that requires admin and winget would then have to run
+# elevated for every install and upgrade.
+Scope: user
+InstallerSwitches:
+  # mini_installer draws no UI of its own, so there is nothing to silence -
+  # both switches exist to stop it opening a browser window when winget
+  # installs or upgrades in the background.
+  Silent: --do-not-launch-chrome
+  SilentWithProgress: --do-not-launch-chrome
+UpgradeBehavior: install
+ReleaseDate: "@RELEASEDATE@"
+# How winget recognises an already-installed Aerium. Chromium registers under
+# HKCU\...\Uninstall\<PRODUCT_FULLNAME>, which build.py sets to "Aerium".
+# If this does not match what the installer actually writes, `winget upgrade`
+# will never see the installed copy - see README.md before the first PR.
+AppsAndFeaturesEntries:
+  - DisplayName: Aerium
+    Publisher: Dioide
+Installers:
+  - Architecture: x64
+    InstallerUrl: "@URL@"
+    InstallerSha256: "@SHA256@"
+ManifestType: installer
+ManifestVersion: 1.10.0

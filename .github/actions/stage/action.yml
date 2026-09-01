@@ -1,0 +1,31 @@
+name: 'Stage'
+description: 'Stage build'
+inputs:
+  finished:
+    description: If a previous stage already finished the build, the stage will set all output variables to the input ones and exit
+    required: true
+  from_artifact:
+    description: If a previous stage already uploaded build artifacts, the stage will resume building
+    required: true
+  resume_run_id:
+    description: If set, fetch the starting build-artifact from this other workflow run instead of the current run (cross-run resume - only meaningful on build-1, where from_artifact would otherwise be false)
+    required: false
+    default: ''
+  github_token:
+    description: Token with actions:read, only needed when resume_run_id is set (cross-run artifact lookup goes through the REST API, unlike same-run lookups which use the runner's own internal token)
+    required: false
+    default: ''
+  x86:
+    description: Build x86 binary
+    required: false
+    default: false
+  arm:
+    description: Build arm binary
+    required: false
+    default: false
+outputs:
+  finished:
+    description: If a previous stage already finished the build, the stage will set all output variables to the input ones and exit
+runs:
+  using: 'node24'
+  main: 'index.js'

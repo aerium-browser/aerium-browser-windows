@@ -1,0 +1,147 @@
+Let the browser's own pages be reached under the browser's own name
+
+aerium://settings, aerium://flags, aerium://version and every other chrome:
+host now work. chrome:// keeps working exactly as before. This is an alias, in
+one direction, and the direction matters: aerium: is rewritten to chrome: on
+its way into a navigation, and nothing rewrites chrome: back into aerium:.
+
+Four pieces.
+
+kAeriumScheme in chrome/common/url_constants.h, beside the other scheme
+constants in that file, so the string is written once.
+
+The scheme is registered as standard in chrome_content_client.cc. The comment
+above that list says you only need to be in it to take part in the web platform,
+and that non-special URLs now parse a host on their own. That is true today. It
+is also a parser behaviour that has changed more than once, and this scheme has
+exactly one job: aerium://settings has to split into a host and a path on every
+platform and every Chromium this ships on, because the rewrite replaces the
+scheme and keeps the rest. One entry buys that certainty. What it costs is an
+origin that no document is ever committed in, because every aerium: URL has
+become a chrome: URL before anything loads it.
+
+ProfileIOData::IsHandledProtocol is what makes the omnibox treat
+aerium://settings as an address instead of as something to search for.
+ChromeAutocompleteSchemeClassifier asks that function first, and a scheme it
+does not recognise falls through to the external-protocol check, which on Linux
+and Android returns "search for this".
+
+And the rewrite itself, registered first in BrowserURLHandlerCreated so that
+aerium://newtab and aerium://about reach the handlers that know what those
+hosts mean.
+
+Two things about that handler are deliberate and would be bugs if they were
+accidents.
+
+It returns false even when it rewrote the URL. RewriteURLIfNecessary stops at
+the first handler that returns true, so claiming the URL would mean
+chrome://settings never reaching HandleWebUI, chrome://about never reaching the
+about rewriter and chrome://newtab never reaching the NTP handler: the alias
+would resolve the scheme and then skip everything that gives those hosts their
+meaning. Mutating through the pointer and declining to claim the URL is how a
+handler joins the chain instead of ending it, and HandleViewSource does the
+same on its error path.
+
+It has no reverse handler, and needs none. The navigation entry keeps the URL
+as it was typed as its virtual URL - RewriteUrlForNavigation copies the
+original before rewriting - so aerium://settings stays aerium://settings in the
+omnibox and chrome://settings stays chrome://settings. Each spelling displays
+as the user wrote it.
+
+That last point is the deliberate limit on "replace chrome:// with aerium://".
+Forcing every chrome: page to display as aerium: is a different change: it
+would rewrite what users copy out of the address bar into bug reports and into
+other browsers, where aerium://settings means nothing, and it would make the
+displayed URL differ from the committed one on every internal page in the
+browser. Offering the name and honouring whichever one was used is the part
+that is unambiguously an improvement.
+
+Nothing here lets a web page reach an internal page. A page that navigates to
+aerium://settings is rewritten to chrome://settings and then blocked by exactly
+the check that blocks chrome://settings today, because the rewrite happens
+before the navigation is authorised, not after.
+
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -864,6 +864,34 @@ GURL ReplaceURLHostAndPath(const GURL& url,
+   return url.ReplaceComponents(replacements);
+ }
+ 
++// Aerium: rewrite aerium://<rest> to chrome://<rest> and then get out of the
++// way. See the patch for why this is one-way.
++//
++// The return value is false on purpose, including when the URL was rewritten.
++// RewriteURLIfNecessary stops at the first handler that returns true, so
++// claiming the URL here would mean chrome://settings never reaching
++// HandleWebUI, chrome://about never reaching the about rewriter, and
++// chrome://newtab never reaching the NTP handler - the alias would resolve to
++// the scheme and then skip everything that gives those hosts meaning. Mutating
++// through the pointer and declining to claim the URL is how a handler joins the
++// chain rather than ending it; HandleViewSource does the same on its error
++// path.
++//
++// The displayed URL is not affected, and does not need to be. The navigation
++// entry keeps the URL as it was typed as its virtual URL - see
++// RewriteUrlForNavigation, which copies the original before rewriting - so
++// aerium://settings stays aerium://settings in the omnibox while chrome://
++// stays chrome://, and neither spelling is rewritten into the other behind the
++// user's back.
++bool HandleAeriumScheme(GURL* url, content::BrowserContext* browser_context) {
++  if (url->SchemeIs(chrome::kAeriumScheme)) {
++    GURL::Replacements replacements;
++    replacements.SetSchemeStr(content::kChromeUIScheme);
++    *url = url->ReplaceComponents(replacements);
++  }
++  return false;
++}
++
+ // Handles the rewriting of the new tab page URL based on group policy.
+ bool HandleNewTabPageLocationOverride(
+     GURL* url,
+@@ -5104,6 +5132,12 @@ bool ChromeContentBrowserClient::
+ 
+ void ChromeContentBrowserClient::BrowserURLHandlerCreated(
+     BrowserURLHandler* handler) {
++  // Aerium: aerium://<host> is another spelling of chrome://<host>. First,
++  // ahead of every handler below, so that aerium://newtab and aerium://about
++  // reach the handlers that know what those mean.
++  handler->AddHandlerPair(&HandleAeriumScheme,
++                          BrowserURLHandler::null_handler());
++
+   // The group policy NTP URL handler must be registered before the other NTP
+   // URL handlers below. Also register it before the "parts" handlers, so the
+   // NTP policy takes precedence over extensions that override the NTP.
+--- a/chrome/browser/profiles/profile_io_data.cc
++++ b/chrome/browser/profiles/profile_io_data.cc
+@@ -43,6 +43,7 @@ bool ProfileIOData::IsHandledProtocol(std::string_view scheme) {
+ #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+       extensions::kExtensionScheme,
+ #endif
++      chrome::kAeriumScheme,
+       content::kChromeUIScheme,
+       content::kChromeUIUntrustedScheme,
+       url::kDataScheme,
+--- a/chrome/common/chrome_content_client.cc
++++ b/chrome/common/chrome_content_client.cc
+@@ -192,6 +192,7 @@ static const char* const kChromeStandardURLSchemes[] = {
+     webapps::kIsolatedAppScheme,
+ #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
+         // BUILDFLAG(IS_CHROMEOS)
++    chrome::kAeriumScheme,
+     chrome::kChromeNativeScheme,        chrome::kChromeSearchScheme,
+     dom_distiller::kDomDistillerScheme,
+ #if BUILDFLAG(IS_ANDROID)
+--- a/chrome/common/url_constants.h
++++ b/chrome/common/url_constants.h
+@@ -41,6 +41,11 @@ inline constexpr char kAccessibilityLabelsLearnMoreURL[] =
+ inline constexpr char kAdPrivacyLearnMoreURL[] =
+     "https://support.google.com/chrome?p=ad_privacy";
+ 
++// Aerium: a second spelling of the chrome: scheme, so that the browser's own
++// pages can be reached under the browser's own name. See the patch - it is an
++// alias in one direction only, and no document ever commits under it.
++inline constexpr char kAeriumScheme[] = "aerium";
++
+ // "Learn more" URL for when profile settings are automatically reset.
+ inline constexpr char kAutomaticSettingsResetLearnMoreURL[] =
+     "https://support.google.com/chrome?p=ui_automatic_settings_reset";

@@ -1,0 +1,30 @@
+--- a/chrome/browser/existing_switch_flag_entries.h
++++ b/chrome/browser/existing_switch_flag_entries.h
+@@ -12,6 +12,10 @@
+      "Disable WebGL",
+      "Disable all versions of WebGL. Chromium feature, ungoogled-chromium flag.",
+      kOsAll, SINGLE_VALUE_TYPE("disable-webgl")},
++    {"enable-widevine",
++     "Enable Widevine DRM",
++     "Registers the Widevine CDM so DRM-protected sites can play back content. Off by default - Aerium flag.",
++     kOsAll, SINGLE_VALUE_TYPE("enable-widevine")},
+     {"enable-low-end-device-mode",
+      "Enable low-end device mode",
+      "Force low-end device mode when set. Chromium feature, ungoogled-chromium flag.",
+--- a/chrome/common/media/cdm_registration.cc
++++ b/chrome/common/media/cdm_registration.cc
+@@ -415,7 +415,13 @@
+   DCHECK(cdms->empty());
+ 
+ #if BUILDFLAG(ENABLE_WIDEVINE)
+-  AddWidevine(cdms);
++  // Off by default - Aerium doesn't bundle Google's proprietary CDM, and
++  // registering it unconditionally means every DRM-gated site can silently
++  // probe for it. Users who want DRM playback turn it on at
++  // chrome://flags/#enable-widevine.
++  if (base::CommandLine::ForCurrentProcess()->HasSwitch("enable-widevine")) {
++    AddWidevine(cdms);
++  }
+ #endif
+ 
+ #if BUILDFLAG(ENABLE_LIBRARY_CDMS)

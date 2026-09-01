@@ -176,7 +176,13 @@ jobs:
           # RELEASE_TOKEN actually exists.
           token: ${{ secrets.RELEASE_TOKEN || github.token }}
           tag_name: ${{ steps.meta.outputs.tag }}
-          name: Aerium ${{ steps.meta.outputs.version }} (x64)
+          # The build number is in the name as well as the tag: three releases
+          # called "Aerium 151.0.7922.137" and nothing else are three
+          # indistinguishable rows in the release list, which is what they have
+          # been. It changes nothing for the updater, which cuts a tag at the
+          # first dash and so treats every build of one Chromium version as the
+          # same version - only a bump reaches a user as a notification.
+          name: Aerium ${{ steps.meta.outputs.version }} (x64, build ${{ steps.src.outputs.run_number }})
           target_commitish: ${{ steps.src.outputs.head_sha }}
           body_path: /tmp/notes.md
           generate_release_notes: true

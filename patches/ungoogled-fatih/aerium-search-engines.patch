@@ -1,6 +1,6 @@
 # Replace every per-country prepopulated engine list with one fixed
 # privacy-focused set: Startpage (default), DuckDuckGo, Brave Search, Mojeek,
-# Qwant, Ecosia, SearXNG and the two DuckDuckGo no-JS variants. Brave, Mojeek,
+# Qwant, Ecosia, degoog and the two DuckDuckGo no-JS variants. Brave, Mojeek,
 # Qwant and Ecosia are already defined upstream (ids 109, 103, 94, 101), so
 # they cost one list entry each and no new definition. ungoogled-chromium replaces the Google engine
 # with a "No Search" stub, so without this the omnibox cannot search at all
@@ -26,8 +26,27 @@
 # Rebased onto Chromium 152: upstream moved kCurrentDataVersion 209 -> 210 for
 # its own data changes, so this file's value moves with it. It has to keep
 # increasing for existing Aerium profiles to pick the new list up at all, and
-# the last release shipped 251, so 252. kMaxPrepopulatedEngineID is still 116
-# upstream, so ids 117-119 remain free and the guard below has not fired.
+# the last release shipped 251. kMaxPrepopulatedEngineID is still 116 upstream,
+# so ids 117-119 remain free and the guard below has not fired.
+#
+# 253 now, because degoog replaced SearXNG. Raise this on EVERY change to the
+# engine list, not only when an id is added: the re-merge into an existing
+# profile is gated on a strict inequality - ComputeDatabaseUpdateRequirements
+# in template_url_prepopulate_data_resolver.cc returns nullopt unless the
+# database's builtin_keyword_data_version is strictly BELOW this - so a value
+# that does not move reaches nobody who already has a profile, and the entry
+# is invisible outside a fresh install.
+#
+# degoog reuses SearXNG's id 119 rather than taking 120. Chromium keys a
+# prepopulated engine's row by prepopulate_id, so reusing it rewrites the
+# SearXNG row shipped in earlier builds into the degoog row on update instead
+# of leaving an orphan beside a new entry. That also keeps the id range at
+# 117-119 and leaves kMaxPrepopulatedEngineID where it is.
+#
+# The three URLs are the ones degoog publishes in its own OpenSearch document
+# at https://degoog.org/opensearch.xml, not inferred from the address bar, and
+# all three were fetched: /search?q= answers 200, the suggest endpoint returns
+# well-formed OpenSearch JSON, and the favicon is a real image/x-icon.
 
 --- a/components/regional_capabilities/regional_capabilities_utils.cc
 +++ b/components/regional_capabilities/regional_capabilities_utils.cc
@@ -85,11 +104,28 @@
      // continue to be used and updates made here will not always appear.
      // Also then run tools/search_engine_choice/generate_search_engine_icons.py.
 -    "kCurrentDataVersion": 210
-+    "kCurrentDataVersion": 252
++    "kCurrentDataVersion": 253
    },
  
    // The following engines are included in country lists and are added to the
-@@ -137,6 +137,26 @@
+@@ -118,6 +118,16 @@
+       "id": 68
+     },
+ 
++    "degoog": {
++      "name": "degoog",
++      "keyword": "degoog.org",
++      "favicon_url": "https://degoog.org/public/favicon/favicon.ico",
++      "search_url": "https://degoog.org/search?q={searchTerms}",
++      "suggest_url": "https://degoog.org/api/suggest/opensearch?q={searchTerms}",
++      "type": "SEARCH_ENGINE_OTHER",
++      "id": 119
++    },
++
+     "duckduckgo": {
+       "name": "DuckDuckGo",
+       "keyword": "duckduckgo.com",
+@@ -137,6 +147,26 @@
        ]
      },
  
@@ -116,23 +152,7 @@
      "ecosia": {
        "name": "Ecosia",
        "keyword": "ecosia.org",
-@@ -363,6 +383,15 @@
-       ]
-     },
- 
-+    "searx": {
-+      "name": "SearXNG",
-+      "keyword": "searx.be",
-+      "favicon_url": "https://searx.be/favicon.ico",
-+      "search_url": "https://searx.be/search?q={searchTerms}",
-+      "type": "SEARCH_ENGINE_OTHER",
-+      "id": 119
-+    },
-+
-     "seznam": {
-       "name": "Seznam.cz",
-       "keyword": "seznam",
-@@ -409,7 +438,7 @@
+@@ -424,7 +454,7 @@
      },
  
      "startpage": {
@@ -156,7 +176,7 @@
 +        "&mojeek",
 +        "&qwant",
 +        "&ecosia",
-+        "&searx",
++        "&degoog",
 +        "&duckduckgo_lite",
 +        "&duckduckgo_html"
        ]

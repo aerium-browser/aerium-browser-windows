@@ -1,6 +1,8 @@
 # Replace every per-country prepopulated engine list with one fixed
-# privacy-focused set: Startpage (default), DuckDuckGo, DuckDuckGo Lite,
-# DuckDuckGo HTML and SearXNG. ungoogled-chromium replaces the Google engine
+# privacy-focused set: Startpage (default), DuckDuckGo, Brave Search, Mojeek,
+# Qwant, Ecosia, SearXNG and the two DuckDuckGo no-JS variants. Brave, Mojeek,
+# Qwant and Ecosia are already defined upstream (ids 109, 103, 94, 101), so
+# they cost one list entry each and no new definition. ungoogled-chromium replaces the Google engine
 # with a "No Search" stub, so without this the omnibox cannot search at all
 # until the user configures an engine by hand.
 #
@@ -141,7 +143,7 @@
        "base_builtin_resource_id": "SEARCH_ENGINE_STARTPAGE",
 --- a/third_party/search_engines_data/resources/definitions/regional_settings.json
 +++ b/third_party/search_engines_data/resources/definitions/regional_settings.json
-@@ -1419,9 +1419,11 @@
+@@ -1419,9 +1419,15 @@
      },
      "ZZ": {
        "search_engines": [
@@ -150,9 +152,13 @@
 -        "&yahoo"
 +        "&startpage",
 +        "&duckduckgo",
++        "&brave",
++        "&mojeek",
++        "&qwant",
++        "&ecosia",
++        "&searx",
 +        "&duckduckgo_lite",
-+        "&duckduckgo_html",
-+        "&searx"
++        "&duckduckgo_html"
        ]
      }
    }

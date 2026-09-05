@@ -1,0 +1,114 @@
+Aerogel, for the link under the cursor.
+
+"Open link in Aerogel tab", directly under "Open link in incognito window",
+because it answers the neighbouring question: that row is "not my usual self,
+and leave no local trace", this one is "not my usual self, and I still want my
+history". Opening a link into a jar is the case the feature exists for - the
+app-menu entry that landed first gives you an empty jar and makes you navigate
+into it by hand.
+
+Split out of aerium-aerogel.patch rather than folded into it. That patch
+creates chrome/browser/ui/aerium/aerogel.{h,cc} whole; this one only calls into
+them, and render_view_context_menu.cc is six thousand lines with strict item
+ordering, so keeping the two apart means a rebase that goes wrong here does not
+put the mechanism at risk.
+
+Not routed through OpenURLWithExtraHeaders like the rows around it, because a
+jar is not a WindowOpenDisposition. The tab has to be built around a
+SiteInstance whose storage partition is already fixed, which is what
+aerogel::OpenInNewJar does and what a disposition cannot express.
+
+GetBrowser() returns a BrowserWindowInterface here, so the Browser* comes from
+GetBrowserForMigrationOnly() - the same route this file already uses twice,
+with the same null check. OpenInNewJar tolerates a null browser anyway.
+
+IsCommandIdEnabled needs no separate-profile check, unlike the incognito row
+beside it: a jar is an ordinary tab in the window you are already in, so the
+only requirement is somewhere to put it.
+
+Generated against, and verified against, a tree carrying the full ungoogled and
+Aerium series in order - 21 patches, none failing - applied with GNU patch as
+the build applies it.
+
+--- a/chrome/app/chrome_command_ids.h
++++ b/chrome/app/chrome_command_ids.h
+@@ -557,6 +557,10 @@
+ // controller, for the same reason - the controller has never heard of it.
+ #define IDC_AERIUM_NEW_AEROGEL_TAB                            54022
+ 
++// Aerium: the same, for the link under the cursor. Handled in
++// RenderViewContextMenu, which owns its own command space.
++#define IDC_AERIUM_OPEN_LINK_IN_AEROGEL                       54023
++
+ // NOTE: The last valid command value is 57343 (0xDFFF)
+ // See http://msdn.microsoft.com/en-us/library/t2zechd4(VS.71).aspx
+ 
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -2326,6 +2326,9 @@
+     <message name="IDS_AERIUM_NEW_AEROGEL_TAB" desc="App-menu row that opens a tab whose cookies and site data are kept separate from the rest of the browser and are thrown away when the tab closes.">
+       New Aerogel tab
+     </message>
++    <message name="IDS_AERIUM_OPEN_LINK_IN_AEROGEL" desc="Right-click menu row that opens the link in a tab whose cookies and site data are kept separate from the rest of the browser and thrown away when the tab closes.">
++      Open link in Aerogel tab
++    </message>
+     <message name="IDS_AERIUM_AEROGEL_GROUP_TITLE" desc="Name of the tab group that Aerogel tabs are placed in, so the tab strip shows which tabs are separate from the rest of the browser.">
+       Aerogel
+     </message>
+--- a/chrome/browser/renderer_context_menu/render_view_context_menu.cc
++++ b/chrome/browser/renderer_context_menu/render_view_context_menu.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "chrome/browser/renderer_context_menu/render_view_context_menu.h"
+ 
++#include "chrome/browser/ui/aerium/aerogel.h"
++
+ #include <stddef.h>
+ 
+ #include <algorithm>
+@@ -2003,6 +2005,15 @@ void RenderViewContextMenu::AppendLinkItems() {
+       }
+     }
+ 
++    // Aerium: the link half of Aerogel. Under the incognito row because it
++    // answers the neighbouring question - that one is "not my usual self and
++    // leave no local trace", this one is "not my usual self, and I still want
++    // my history". See chrome/browser/ui/aerium/aerogel.cc.
++    if (params_.link_url.is_valid()) {
++      menu_model_.AddItemWithStringId(IDC_AERIUM_OPEN_LINK_IN_AEROGEL,
++                                      IDS_AERIUM_OPEN_LINK_IN_AEROGEL);
++    }
++
+     AppendOpenInWebAppLinkItems();
+     AppendOpenWithLinkItems();
+ 
+@@ -3509,6 +3520,11 @@ bool RenderViewContextMenu::IsCommandIdEnabled(int id) const {
+       return navigation_allowed &&
+              IsOpenLinkOTREnabled(GetProfile(), params_.link_url);
+ 
++    // Aerium: a jar is a tab in this window, so unlike the incognito row it
++    // needs no separate-profile check - only somewhere to put the tab.
++    case IDC_AERIUM_OPEN_LINK_IN_AEROGEL:
++      return navigation_allowed && GetBrowser() != nullptr;
++
+     case IDC_PRINT:
+       return IsPrintPreviewEnabled();
+ 
+@@ -3750,6 +3766,17 @@ void RenderViewContextMenu::ExecuteCommand(int id, int event_flags) {
+           /*started_from_context_menu=*/true);
+       break;
+ 
++    case IDC_AERIUM_OPEN_LINK_IN_AEROGEL:
++      // Aerium: not OpenURLWithExtraHeaders, because a jar is not a
++      // disposition - the tab has to be built around a SiteInstance whose
++      // partition is already fixed, which is what OpenInNewJar does.
++      // GetBrowserForMigrationOnly is how this file reaches a Browser*
++      // elsewhere; OpenInNewJar tolerates a null one.
++      aerogel::OpenInNewJar(
++          GetBrowser() ? GetBrowser()->GetBrowserForMigrationOnly() : nullptr,
++          params_.link_url);
++      break;
++
+     case IDC_CONTENT_CONTEXT_OPENLINKOFFTHERECORD:
+       // Pass along the |referring_url| so we can show it in browser UI. Note
+       // that this won't and shouldn't be sent via the referrer header.

@@ -55,9 +55,21 @@ permissions:
 # auto-resume.yml already assumed this: its cancelled-run branch checks whether
 # the cancelled run's sha is still master's head and exits 0 when it is not,
 # so an auto-cancellation will not be resurrected as an interruption.
+#
+# Restricted to pushes, and that restriction is load-bearing. The only other
+# thing that starts a build here is a workflow_dispatch, and auto-resume.yml
+# sends one of those every time it decides a checkpoint is worth continuing. It
+# guards against stacking by asking whether a run is already active - but that
+# question is answered several API calls before the dispatch is actually made,
+# so a push landing inside that window would be cancelled by the resume it
+# raced. That trade is backwards twice over: it kills a build of the newest
+# commit, and it replaces it with a run that restores an older commit's
+# checkpoint tree. Making a dispatch queue instead, the way everything did
+# before, costs nothing - a resume has no deadline - and leaves superseding to
+# the one event that should do it.
 concurrency:
   group: build-x64-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   build:

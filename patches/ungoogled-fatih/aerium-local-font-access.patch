@@ -1,0 +1,84 @@
+# Take the font list away from window.queryLocalFonts().
+#
+# The Local Font Access API returns every font installed on the machine in one
+# call. It is the strongest font signal there is and the only one that does not
+# have to be measured a family at a time, and a fingerprinting script that gets
+# it does not need any of the measurement tricks. Firefox and Safari do not
+# implement it. Upstream does not ship it on Android - the status field it had
+# was {"Android": "", "default": "stable"}. So the desktop builds were the
+# outlier among their peers and among their own siblings, which is the same
+# shape of gap default-flags.patch just closed for the canvas and WebGL work.
+#
+# It is permission-gated, and that is not the defence it sounds like. The
+# prompt is a single click, it is asked at the moment a design tool needs an
+# answer, and granting it hands over the whole list at once - there is no
+# partial answer to give.
+#
+# Off by default with a flag to turn it back on, rather than removed, because
+# there is a real use: browser-based design tools offer your own fonts through
+# this API and fall back to web fonts without it. Setting status to "" gives
+# the generated blink::features::kFontAccess a disabled default, and the json5
+# schema's copied_from_base_feature_if defaults to "enabled_or_overridden", so
+# a chrome://flags override to Enabled turns the Blink feature back on. That is
+# the mechanism the entry relies on; it is not a decorative flag.
+#
+# Deliberately not done here: Cromite's Fonts-fingerprinting-mitigation.patch,
+# which is the other half of this problem - the measurement channel, where a
+# page renders text in a candidate family and compares widths. That one is not
+# portable to this project as written, for three reasons, all read out of the
+# patch rather than assumed:
+#
+#   * Its allowlist, bromite_allowed_fonts.h, is the Windows 11 font list plus
+#     nine general names and an Android section. There is no Linux section at
+#     all, so on a Linux build IsFontAllowed() would reject essentially every
+#     real family and fall back - it would not harden the browser, it would
+#     break text on it.
+#   * Its Windows half reaches into private Skia internals - it includes
+#     src/ports/SkTypeface_win_dw.h and reads DWriteFontTypeface::fDWriteFont
+#     and fDWriteFontFamily directly - which is a rebase hazard on every Skia
+#     roll, in a file we would then own.
+#   * It changes FontCache::CreateTypeface's signature and disables
+#     AlternateFontName::kLocalUniqueFace, and its Android counterpart is 3300
+#     lines.
+#
+# The measurement channel therefore stays open, and it is better to say that
+# plainly than to ship a partial version of it that renders text wrong. It
+# wants its own pass with an allowlist built for the platforms this project
+# actually ships.
+--- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
++++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+@@ -3268,8 +3268,17 @@
+       status: "stable",
+     },
+     {
++      // Aerium: off, which is what Android already gets. This is
++      // window.queryLocalFonts() - the Local Font Access API - and it hands a
++      // page the complete list of fonts installed on the machine in one call,
++      // which is the strongest font signal there is and the only one that does
++      // not have to be measured a family at a time. Firefox and Safari do not
++      // implement it and upstream does not ship it on Android, so the desktop
++      // builds were the outlier among both their peers and their own siblings.
++      // Turn it back on at chrome://flags/#aerium-local-font-access; the entry
++      // exists because design tools are a real use for it.
+       name: "FontAccess",
+-      status: {"Android": "", "default": "stable"},
++      status: "",
+     },
+     {
+       name: "FontDataServiceForCSSLocalFonts",
+--- a/chrome/browser/aerium_flag_entries.h
++++ b/chrome/browser/aerium_flag_entries.h
+@@ -25,4 +25,13 @@
+      "changes that hash without changing anything you can hear, and none of "
+      "these paths feeds playback. On by default. Aerium flag.",
+      kOsAll, FEATURE_VALUE_TYPE(blink::features::kAeriumAudioNoise)},
++    {"aerium-local-font-access",
++     "Local Font Access API",
++     "Let sites call window.queryLocalFonts() to read the list of fonts "
++     "installed on this computer, after asking permission. Off in Aerium: the "
++     "list is the strongest font fingerprint there is, and one prompt hands "
++     "over all of it. Firefox and Safari do not offer this API at all, and "
++     "Chrome does not offer it on Android. Turn it on if you use a design tool "
++     "in the browser that needs your fonts. Aerium flag.",
++     kOsAll, FEATURE_VALUE_TYPE(blink::features::kFontAccess)},
+ #endif  // CHROME_BROWSER_AERIUM_FLAG_ENTRIES_H_

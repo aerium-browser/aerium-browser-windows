@@ -65,3 +65,4 @@ ungoogled-fatih/aerium-aerogel-link.patch
 ungoogled-fatih/aerium-runtime-efficiency.patch
 ungoogled-fatih/aerium-timezone.patch
 ungoogled-fatih/aerium-audio-noise.patch
+ungoogled-fatih/aerium-local-font-access.patch

@@ -1,0 +1,476 @@
+Aerogel: a tab with a storage partition to itself.
+
+Site isolation, storage partitioning and the ephemeral-sites list all answer
+"keep this site away from other sites". None of them answers "keep this site
+away from itself" - a second account on a site you are already signed in to,
+or a link you would rather not hand to the profile that knows who you are.
+Firefox solves that with containers. This is the same idea with a shorter
+lifetime: the jar is made when the tab is, and emptied when the tab closes.
+
+The mechanism is content::SiteInstance::CreateForFixedStoragePartition, whose
+documented purpose is "a custom StoragePartition that is preserved across
+navigations". Plain Create would not do: the first cross-site navigation would
+land back in the profile's own partition and the jar would quietly stop being
+a jar without anything saying so.
+
+in_memory=true is the load-bearing property. The partition is never written to
+disk at all, which is why the clear-on-close below is a statement about memory
+rather than a promise to delete something - there is nothing on disk that could
+fail to be deleted. It also means the config is honest inside Incognito, where
+StoragePartitionConfig::Create forces in_memory on regardless.
+
+What it is NOT is Incognito. History, downloads and the omnibox's memory belong
+to the profile and are not partitioned, so an Aerogel tab still records where
+it went. This separates identity, not traces. That distinction is why the row
+sits beside New Incognito window rather than replacing anything.
+
+Two one-line guards outside our own code, both calling the same predicate:
+
+  * BrowserTabStripModelDelegate::CreateHistoricalTab - so a jar is not
+    reopenable. Its partition is emptied as it closes, so "reopen closed tab"
+    could not restore the jar; it would hand back a tab that looks identical
+    and is signed in as the ordinary profile. That is the exact outcome this
+    feature exists to prevent, arriving through the back door.
+  * SessionServiceBase::TabInserted - so a jar is never written to the session
+    file, for the same reason one restart later.
+
+The helper that makes a tab a jar is also what identifies one: IsJarTab asks
+whether the WebContentsUserData is attached, so the two can never disagree, and
+it is attached before the tab strip sees the WebContents - session save
+observes tab insertion, and attaching afterwards would leave a window in which
+a jar looks ordinary and the session file is written from inside it.
+
+Jars go in a tab group titled Aerogel so the tab strip says which tabs are
+separate without a new piece of UI existing to say it. One group per window,
+reused: two jars are still two separate jars, and the group is a label rather
+than a boundary.
+
+Verified against Chromium 152.0.7977.82. Every API this uses was read in the
+real headers at that tag rather than recalled - CreateForFixedStoragePartition
+and StoragePartitionConfig::Create, the five-argument ClearData whose
+documentation says an opaque-origin StorageKey means "all data in this
+partition", browser_shutdown::HasShutdownStarted, TabStripModel's
+AppendWebContents / AddToNewGroup / AddToExistingGroup / group_model / kNoTab,
+TabGroupModel::ListTabGroups and GetTabGroup, TabGroup::visual_data and
+SetVisualData, and the TabGroupVisualData constructor. The patch is generated
+against a tree carrying the full ungoogled and Aerium series in order, applied
+with GNU patch as the build applies it.
+
+Not in this change, deliberately: the link context menu entry ("Open link in
+Aerogel tab"), which is the other half of the feature and wants its own pass
+over render_view_context_menu.cc, and Android, which has no JNI surface for a
+custom StoragePartitionConfig and needs a different approach entirely.
+
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -1513,6 +1513,8 @@ static_library("ui") {
+       # that //chrome/browser:browser has no remaining sources. It registers
+       # WebUI interface binders for desktop, which need this target's headers.
+       "//chrome/browser/chrome_browser_interface_binders_webui_parts_desktop.cc",
++      "aerium/aerogel.cc",
++      "aerium/aerogel.h",
+       "browser.cc",
+       "browser.h",
+       "browser_command_controller.cc",
+--- a/chrome/app/chrome_command_ids.h
++++ b/chrome/app/chrome_command_ids.h
+@@ -552,6 +552,11 @@
+ // and Aerium does not install anything.
+ #define IDC_AERIUM_UPDATE_AVAILABLE                           54021
+ 
++// Aerium: opens a new tab with a storage partition of its own. Handled in
++// AppMenuModel beside IDC_AERIUM_UPDATE_AVAILABLE rather than in the command
++// controller, for the same reason - the controller has never heard of it.
++#define IDC_AERIUM_NEW_AEROGEL_TAB                            54022
++
+ // NOTE: The last valid command value is 57343 (0xDFFF)
+ // See http://msdn.microsoft.com/en-us/library/t2zechd4(VS.71).aspx
+ 
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -2323,6 +2323,12 @@
+     <message name="IDS_AERIUM_UPDATE_AVAILABLE_MENU_ITEM" desc="App-menu row shown when the daily check has found a newer release. The placeholder is that release's version. Clicking it opens the release page.">
+       Aerium <ph name="VERSION">$1<ex>152.0.7977.64</ex></ph> is available
+     </message>
++    <message name="IDS_AERIUM_NEW_AEROGEL_TAB" desc="App-menu row that opens a tab whose cookies and site data are kept separate from the rest of the browser and are thrown away when the tab closes.">
++      New Aerogel tab
++    </message>
++    <message name="IDS_AERIUM_AEROGEL_GROUP_TITLE" desc="Name of the tab group that Aerogel tabs are placed in, so the tab strip shows which tabs are separate from the rest of the browser.">
++      Aerogel
++    </message>
+     <message name="IDS_SETTINGS_SITE_RULES_HEADER" desc="Header for a table of per-website rules saying which list a site is on and which kinds of data survive a cleanup.">
+       Site rules
+     </message>
+--- a/chrome/browser/sessions/session_service_base.cc
++++ b/chrome/browser/sessions/session_service_base.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "chrome/browser/sessions/session_service_base.h"
+ 
++#include "chrome/browser/ui/aerium/aerogel.h"
++
+ #include <stddef.h>
+ 
+ #include <set>
+@@ -264,6 +266,14 @@ void SessionServiceBase::SetTabIndexInWindow(SessionID window_id,
+ }
+ 
+ void SessionServiceBase::TabInserted(WebContents* contents) {
++  // Aerium: Aerogel tabs are never written to the session file. Restoring one
++  // is impossible - the partition it belonged to was in memory and is gone -
++  // so a restored tab would be an ordinary tab wearing the same URL, quietly
++  // back on the profile's own cookies.
++  if (aerogel::IsJarTab(contents)) {
++    return;
++  }
++
+   sessions::SessionTabHelper* session_tab_helper =
+       sessions::SessionTabHelper::FromWebContents(contents);
+   if (!ShouldTrackChangesToWindow(session_tab_helper->window_id())) {
+--- /dev/null
++++ b/chrome/browser/ui/aerium/aerogel.cc
+@@ -0,0 +1,229 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++// Aerium: a jar is a tab with a storage partition to itself.
++//
++// Site isolation, storage partitioning and the ephemeral-sites list all answer
++// "keep this site away from other sites". None of them answer "keep this site
++// away from itself" - a second account on a site you are already signed in to,
++// or a link you would rather not hand to the profile that knows who you are.
++// Firefox solves that with containers. This is the same idea with a shorter
++// lifetime: the jar is created when the tab is, and is emptied when it closes.
++//
++// The mechanism is SiteInstance::CreateForFixedStoragePartition, whose whole
++// purpose is a partition that survives navigation within a frame tree. Every
++// jar is created with in_memory=true, which is the load-bearing property here:
++// the partition is never written to disk at all, so "cleared when you close
++// the tab" is a statement about memory rather than a promise to delete
++// something. There is nothing on disk to fail to delete.
++//
++// What a jar is NOT: it is not Incognito. History, downloads and the
++// omnibox's memory belong to the profile and are not partitioned, so an
++// Aerogel tab still records where it went. It separates identity, not traces.
++// Incognito remains the answer to "leave nothing behind locally", and the
++// menu string says so.
++
++#include "chrome/browser/ui/aerium/aerogel.h"
++
++#include <memory>
++#include <string>
++#include <utility>
++#include <vector>
++
++#include "base/functional/callback_helpers.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/time/time.h"
++#include "chrome/browser/lifetime/browser_shutdown.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser.h"
++#include "chrome/browser/ui/tabs/tab_group_model.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/common/webui_url_constants.h"
++#include "chrome/grit/generated_resources.h"
++#include "components/tab_groups/tab_group_color.h"
++#include "components/tab_groups/tab_group_id.h"
++#include "components/tab_groups/tab_group_visual_data.h"
++#include "components/tabs/public/tab_group.h"
++#include "content/public/browser/browser_context.h"
++#include "content/public/browser/navigation_controller.h"
++#include "content/public/browser/site_instance.h"
++#include "content/public/browser/storage_partition.h"
++#include "content/public/browser/storage_partition_config.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/browser/web_contents_observer.h"
++#include "content/public/browser/web_contents_user_data.h"
++#include "content/public/common/referrer.h"
++#include "third_party/blink/public/common/storage_key/storage_key.h"
++#include "ui/base/l10n/l10n_util.h"
++#include "ui/base/page_transition_types.h"
++#include "url/gurl.h"
++
++namespace aerogel {
++namespace {
++
++// StoragePartitionConfig::Create requires a non-empty [a-z]* domain, so this
++// is not a display string and cannot become one.
++constexpr char kPartitionDomain[] = "aerogel";
++
++// Each jar needs a name no other jar has worn. A counter that only ever goes up
++// is enough, and it does not need to survive a restart: the partitions it names
++// are in-memory, so a name from a previous run refers to nothing.
++std::string NextPartitionName() {
++  static int next = 0;
++  return base::NumberToString(++next);
++}
++
++// Rides along on the tab, holds the tab's partition, and empties it when the
++// tab goes away. Being WebContentsUserData is also how IsJarTab answers - the
++// presence of this object IS what makes a tab a jar, so the two can never
++// disagree.
++class JarHelper : public content::WebContentsUserData<JarHelper>,
++                  public content::WebContentsObserver {
++ public:
++  JarHelper(const JarHelper&) = delete;
++  JarHelper& operator=(const JarHelper&) = delete;
++  ~JarHelper() override;
++
++  // content::WebContentsObserver:
++  void WebContentsDestroyed() override;
++
++ private:
++  friend class content::WebContentsUserData<JarHelper>;
++
++  JarHelper(content::WebContents* contents,
++            content::StoragePartitionConfig config);
++
++  // Stored rather than re-derived from the SiteInstance. By the time the tab is
++  // being torn down its SiteInstance is not somewhere to be asking questions,
++  // and this is exactly when the config is needed.
++  const content::StoragePartitionConfig config_;
++
++  WEB_CONTENTS_USER_DATA_KEY_DECL();
++};
++
++JarHelper::JarHelper(content::WebContents* contents,
++                     content::StoragePartitionConfig config)
++    : content::WebContentsObserver(contents), config_(std::move(config)) {}
++
++JarHelper::~JarHelper() = default;
++
++void JarHelper::WebContentsDestroyed() {
++  // Nothing in this partition ever reached disk, so a clear that does not run
++  // costs memory and nothing else. At shutdown that memory is going away
++  // anyway, and asking a profile that is already tearing itself down for a
++  // storage partition is the more dangerous half of the trade.
++  if (browser_shutdown::HasShutdownStarted()) {
++    return;
++  }
++
++  content::BrowserContext* const context = web_contents()->GetBrowserContext();
++  if (!context) {
++    return;
++  }
++
++  // can_create=false: if the partition was never materialised there is nothing
++  // to empty, and creating one here just to clear it would be absurd.
++  content::StoragePartition* const partition =
++      context->GetStoragePartition(config_, /*can_create=*/false);
++  if (!partition) {
++    return;
++  }
++
++  // A default-constructed StorageKey has an opaque origin, which ClearData
++  // documents as meaning "all data in this partition" rather than one origin's.
++  partition->ClearData(content::StoragePartition::REMOVE_DATA_MASK_ALL,
++                       blink::StorageKey(), base::Time(), base::Time::Max(),
++                       base::DoNothing());
++}
++
++WEB_CONTENTS_USER_DATA_KEY_IMPL(JarHelper);
++
++// Aerogel tabs go in a group so the tab strip says which tabs are jars without
++// a new piece of UI existing to say it. One group per window, reused, because
++// two jars are still two separate jars - the group is a label, not a boundary.
++void PlaceInAerogelGroup(Browser* browser, int index) {
++  TabStripModel* const model = browser->tab_strip_model();
++  TabGroupModel* const groups = model->group_model();
++  if (!groups) {
++    return;
++  }
++
++  const std::u16string title =
++      l10n_util::GetStringUTF16(IDS_AERIUM_AEROGEL_GROUP_TITLE);
++  for (const tab_groups::TabGroupId& id : groups->ListTabGroups()) {
++    TabGroup* const group = groups->GetTabGroup(id);
++    if (group && group->visual_data()->title() == title) {
++      model->AddToExistingGroup({index}, id);
++      return;
++    }
++  }
++
++  const tab_groups::TabGroupId id = model->AddToNewGroup({index});
++  TabGroup* const group = groups->GetTabGroup(id);
++  if (group) {
++    group->SetVisualData(
++        tab_groups::TabGroupVisualData(
++            title, tab_groups::TabGroupColorId::kCyan, /*is_collapsed=*/false),
++        /*is_customized=*/true);
++  }
++}
++
++}  // namespace
++
++bool IsJarTab(const content::WebContents* contents) {
++  return contents && JarHelper::FromWebContents(contents) != nullptr;
++}
++
++void OpenInNewJar(Browser* browser, const GURL& url) {
++  if (!browser || !url.is_valid()) {
++    return;
++  }
++  Profile* const profile = browser->GetProfile();
++
++  // in_memory=true is the whole feature. Note that for an off-the-record
++  // profile StoragePartitionConfig::Create forces it on regardless, which is
++  // the behaviour we want anyway: an Aerogel tab opened from Incognito is
++  // in-memory twice over rather than accidentally persistent.
++  const content::StoragePartitionConfig config =
++      content::StoragePartitionConfig::Create(profile, kPartitionDomain,
++                                              NextPartitionName(),
++                                              /*in_memory=*/true);
++
++  // CreateForFixedStoragePartition, rather than plain Create, is what keeps the
++  // tab in this partition as it navigates. Without "fixed" the first
++  // cross-site navigation would land back in the profile's own partition and
++  // the jar would quietly stop being a jar.
++  scoped_refptr<content::SiteInstance> site_instance =
++      content::SiteInstance::CreateForFixedStoragePartition(profile, url,
++                                                            config);
++
++  content::WebContents::CreateParams params(profile, std::move(site_instance));
++  std::unique_ptr<content::WebContents> contents =
++      content::WebContents::Create(params);
++  content::WebContents* const raw_contents = contents.get();
++
++  // Attached before the tab strip sees it, so that anything observing tab
++  // insertion - session save, most of all - already gets a truthful answer from
++  // IsJarTab. Attaching afterwards would leave a window in which this tab looks
++  // ordinary, and the session file is written from inside that window.
++  JarHelper::CreateForWebContents(raw_contents, config);
++
++  raw_contents->GetController().LoadURL(url, content::Referrer(),
++                                        ui::PAGE_TRANSITION_TYPED,
++                                        std::string());
++
++  TabStripModel* const model = browser->tab_strip_model();
++  model->AppendWebContents(std::move(contents), /*foreground=*/true);
++
++  const int index = model->GetIndexOfWebContents(raw_contents);
++  if (index != TabStripModel::kNoTab) {
++    PlaceInAerogelGroup(browser, index);
++  }
++}
++
++void OpenNewJarTab(Browser* browser) {
++  OpenInNewJar(browser, GURL(chrome::kChromeUINewTabURL));
++}
++
++}  // namespace aerogel
+--- /dev/null
++++ b/chrome/browser/ui/aerium/aerogel.h
+@@ -0,0 +1,36 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_AERIUM_AEROGEL_H_
++#define CHROME_BROWSER_UI_AERIUM_AEROGEL_H_
++
++class Browser;
++class GURL;
++
++namespace content {
++class WebContents;
++}
++
++// Aerium: per-tab storage jars. See aerogel.cc for what a jar is and why.
++namespace aerogel {
++
++// True if `contents` is an Aerogel tab: one whose cookies and storage live in
++// a private in-memory partition instead of the profile's own.
++//
++// Callers outside this file are the places that must not treat a jar like an
++// ordinary tab - session save and the reopen-closed-tab list.
++bool IsJarTab(const content::WebContents* contents);
++
++// Opens `url` in a new foreground tab of `browser` with a storage partition of
++// its own, and puts that tab in the window's Aerogel group so it does not look
++// like an ordinary tab.
++void OpenInNewJar(Browser* browser, const GURL& url);
++
++// OpenInNewJar on the new-tab page. Exists so that a menu entry point does not
++// have to name a URL, and so that which URL that is stays in one place.
++void OpenNewJarTab(Browser* browser);
++
++}  // namespace aerogel
++
++#endif  // CHROME_BROWSER_UI_AERIUM_AEROGEL_H_
+--- a/chrome/browser/ui/browser_tab_strip_model_delegate.cc
++++ b/chrome/browser/ui/browser_tab_strip_model_delegate.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "chrome/browser/ui/browser_tab_strip_model_delegate.h"
+ 
++#include "chrome/browser/ui/aerium/aerogel.h"
++
+ #include <stddef.h>
+ 
+ #include "base/command_line.h"
+@@ -193,6 +195,14 @@ void BrowserTabStripModelDelegate::MoveGroupToNewWindow(
+ 
+ std::optional<SessionID> BrowserTabStripModelDelegate::CreateHistoricalTab(
+     content::WebContents* contents) {
++  // Aerium: an Aerogel tab must not be reopenable. Its storage partition is
++  // emptied as it closes, so "reopen closed tab" could not restore the jar -
++  // it would hand back a tab that looks the same and is signed in as the
++  // ordinary profile, which is the one outcome the feature exists to prevent.
++  if (aerogel::IsJarTab(contents)) {
++    return std::nullopt;
++  }
++
+   if (!BrowserSupportsHistoricalEntries()) {
+     return std::nullopt;
+   }
+--- a/chrome/browser/ui/toolbar/app_menu_model.cc
++++ b/chrome/browser/ui/toolbar/app_menu_model.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "chrome/browser/ui/toolbar/app_menu_model.h"
+ 
++#include "chrome/browser/ui/aerium/aerogel.h"
++
+ #include <algorithm>
+ #include <cmath>
+ #include <memory>
+@@ -1231,6 +1233,14 @@ void AppMenuModel::ExecuteCommand(int command_id, int event_flags) {
+     return;
+   }
+ 
++  // Aerium: as above, handled here because the command controller does not
++  // know this id. The new tab starts on the new-tab page - a jar is a place to
++  // go somewhere, and which somewhere is the user's business.
++  if (command_id == IDC_AERIUM_NEW_AEROGEL_TAB) {
++    aerogel::OpenNewJarTab(browser_);
++    return;
++  }
++
+   if (command_id == IDC_VIEW_PASSWORDS) {
+     browser()->GetProfile()->GetPrefs()->SetBoolean(
+         password_manager::prefs::kPasswordsPrefWithNewLabelUsed, true);
+@@ -1958,6 +1968,7 @@ bool AppMenuModel::IsCommandIdEnabled(int command_id) const {
+     // chrome::IsCommandEnabled would say no to an id the command controller has
+     // never heard of.
+     case IDC_AERIUM_UPDATE_AVAILABLE:
++    case IDC_AERIUM_NEW_AEROGEL_TAB:
+       return true;
+     case IDC_NEW_INCOGNITO_WINDOW:
+       return IncognitoModePrefs::IsIncognitoAllowed(browser_->GetProfile());
+@@ -2072,6 +2083,15 @@ void AppMenuModel::Build() {
+         kIncognitoMenuItem);
+   }
+ 
++  // Aerium: beside Incognito because that is where someone looks for "not my
++  // usual self", and the two are neighbours rather than the same thing. See
++  // chrome/browser/ui/aerium/aerogel.cc. Guest sessions are excluded on the
++  // same grounds as the row above: there is no identity there to be separate
++  // from.
++  if (!browser_->GetProfile()->IsGuestSession()) {
++    AddItemWithStringId(IDC_AERIUM_NEW_AEROGEL_TAB, IDS_AERIUM_NEW_AEROGEL_TAB);
++  }
++
+   AddSeparator(ui::NORMAL_SEPARATOR);
+ 
+ #if !BUILDFLAG(IS_CHROMEOS)

@@ -39,12 +39,25 @@ permissions:
   contents: read
   actions: read
 
-# cancel-in-progress deliberately false: a routine push must QUEUE behind a
-# multi-day build, not kill it (three 30h+ builds died to pushes this way).
-# To supersede a doomed run, cancel it manually first.
+# Only the newest commit builds. A push supersedes whatever is in flight,
+# because a build already compiling older sources cannot produce the artifact
+# anyone now wants - it would spend a day to ship a binary that is wrong the
+# moment it lands.
+#
+# This was false because three 30h+ builds died to pushes. That history is the
+# reason the `paths` filter above matters more than this flag does: what made
+# those losses losses is that ANY push counted, including ones that changed
+# nothing the build reads. A CHANGELOG or README push does not start a run
+# here, so it cannot cancel one either, and superseding is only ever triggered
+# by a commit that genuinely changes what would be compiled. Losing a build to
+# one of those is not a loss - its output was already stale.
+#
+# auto-resume.yml already assumed this: its cancelled-run branch checks whether
+# the cancelled run's sha is still master's head and exits 0 when it is not,
+# so an auto-cancellation will not be resurrected as an interruption.
 concurrency:
   group: build-x64-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:

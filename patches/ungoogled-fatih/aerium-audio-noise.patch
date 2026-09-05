@@ -1,0 +1,346 @@
+# Audio fingerprinting, and the connection type on Android.
+#
+# The audio fingerprint is one of the four or five signals every fingerprinting
+# library collects, CreepJS included, and the recipe is always the same: build
+# an OfflineAudioContext, run an oscillator through a DynamicsCompressor,
+# render, then sum or hash the samples that come back. The result depends on
+# the platform's float rounding and the compressor's implementation, so it is
+# stable per device and per build, it survives clearing everything, and it is
+# identical in incognito. The AnalyserNode getters are the same signal read a
+# different way.
+#
+# One multiplier, drawn once per renderer process
+# -----------------------------------------------
+# Every path a page can read audio back through is scaled by a single fixed
+# factor of about a hundredth of a percent. Three properties follow from
+# "fixed", and each of them is why it is fixed rather than drawn per sample the
+# way Cromite's version does it.
+#
+# It survives averaging. Independent per-sample noise does not: render the same
+# graph a hundred times, take the mean, and the true value comes back. A
+# constant factor is still there after any number of repetitions.
+#
+# It costs one random draw for the life of the process. The callers are
+# per-sample loops that a visualiser runs on every frame; two RNG calls per
+# sample there is a real cost in a browser whose whole pitch is efficiency.
+#
+# It is per process, so with site isolation it is per site - one site reads one
+# consistent answer however often it asks, two sites read different answers,
+# and the answer is new the next time the process is. This is the same
+# reasoning as aerium-timezone.patch, and for the same reason: consistency
+# within a site, variance between sites. Per document would vary more, and is
+# what the existing bromite client-rects noise does, but RealtimeAnalyser has
+# no document to hand, and an analyser that disagreed with an offline render on
+# the same page would be a signal of its own.
+#
+# Nothing here touches playback. The four analyser getters produce
+# visualisation data, and the offline path is a rendered result whose gain
+# moves by a part in ten thousand. Decoded audio going to the speakers is not
+# in any of these paths.
+#
+# On by default, with a chrome://flags entry to turn it off, because unlike the
+# time zone override there is nothing for a user to weigh: no site behaves
+# differently and nothing sounds different.
+#
+# baseLatency
+# -----------
+# Quantised to 1ms, the same way outputLatency() immediately below it already
+# is. Upstream mitigated one of that pair and not the other, and there is
+# nothing in the code that explains the asymmetry - base_latency_ is the audio
+# hardware's buffer size over its sample rate, so it names the device as
+# squarely as the measured latency does, and it is a raw double today. It
+# reuses Chromium's own kOutputLatencyMaxPrecisionFactor rather than inventing
+# a constant. 1ms and not the 8ms outputLatency uses without microphone
+# permission: base latency is single-digit milliseconds, and 8ms would round
+# most of it to zero, which would take away a value pages also schedule
+# against.
+#
+# navigator.connection
+# --------------------
+# NetInfoConstantType is turned on, and that is the whole of it. The rest of
+# navigator.connection is deliberately left alone, which is worth writing down
+# because Cromite does rewrite it and this does not.
+#
+# Chromium has already mitigated most of that interface since Cromite's patch
+# was written. RoundRtt() and RoundMbps() quantise rtt and downlink to 50ms and
+# 25kbps buckets, cap them, and multiply by a per-host random factor first - so
+# two sites already read different values for the same connection, which is the
+# property we would be trying to add. saveData reflects a user setting that is
+# off. What is left is effectiveType, four values that track the network rather
+# than the device, and pinning it would mean a phone on a bad connection is
+# told to fetch the high quality asset. That is a real cost for a two-bit
+# signal that changes on its own.
+#
+# NetInfoConstantType is different: Chromium wrote it, wired it into
+# NetworkInformation::type() and downlinkMax(), and left it off. Where those
+# properties are exposed at all - Android and ChromeOS, per NetInfoDownlinkMax
+# in the same file - a page can read whether the device is on wifi or cellular
+# and which generation of cellular. That is about the device and where it is,
+# not about the network's mood, and nothing else in this browser covers it. On
+# desktop the properties are not exposed, so this changes nothing there and is
+# included for symmetry with the Android build and for the day upstream flips
+# NetInfoDownlinkMax on.
+#
+# Cromite's approach was also rejected on its mechanism, not only its scope: it
+# seeds an override into the NetworkStateNotifier constructor, which is the
+# object the whole renderer reads. That would move the Save-Data header and
+# resource loading priorities as well as the JavaScript API, which is a much
+# larger change than the one being asked for.
+--- a/third_party/blink/common/features.cc
++++ b/third_party/blink/common/features.cc
+@@ -30,6 +30,7 @@
+ BASE_FEATURE(kAeriumTimeZone, "AeriumTimeZone", base::FEATURE_DISABLED_BY_DEFAULT);
+ const char kAeriumTimeZoneId[] = "zone";
+ const base::FeatureParam<std::string> kAeriumTimeZoneIdParam{&kAeriumTimeZone, kAeriumTimeZoneId, "random"};
++BASE_FEATURE(kAeriumAudioNoise, "AeriumAudioNoise", base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+ // -----------------------------------------------------------------------------
+ // Feature definitions and associated constants (feature params, et cetera)
+--- a/third_party/blink/public/common/features.h
++++ b/third_party/blink/public/common/features.h
+@@ -31,6 +31,7 @@
+ BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kAeriumTimeZone);
+ BLINK_COMMON_EXPORT extern const char kAeriumTimeZoneId[];
+ BLINK_COMMON_EXPORT extern const base::FeatureParam<std::string> kAeriumTimeZoneIdParam;
++BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kAeriumAudioNoise);
+ 
+ // -----------------------------------------------------------------------------
+ // Feature declarations and associated constants (feature params, et cetera)
+--- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
++++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+@@ -4318,7 +4318,16 @@
+       status: {"Android": "", "default": "stable"},
+     },
+     {
++      // Aerium: turned on. Chromium wrote this mitigation, wired it into
++      // NetworkInformation::type() and downlinkMax(), and then left it off,
++      // so navigator.connection reports the real connection type wherever the
++      // properties are exposed at all - which is Android and ChromeOS, per
++      // NetInfoDownlinkMax below. Whether a phone is on wifi or cellular, and
++      // which generation of cellular, is a signal about the device and where
++      // it is that a page gets for free and that nothing else in this browser
++      // covers.
+       name: "NetInfoConstantType",
++      status: "stable",
+     },
+     {
+       name: "NetInfoDownlinkMax",
+--- a/third_party/blink/renderer/modules/webaudio/base_audio_context.h
++++ b/third_party/blink/renderer/modules/webaudio/base_audio_context.h
+@@ -321,6 +321,13 @@
+   // if the execution context does not exist.
+   bool CheckExecutionContextAndThrowIfNecessary(ExceptionState&);
+ 
++  // Aerium: scale a sample a page is about to read back, so audio
++  // fingerprinting cannot recover a stable value. See base_audio_context.cc
++  // for why the factor is drawn once per renderer process. Returns the value
++  // unchanged when the mitigation is off, so callers need no check of their
++  // own.
++  static float AeriumAudioNoise(float value);
++
+  protected:
+   enum class ContextType { kRealtimeContext, kOfflineContext };
+ 
+--- a/third_party/blink/renderer/modules/webaudio/base_audio_context.cc
++++ b/third_party/blink/renderer/modules/webaudio/base_audio_context.cc
+@@ -25,9 +25,12 @@
+ 
+ #include "third_party/blink/renderer/modules/webaudio/base_audio_context.h"
+ 
++#include "base/feature_list.h"
+ #include "base/metrics/histogram_functions.h"
++#include "base/rand_util.h"
+ #include "build/build_config.h"
+ #include "media/base/audio_bus.h"
++#include "third_party/blink/public/common/features.h"
+ #include "third_party/blink/public/mojom/devtools/console_message.mojom-blink.h"
+ #include "third_party/blink/public/mojom/frame/lifecycle.mojom-shared.h"
+ #include "third_party/blink/public/platform/platform.h"
+@@ -772,6 +775,38 @@
+   return To<LocalDOMWindow>(GetExecutionContext());
+ }
+ 
++// static
++float BaseAudioContext::AeriumAudioNoise(float value) {
++  // One multiplier, drawn on first use and then fixed. Three properties fall
++  // out of that choice, and each of them is the reason for it.
++  //
++  // It survives averaging. Noise drawn per sample does not: a fingerprinter
++  // that renders the same graph repeatedly and takes the mean recovers the
++  // true value, because independent noise cancels and a constant factor does
++  // not.
++  //
++  // It costs one random draw for the life of the process. These callers are
++  // per-sample loops that a visualiser runs every frame, and two RNG calls per
++  // sample there - which is what the Cromite version does - is a real cost in
++  // a browser that claims efficiency as the point.
++  //
++  // It is per process, so with site isolation it is per site: one site reads
++  // one consistent answer however often it asks, two sites read different
++  // answers, and the answer is new the next time the process is. Per document
++  // would vary more, but RealtimeAnalyser has no document to hand, and an
++  // analyser that disagreed with an offline render on the same page would be a
++  // signal of its own.
++  //
++  // A part in ten thousand, either way. Inaudible, and none of these paths
++  // feeds playback: the analyser getters produce visualisation data, and the
++  // offline path is a rendered result whose gain moves by 0.01%.
++  static const float kFactor =
++      base::FeatureList::IsEnabled(features::kAeriumAudioNoise)
++          ? 1.0f + static_cast<float>((base::RandDouble() - 0.5) * 0.0002)
++          : 1.0f;
++  return value * kFactor;
++}
++
+ void BaseAudioContext::NotifySourceNodeStartedProcessing(AudioNode* node) {
+   DCHECK(IsMainThread());
+   DeferredTaskHandler::GraphAutoLocker locker(GetDeferredTaskHandler());
+--- a/third_party/blink/renderer/modules/webaudio/audio_buffer.h
++++ b/third_party/blink/renderer/modules/webaudio/audio_buffer.h
+@@ -116,6 +116,11 @@
+ 
+   std::unique_ptr<SharedAudioBuffer> CreateSharedAudioBuffer();
+ 
++  // Aerium: scale every sample in this buffer by the process-wide audio noise
++  // factor. Called on the result of an offline render, which is the buffer an
++  // audio fingerprint is normally computed from.
++  void AeriumAddAudioNoise();
++
+  private:
+   bool CreatedSuccessfully(unsigned desired_number_of_channels) const;
+ 
+--- a/third_party/blink/renderer/modules/webaudio/audio_buffer.cc
++++ b/third_party/blink/renderer/modules/webaudio/audio_buffer.cc
+@@ -201,6 +201,19 @@
+   }
+ }
+ 
++void AudioBuffer::AeriumAddAudioNoise() {
++  for (unsigned channel = 0; channel < channels_.size(); ++channel) {
++    NotShared<DOMFloat32Array> array = getChannelData(channel);
++    if (!array) {
++      continue;
++    }
++    base::span<float> samples = array->AsSpan();
++    for (float& sample : samples) {
++      sample = BaseAudioContext::AeriumAudioNoise(sample);
++    }
++  }
++}
++
+ NotShared<DOMFloat32Array> AudioBuffer::getChannelData(
+     unsigned channel_index,
+     ExceptionState& exception_state) {
+--- a/third_party/blink/renderer/modules/webaudio/offline_audio_context.cc
++++ b/third_party/blink/renderer/modules/webaudio/offline_audio_context.cc
+@@ -35,6 +35,7 @@
+ #include "third_party/blink/renderer/core/dom/dom_exception.h"
+ #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+ #include "third_party/blink/renderer/core/frame/local_dom_window.h"
++#include "third_party/blink/renderer/modules/webaudio/audio_buffer.h"
+ #include "third_party/blink/renderer/modules/webaudio/audio_listener.h"
+ #include "third_party/blink/renderer/modules/webaudio/deferred_task_handler.h"
+ #include "third_party/blink/renderer/modules/webaudio/offline_audio_completion_event.h"
+@@ -432,6 +433,12 @@
+       return;
+     }
+ 
++    // Aerium: the render result is what an audio fingerprint is computed from
++    // - the usual recipe is an oscillator through a DynamicsCompressor,
++    // rendered offline, then summed or hashed. Scaling here changes that sum
++    // and leaves playback of the same buffer inaudibly different.
++    rendered_buffer->AeriumAddAudioNoise();
++
+     // Call the offline rendering completion event listener and resolve the
+     // promise too.
+     DispatchEvent(*OfflineAudioCompletionEvent::Create(rendered_buffer));
+--- a/third_party/blink/renderer/modules/webaudio/realtime_analyser.cc
++++ b/third_party/blink/renderer/modules/webaudio/realtime_analyser.cc
+@@ -33,6 +33,7 @@
+ 
+ #include "base/compiler_specific.h"
+ #include "media/base/audio_bus.h"
++#include "third_party/blink/renderer/modules/webaudio/base_audio_context.h"
+ #include "third_party/blink/renderer/platform/audio/audio_bus.h"
+ #include "third_party/blink/renderer/platform/audio/audio_utilities.h"
+ #include "third_party/blink/renderer/platform/audio/vector_math.h"
+@@ -117,7 +118,8 @@
+     for (unsigned i = 0; i < len; ++i) {
+       const float linear_value = magnitude_buffer_[i];
+       const double db_mag = audio_utilities::LinearToDecibels(linear_value);
+-      destination[i] = static_cast<float>(db_mag);
++      destination[i] =
++          BaseAudioContext::AeriumAudioNoise(static_cast<float>(db_mag));
+     }
+   }
+ }
+@@ -154,7 +156,8 @@
+       // The range m_minDecibels to m_maxDecibels will be scaled to byte values
+       // from 0 to UCHAR_MAX.
+       const double scaled_value =
+-          UCHAR_MAX * (db_mag - min_decibels) * range_scale_factor;
++          BaseAudioContext::AeriumAudioNoise(static_cast<float>(
++              UCHAR_MAX * (db_mag - min_decibels) * range_scale_factor));
+ 
+       // Clip to valid range.
+       destination[i] =
+@@ -180,9 +183,9 @@
+     base::span<float> destination = destination_array->AsSpan();
+     for (unsigned i = 0; i < len; ++i) {
+       // Buffer access is protected due to modulo operation.
+-      float value =
++      const float value = BaseAudioContext::AeriumAudioNoise(
+           input_buffer_[(i + write_index - fft_size + kInputBufferSize) %
+-                        kInputBufferSize];
++                        kInputBufferSize]);
+ 
+       destination[i] = value;
+     }
+@@ -205,9 +208,9 @@
+     base::span<unsigned char> destination = destination_array->AsSpan();
+     for (unsigned i = 0; i < len; ++i) {
+       // Buffer access is protected due to modulo operation.
+-      const float value =
++      const float value = BaseAudioContext::AeriumAudioNoise(
+           input_buffer_[(i + write_index - fft_size + kInputBufferSize) %
+-                        kInputBufferSize];
++                        kInputBufferSize]);
+ 
+       // Scale from nominal -1 -> +1 to unsigned byte.
+       const double scaled_value = 128 * (value + 1);
+--- a/third_party/blink/renderer/modules/webaudio/audio_context.cc
++++ b/third_party/blink/renderer/modules/webaudio/audio_context.cc
+@@ -1270,7 +1270,16 @@
+   DCHECK_CALLED_ON_VALID_SEQUENCE(main_thread_sequence_checker_);
+   DCHECK(destination());
+ 
+-  return base_latency_;
++  // Aerium: quantised the same way outputLatency() below already is. Upstream
++  // mitigated one of this pair and not the other, and there is no reason in
++  // the code for the asymmetry: base_latency_ is the audio hardware's buffer
++  // size over its sample rate, so it names the device as squarely as the
++  // measured latency does. 1ms rather than the 8ms outputLatency uses without
++  // microphone permission, because base latency is single-digit milliseconds
++  // and 8ms would round most of it to zero - collapsing the distinct values a
++  // page can also legitimately schedule against.
++  return std::round(base_latency_ / kOutputLatencyMaxPrecisionFactor) *
++         kOutputLatencyMaxPrecisionFactor;
+ }
+ 
+ double AudioContext::outputLatency() const {
+--- a/chrome/browser/aerium_flag_entries.h
++++ b/chrome/browser/aerium_flag_entries.h
+@@ -16,4 +16,13 @@
+      kOsAll, FEATURE_WITH_PARAMS_VALUE_TYPE(blink::features::kAeriumTimeZone,
+                                             kAeriumTimeZoneChoices,
+                                             "AeriumTimeZone")},
++    {"aerium-audio-noise",
++     "Audio fingerprint deception",
++     "Scale audio a page reads back - the four AnalyserNode getters and the "
++     "result of an offline render - by a fixed factor of about a hundredth of "
++     "a percent, drawn once per site. The usual audio fingerprint renders an "
++     "oscillator through a compressor offline and hashes the result; this "
++     "changes that hash without changing anything you can hear, and none of "
++     "these paths feeds playback. On by default. Aerium flag.",
++     kOsAll, FEATURE_VALUE_TYPE(blink::features::kAeriumAudioNoise)},
+ #endif  // CHROME_BROWSER_AERIUM_FLAG_ENTRIES_H_

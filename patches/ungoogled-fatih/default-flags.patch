@@ -1,15 +1,55 @@
+# Point a fresh profile's chrome://flags at the defaults this browser means.
+#
+# The entries seeded here are not hidden or forced: every one of them appears
+# in chrome://flags exactly as it would otherwise, and a user who changes one
+# owns it from then on - SeedFlags() and this registration both skip entries
+# already present. This decides only which way they point before anyone
+# touches them.
+#
+# The fingerprinting group is here to close a gap between our own platforms.
+# theme.sh compiles canvas image-data noise, measureText noise, client-rects
+# noise and WebGL vendor/renderer spoofing into the Android build always-on,
+# with no switch to turn them off, because Vanadium has no flags-seeding
+# mechanism to make them optional. On desktop the same four existed as
+# first-run choices, so a desktop profile whose owner closed the first-run tab
+# had none of them. Same browser, same version, materially easier to
+# fingerprint - decided by which build you happened to install rather than by
+# anyone's intent. The desktop default now matches the phone.
+#
+# reduced-system-info and remove-client-hints join them for the same reason,
+# arriving at the state Android is already in: hardwareConcurrency answers 2,
+# the user agent reports a unified platform, and high-entropy client hints are
+# not populated. On Android the first of those comes from theme.sh and the
+# rest from Vanadium's kClientHintsFromReducedUA, which ships enabled there.
+#
+# What this costs, stated rather than implied: hardwareConcurrency answering 2
+# will make a site that sizes a worker pool from it use two workers, and a
+# blank WebGL renderer string will make a site that switches effects on the GPU
+# name pick its fallback. Both are visible in chrome://flags and both are one
+# click to undo, which is the difference between this and compiling them in.
+#
+# Not seeded: aerium-time-zone. It is the one mitigation whose breakage is
+# silent - a wrong meeting time looks like a wrong meeting time, not like a
+# browser setting - so it stays opt-in on every platform.
 --- a/components/webui/flags/pref_service_flags_storage.cc
 +++ b/components/webui/flags/pref_service_flags_storage.cc
-@@ -87,7 +87,26 @@
+@@ -87,7 +87,49 @@
  
  // static
  void PrefServiceFlagsStorage::RegisterPrefs(PrefRegistrySimple* registry) {
 -  registry->RegisterListPref(prefs::kAboutFlagsEntries);
-+  // Silently seed the two flags that are not opt-in "features" the way the
-+  // rest are. The other recommended ungoogled-chromium/bromite flags are
-+  // intentionally NOT pref-seeded here; they're listed as opt-in choices on
-+  // the first-run page (see aerium-first-run-page.patch) instead, so picking
-+  // them is a visible decision rather than a silent default.
++  // Flags a fresh profile starts with. They are still ordinary chrome://flags
++  // entries - visible, listed, and switchable - this only decides which way
++  // they point before anyone touches them.
++  //
++  // The fingerprinting group below used to be here as an explicit absence,
++  // offered on the first-run page as a visible choice rather than seeded. That
++  // reasoning does not survive contact with what the Android build does: over
++  // there the same four mitigations are compiled always-on, with no switch at
++  // all. The same browser was therefore harder to fingerprint on a phone than
++  // on a desktop, for no reason anyone chose - just because Android has no
++  // flags-seeding mechanism and desktop does. Parity is the point, so the
++  // desktop default moves to match the phone.
 +  base::ListValue default_flags;
 +  // A security backstop - don't silently download-and-run a CRX/user-script
 +  // MIME type without asking first.
@@ -23,6 +63,22 @@
 +  // FEATURE_VALUE_TYPE entry, and FeatureEntry::DescriptionForOption() maps
 +  // FEATURE_VALUE index 0/1/2 to Default/Enabled/Disabled.
 +  default_flags.Append("enable-parallel-downloading@1");
++  // The fingerprinting group, matching what theme.sh compiles in on Android.
++  // The three bromite entries are SINGLE_VALUE_TYPE - a bare command-line
++  // switch, no option index - so they carry no "@" suffix; the two
++  // ungoogled-chromium ones are FEATURE_VALUE_TYPE and FEATURE_WITH_PARAMS,
++  // where "@1" is Enabled (with the feature's own defaults, which for
++  // spoof-webgl-info is the blank renderer and vendor strings).
++  default_flags.Append("fingerprinting-canvas-image-data-noise");
++  default_flags.Append("fingerprinting-canvas-measuretext-noise");
++  default_flags.Append("fingerprinting-client-rects-noise");
++  default_flags.Append("spoof-webgl-info@1");
++  // hardwareConcurrency answers 2, the user agent reports a unified platform,
++  // and only low-entropy client hints are populated. Android arrives at the
++  // same place by two other routes: theme.sh clamps hardwareConcurrency, and
++  // Vanadium's kClientHintsFromReducedUA ships enabled.
++  default_flags.Append("reduced-system-info@1");
++  default_flags.Append("remove-client-hints@1");
 +  registry->RegisterListPref(prefs::kAboutFlagsEntries,
 +                             std::move(default_flags));
    registry->RegisterDictionaryPref(prefs::kAboutFlagsOriginLists);

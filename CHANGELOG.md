@@ -6,6 +6,43 @@ behind any of this.
 
 ## 152.0.7977.82-1 (next release)
 
+**Fingerprinting**
+
+- The canvas, measureText and getClientRects noise, the WebGL vendor/renderer
+  spoof, `navigator.hardwareConcurrency` reporting 2 and the stripping of
+  high-entropy client hints are now **on for every new profile**. They used to
+  be offered as a first-run choice, which meant closing that tab left you with
+  none of them - while the Android build had all four compiled in and always
+  on. The same browser was easier to fingerprint on a desktop than on a phone
+  for no reason anyone chose. All of them are still in `chrome://flags` and
+  still one click to turn off.
+- New: **Report a different time zone**, at
+  `chrome://flags/#aerium-time-zone`. The time zone is one of the strongest
+  signals a page can read without asking - it is stable, it survives clearing
+  everything, and it is the same in Incognito. Turned on, each site is told a
+  different one, chosen when the process for that site starts, so a site sees
+  one consistent answer and two sites do not see the same one.
+- It is off by default and it will make times wrong. A calendar, a booking site
+  or a flight tracker will be out by the offset, with nothing on screen to
+  explain why. That is the trade; make it deliberately.
+
+**Speed, memory and battery**
+
+- Tabs beyond the five you used most recently are now frozen, and thawed for
+  five seconds every minute so notifications, refreshes and connections still
+  work. Browsing with many tabs open stops costing processor time in proportion
+  to how many.
+- Cross-process subframes that are off-screen, or cover a small part of the
+  page and have never been touched, now run at lower priority and half the
+  frame rate. That is an advertising iframe, described by what it does rather
+  than by a filter list.
+- Background housekeeping is held back while a page you are looking at is
+  loading or while you are typing, and released when neither is true.
+- On Windows, tabs are also frozen when free memory drops below 15%.
+- These were all written by Chromium and shipped switched off, waiting to be
+  turned on from Google's servers. A browser that never talks to those servers
+  never gets the message, so it is sent here instead.
+
 **Aerogel tabs**
 
 - New: a tab with a cookie jar of its own. **App menu › New Aerogel tab**, or

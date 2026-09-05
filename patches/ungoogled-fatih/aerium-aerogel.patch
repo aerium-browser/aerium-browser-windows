@@ -129,7 +129,7 @@ custom StoragePartitionConfig and needs a different approach entirely.
    if (!ShouldTrackChangesToWindow(session_tab_helper->window_id())) {
 --- /dev/null
 +++ b/chrome/browser/ui/aerium/aerogel.cc
-@@ -0,0 +1,229 @@
+@@ -0,0 +1,231 @@
 +// Copyright 2026 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -236,7 +236,9 @@ custom StoragePartitionConfig and needs a different approach entirely.
 +
 +JarHelper::JarHelper(content::WebContents* contents,
 +                     content::StoragePartitionConfig config)
-+    : content::WebContentsObserver(contents), config_(std::move(config)) {}
++    : content::WebContentsUserData<JarHelper>(*contents),
++      content::WebContentsObserver(contents),
++      config_(std::move(config)) {}
 +
 +JarHelper::~JarHelper() = default;
 +

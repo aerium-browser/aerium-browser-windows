@@ -16,11 +16,20 @@
 #
 # Off by default with a flag to turn it back on, rather than removed, because
 # there is a real use: browser-based design tools offer your own fonts through
-# this API and fall back to web fonts without it. Setting status to "" gives
-# the generated blink::features::kFontAccess a disabled default, and the json5
+# this API and fall back to web fonts without it. An empty status gives the
+# generated blink::features::kFontAccess a disabled default, and the json5
 # schema's copied_from_base_feature_if defaults to "enabled_or_overridden", so
 # a chrome://flags override to Enabled turns the Blink feature back on. That is
 # the mechanism the entry relies on; it is not a decorative flag.
+#
+# It has to be written as {"default": ""} and not as a bare "". json5_generator
+# validates the two forms down different branches of _is_valid(): a string is
+# matched against valid_values, which is ["stable", "experimental", "test"] and
+# does not contain the empty string, while a dict is checked per entry with an
+# explicit `or val == ""` that permits it. A bare "" therefore fails generation
+# with `Unknown value: ''` before a line is compiled - deterministically, on
+# every build. Upstream's own value here, {"Android": "", "default": "stable"},
+# is a dict for exactly that reason.
 #
 # Deliberately not done here: Cromite's Fonts-fingerprinting-mitigation.patch,
 # which is the other half of this problem - the measurement channel, where a
@@ -62,7 +71,7 @@
 +      // exists because design tools are a real use for it.
        name: "FontAccess",
 -      status: {"Android": "", "default": "stable"},
-+      status: "",
++      status: {"default": ""},
      },
      {
        name: "FontDataServiceForCSSLocalFonts",

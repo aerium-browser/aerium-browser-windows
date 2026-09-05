@@ -4,7 +4,49 @@ Written for people using Aerium rather than for people building it. Each
 release on GitHub also links the full commit history if you want the detail
 behind any of this.
 
-## 151.0.7922.173-1 (next release)
+## 152.0.7977.82-1 (next release)
+
+**Aerogel tabs**
+
+- New: a tab with a cookie jar of its own. **App menu › New Aerogel tab**, or
+  right-click a link and choose **Open link in Aerogel tab**. Sign in to a
+  second account on a site you are already signed in to, or open a link without
+  handing it to the profile that knows who you are. Aerogel tabs sit in a
+  labelled tab group so you can see which ones they are.
+- The jar is never written to disk, and it is emptied when the tab closes. It
+  cannot be reopened with Ctrl+Shift+T and it is not written to the session
+  file, because a restored Aerogel tab would look identical and be signed in as
+  your ordinary self, which is the one thing the feature exists to prevent.
+- It is not Incognito. History, downloads and the address bar's memory belong
+  to the profile and still record where you went. This separates identity, not
+  traces; Incognito remains the answer to leaving nothing behind locally.
+
+**Search**
+
+- DuckDuckGo is now the default engine, with Startpage second. Existing
+  installs keep whichever engine they are already using - the browser will not
+  move you off one you chose.
+- degoog (degoog.org) replaces the SearXNG entry in the list.
+
+**Secure DNS**
+
+- **Settings › Privacy and security › Use secure DNS** offers more, and better,
+  providers: Mullvad and Mullvad's ad-blocking resolver are new, and Quad9 and
+  NextDNS now appear at all. Quad9 shipped complete but behind a disabled
+  feature flag, so nobody ever saw it; NextDNS was restricted to the United
+  States for no reason its endpoint justifies.
+
+**Media**
+
+- DRM is off until you turn it on, in a new **Settings › Media** section.
+  Aerium does not bundle Google's Widevine module, so it no longer tells sites
+  it has one unless you ask it to.
+
+**Under the hood**
+
+- Chromium 152.0.7977.82, which brings upstream's latest security fixes.
+
+## 151.0.7922.173-1
 
 **A look of its own**
 

@@ -1,0 +1,97 @@
+# Turn on the performance_manager policies that ship written but switched off.
+#
+# A de-googled build never contacts the variations server, so every
+# base::Feature runs on the default written into the source. Upstream's
+# convention is to land a feature DISABLED_BY_DEFAULT and turn it on through
+# Finch afterwards, which means the disabled default in the tree is not a
+# judgement about the code - it is the state the code was committed in. We get
+# that state permanently. Nothing here is experimental in the sense of
+# unfinished; each one is a policy with a consumer already wired into
+# ChromeBrowserMainExtraPartsPerformanceManager.
+#
+# kUnimportantFramesPriority and kThrottleUnimportantFrameRate are one change,
+# not two, and enabling either alone is pointless. ImportantFrameDecorator's
+# IsImportant() opens with "always important if the feature is disabled", so
+# with kUnimportantFramesPriority off every frame is important, and
+# FrameThrottlingPolicy - whose entire body is "if (!frame_node->IsImportant())"
+# - throttles nothing. Turned on together, a cross-process subframe that does
+# not intersect the viewport, or intersects only a small part of it and has
+# never been interacted with, drops in priority and has its begin-frame rate
+# halved. That is an advertising iframe, described structurally rather than by
+# a filter list, which is why this works in a browser that ships no filter
+# list.
+#
+# kInfiniteTabsFreezing freezes tabs beyond the five most recently used, with
+# a periodic thaw (five seconds every minute) so notifications, keepalives and
+# refreshes still happen. It is what stops CPU use from growing with tab count.
+# Desktop only in effect: the FreezingPolicy is inside a !BUILDFLAG(IS_ANDROID)
+# block in chrome_browser_main_extra_parts_performance_manager.cc, with a
+# comment saying it does not yet play well with the renderer's own Android
+# freezing. Android gets the two frame changes and the two below instead.
+#
+# kInfiniteTabsFreezingOnMemoryPressure extends the same freezing to Windows
+# when free memory drops under 15%. Windows-only in effect - the branch that
+# reads it is inside #if BUILDFLAG(IS_WIN) in freezing_policy.cc - and it only
+# acts under pressure, so it costs nothing the rest of the time.
+#
+# kEnableBestEffortTaskInhibitingPolicy holds BEST_EFFORT thread-pool work
+# behind a fence while a visible page is loading or the user is typing,
+# releasing it when neither is true, with a floor of 30 seconds of BEST_EFFORT
+# time in every 5 minutes so nothing starves. Background work stops competing
+# with what the user is waiting for.
+#
+# kLevelDBSiteDataStoreBestEffort is one line in leveldb_site_data_store.cc: it
+# picks BEST_EFFORT instead of USER_BLOCKING for the site-data store's task
+# runner. USER_BLOCKING for a database nobody is waiting on is a startup tax.
+#
+# Deliberately not enabled: kDiscardOnCommitLimit. It reads as a fourth item in
+# the same family and is not one - it swaps a policy rather than adding one. In
+# UrgentPageDiscardingPolicy::OnReleaseMemory the presence of the commit
+# monitor makes the function return early, so memory-pressure discarding stops
+# happening and commit-limit discarding replaces it. Trading a signal that
+# works for one that might is not the same bet as the five above.
+--- a/components/performance_manager/features.cc
++++ b/components/performance_manager/features.cc
+@@ -144,10 +144,10 @@
+ #endif
+ 
+ BASE_FEATURE(kLevelDBSiteDataStoreBestEffort,
+-             base::FEATURE_DISABLED_BY_DEFAULT);
++             base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+ BASE_FEATURE(kEnableBestEffortTaskInhibitingPolicy,
+-             base::FEATURE_DISABLED_BY_DEFAULT);
++             base::FEATURE_ENABLED_BY_DEFAULT);
+ BASE_FEATURE_PARAM(base::TimeDelta,
+                    kBestEffortTaskInhibitingPeriod,
+                    &kEnableBestEffortTaskInhibitingPolicy,
+@@ -212,7 +212,7 @@
+ 
+ BASE_FEATURE(kRecordFreezingEligibilityUKM, base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+-BASE_FEATURE(kInfiniteTabsFreezing, base::FEATURE_DISABLED_BY_DEFAULT);
++BASE_FEATURE(kInfiniteTabsFreezing, base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+ BASE_FEATURE_PARAM(int,
+                    kInfiniteTabsFreezing_NumProtectedTabs,
+@@ -233,7 +233,7 @@
+                    base::Seconds(5));
+ 
+ BASE_FEATURE(kInfiniteTabsFreezingOnMemoryPressure,
+-             base::FEATURE_DISABLED_BY_DEFAULT);
++             base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+ BASE_FEATURE_PARAM(base::TimeDelta,
+                    kInfiniteTabsFreezingOnMemoryPressureInterval,
+@@ -260,9 +260,9 @@
+ 
+ BASE_FEATURE(kSeamlessRenderFrameSwap, base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+-BASE_FEATURE(kUnimportantFramesPriority, base::FEATURE_DISABLED_BY_DEFAULT);
++BASE_FEATURE(kUnimportantFramesPriority, base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+-BASE_FEATURE(kThrottleUnimportantFrameRate, base::FEATURE_DISABLED_BY_DEFAULT);
++BASE_FEATURE(kThrottleUnimportantFrameRate, base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+ BASE_FEATURE(kKeepDefaultSearchEngineRendererAlive,
+ #if BUILDFLAG(IS_ANDROID)

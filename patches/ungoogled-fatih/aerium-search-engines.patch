@@ -1,5 +1,5 @@
 # Replace every per-country prepopulated engine list with one fixed
-# privacy-focused set: Startpage (default), DuckDuckGo, Brave Search, Mojeek,
+# privacy-focused set: DuckDuckGo (default), Startpage, Brave Search, Mojeek,
 # Qwant, Ecosia, degoog and the two DuckDuckGo no-JS variants. Brave, Mojeek,
 # Qwant and Ecosia are already defined upstream (ids 109, 103, 94, 101), so
 # they cost one list entry each and no new definition. ungoogled-chromium replaces the Google engine
@@ -86,7 +86,7 @@
          regional_prepopulated_engines) {
    return FindPrepopulatedEngineInternal(prefs, regional_prepopulated_engines,
 -                                        google.id,
-+                                        startpage.id,
++                                        duckduckgo.id,
                                          /*use_first_as_fallback=*/true);
  }
  
@@ -104,7 +104,7 @@
      // continue to be used and updates made here will not always appear.
      // Also then run tools/search_engine_choice/generate_search_engine_icons.py.
 -    "kCurrentDataVersion": 210
-+    "kCurrentDataVersion": 253
++    "kCurrentDataVersion": 254
    },
  
    // The following engines are included in country lists and are added to the
@@ -170,8 +170,8 @@
 -        "&google",
 -        "&bing",
 -        "&yahoo"
-+        "&startpage",
 +        "&duckduckgo",
++        "&startpage",
 +        "&brave",
 +        "&mojeek",
 +        "&qwant",

@@ -1,0 +1,99 @@
+# Rework the "Select DNS provider" menu in Settings > Security.
+#
+# Three separate problems, one file. What the menu shows is
+# DohProviderEntry::GetList() filtered twice, in secure_dns_util.cc: first by
+# ProvidersForCountry (display_globally, or a match in display_countries) and
+# then by SelectEnabledProviders (the entry's base::Feature is enabled). An
+# entry has to pass both, which is why two of these three fixes are one-word
+# changes to entries that were already there and already named.
+#
+# 1. Mullvad is not in upstream's list at all, so it is added. Two entries: the
+#    unfiltered resolver and the ad-blocking one, which is the pair worth
+#    offering rather than all six Mullvad variants. Endpoints, IPs and DoT
+#    hostnames come from Mullvad's own documentation at
+#    https://mullvad.net/en/help/dns-over-https-and-dns-over-tls, not from
+#    memory, and both DoH endpoints answer.
+#
+#    The plain-53 IPs matter beyond documentation: they are the automatic
+#    upgrade mapping, so a user whose system resolver is already 194.242.2.2
+#    gets upgraded to DoH without configuring anything. That mapping is behind
+#    kDnsOverHttpsUpgrade, which ungoogled disables on desktop and Chromium
+#    enables on Android, so this is Android-only in practice. Harmless either
+#    way, and correct to state.
+#
+# 2. NextDNS was already named and already had a privacy policy, but shipped
+#    display_globally=false with display_countries={"US"}. Nothing about the
+#    endpoint is US-specific - it is https://chromium.dns.nextdns.io for
+#    everyone - so the restriction only meant that outside the US the entry
+#    existed and stayed invisible. Now global.
+#
+# 3. Quad9 was the strangest of the three: a complete entry, ui_name
+#    "Quad9 (9.9.9.9)", privacy policy, display_globally already true - behind
+#    a feature that ships FEATURE_DISABLED_BY_DEFAULT. It passed the country
+#    filter and then failed SelectEnabledProviders, every time, for everyone.
+#    Enabled.
+#
+# Google (Public DNS) and GoogleDns64 are already gone here; ungoogled's
+# core/ungoogled-chromium/doh-changes.patch removes both, and this patch is
+# generated against the tree after that one has applied. Android has no
+# ungoogled layer, so theme.sh removes them there separately - see the block
+# beside these same edits in that script.
+#
+# Deliberately not added: dns0.eu, whose endpoints could not be reached to
+# verify from the build environment, and AdGuard DNS, which is a filtering
+# resolver run by a company rather than a plain one. Neither is a judgement
+# about the operators; an entry nobody verified is just a worse entry.
+
+--- a/net/dns/public/doh_provider_entry.cc
++++ b/net/dns/public/doh_provider_entry.cc
+@@ -248,6 +248,30 @@ const DohProviderEntry::List& DohProviderEntry::GetList() {
+         /*display_countries=*/{},
+         {"109.236.119.2", "109.236.120.2", "2a02:6ca3:0:1::2",
+          "2a02:6ca3:0:2::2"}},
++       {
++           "Mullvad",
++           MAKE_STATIC_STORAGE_BASE_FEATURE(kDohProviderMullvad,
++                                            base::FEATURE_ENABLED_BY_DEFAULT),
++           {"194.242.2.2", "2a07:e340::2"},
++           /*dns_over_tls_hostnames=*/{"dns.mullvad.net"},
++           "https://dns.mullvad.net/dns-query",
++           /*ui_name=*/"Mullvad DNS",
++           /*privacy_policy=*/"https://mullvad.net/en/help/no-logging-data-policy",
++           /*display_globally=*/true,
++           /*display_countries=*/{},
++       },
++       {
++           "MullvadAdblock",
++           MAKE_STATIC_STORAGE_BASE_FEATURE(kDohProviderMullvadAdblock,
++                                            base::FEATURE_ENABLED_BY_DEFAULT),
++           {"194.242.2.3", "2a07:e340::3"},
++           /*dns_over_tls_hostnames=*/{"adblock.dns.mullvad.net"},
++           "https://adblock.dns.mullvad.net/dns-query",
++           /*ui_name=*/"Mullvad DNS (ad blocking)",
++           /*privacy_policy=*/"https://mullvad.net/en/help/no-logging-data-policy",
++           /*display_globally=*/true,
++           /*display_countries=*/{},
++       },
+        {
+            "NextDns",
+            MAKE_STATIC_STORAGE_BASE_FEATURE(kDohProviderNextDns,
+@@ -257,8 +281,8 @@ const DohProviderEntry::List& DohProviderEntry::GetList() {
+            "https://chromium.dns.nextdns.io",
+            /*ui_name=*/"NextDNS",
+            /*privacy_policy=*/"https://nextdns.io/privacy",
+-           /*display_globally=*/false,
+-           /*display_countries=*/{"US"},
++           /*display_globally=*/true,
++           /*display_countries=*/{},
+        },
+        {
+            "OpenDNS",
+@@ -314,7 +338,7 @@ const DohProviderEntry::List& DohProviderEntry::GetList() {
+        {
+            "Quad9Secure",
+            MAKE_STATIC_STORAGE_BASE_FEATURE(kDohProviderQuad9Secure,
+-                                            base::FEATURE_DISABLED_BY_DEFAULT),
++                                            base::FEATURE_ENABLED_BY_DEFAULT),
+            {"9.9.9.9", "149.112.112.112", "2620:fe::fe", "2620:fe::9"},
+            /*dns_over_tls_hostnames=*/{"dns.quad9.net", "dns9.quad9.net"},
+            "https://dns.quad9.net/dns-query",

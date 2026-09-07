@@ -1,0 +1,187 @@
+Give chrome://settings the new tab page's design.
+
+One accent, one outline, one pair of text colours, light and dark - the values
+chrome://aerium-newtab already draws with, so the first page of the browser and
+its settings agree instead of being two designs in one window.
+
+WHY THIS IS ALMOST ENTIRELY VARIABLES. Settings is hundreds of shadow roots and
+a stylesheet in the document cannot reach into any of them. What it can do is
+set custom properties, which inherit through shadow boundaries, and every one of
+those roots takes its colours from the same small set of tokens. Restating the
+tokens therefore restyles the whole page - and a component upstream adds next
+milestone arrives already themed, which a pile of per-component rules would not.
+
+The selector is html:root rather than html. cr_shared_vars.css has an
+html[webui-refresh-2026] block, and a bare html would lose to it on specificity;
+:root brings this to the same weight, and settings_vars.css is imported after
+cr_shared_vars, so it wins on order instead.
+
+Both --cr-* and --color-* are restated, and that is not belt and braces. The
+controls resolve --color-* first and fall back to the cr palette only when it is
+absent, so an accent stated only at the cr level never reaches a toggle, a
+checkbox or a button - cr_toggle.css and cr_button.css read
+--color-toggle-button-track-on and --color-button-background-prominent before
+anything else. The colour pipeline declares those on the document; this sheet is
+adopted, and adopted sheets cascade after linked ones, so it lands on top.
+
+CARDS ARE AN OUTLINE, NOT A SHADOW, which is the design's one structural change.
+A box-shadow with no blur and one pixel of spread draws exactly a hairline ring,
+and settings_section.css already puts --cr-card-shadow on #card, so the whole
+change is a token: transparent fill, ring, 18px radius. A border would have meant
+editing an element whose padding upstream has already tuned.
+
+The dark ground is #060B16, which is the value aerium-brand-surfaces gives
+ui::kColorSysBase, so the page and the window frame around it are the same colour
+rather than two darks that nearly match. The light ground is #F2F7FD, the new tab
+page's own.
+
+The one rule that is not a variable is the section label in
+settings_page/settings_section.css. It is the only piece of type on the page that
+names a group rather than a setting, and the design says that with 11px, half a
+pixel of tracking, upper case and the accent - the same treatment the new tab
+page's settings panel gives its own group headings. It keeps
+var(--cr-primary-text-color) as the fallback so the file still reads correctly on
+its own.
+
+Not done here: the app menu, the toolbar and the other WebUI pages
+(chrome://history, chrome://downloads, chrome://extensions). Those read the same
+tokens but from cr_shared_vars.css rather than this file, so they are a second
+patch, not a wider selector in this one.
+
+Verified against the real 152.0.7977.82 sources: both files were fetched at that
+tag, edited, and the patch generated from the pair, then re-applied to a clean
+copy of them - it lands with no fuzz and reproduces both files byte for byte.
+Neither file is touched by any other patch in the series, checked by grepping
+patches/ for both paths.
+
+--- a/chrome/browser/resources/settings/settings_page/settings_section.css
++++ b/chrome/browser/resources/settings/settings_page/settings_section.css
+@@ -19,16 +19,21 @@
+   padding-inline-end: var(--cr-section-padding);
+ }
+ 
++/* Aerium: the section label is the one on the new tab page's own settings
++ * panel - small, spaced, upper case, in the accent - rather than a slightly
++ * larger run of body text. It is the only piece of type on this page that
++ * names a group rather than a setting, and this is how the design says that. */
+ #header .title {
+-  color: var(--cr-primary-text-color);
+-  font-size: 108%;
+-  font-weight: 400;
+-  letter-spacing: .25px;
++  color: var(--aerium-accent, var(--cr-primary-text-color));
++  font-size: 11px;
++  font-weight: 600;
++  letter-spacing: .5px;
+   margin-bottom: 12px;
+   margin-top: var(--cr-section-vertical-margin);
+   outline: none;
+   padding-bottom: 4px;
+   padding-top: 8px;
++  text-transform: uppercase;
+ }
+ 
+ #feedback {
+--- a/chrome/browser/resources/settings/settings_vars.css
++++ b/chrome/browser/resources/settings/settings_vars.css
+@@ -30,3 +30,100 @@
+     --settings-error-color: var(--google-red-300);
+   }
+ }
++
++/* --- Aerium: the new tab page's palette, applied to Settings.
++ *
++ * These are the same values chrome://aerium-newtab draws with, so the first
++ * page of the browser and its settings agree: one accent, one outline, one
++ * pair of text colours, light and dark.
++ *
++ * Everything here is a variable rather than a rule. Settings is hundreds of
++ * shadow roots and a stylesheet in the document cannot reach into them, but
++ * every one of those roots reads its colours from these tokens, so restating
++ * the tokens restyles the lot. It also means an upstream component added next
++ * milestone arrives already themed.
++ *
++ * html:root, not html, on purpose. cr_shared_vars.css has an
++ * html[webui-refresh-2026] block, and a bare html selector would lose to it on
++ * specificity. :root brings this to the same weight, and this file is imported
++ * after that one, so it wins on order instead.
++ *
++ * The --color-* tokens are here for the same reason the --cr-* ones are: the
++ * controls read --color-* first and fall back to the cr palette only when it
++ * is absent, so an accent stated only at the cr level never reaches a toggle
++ * or a button. They are declared on the document, which is where the colour
++ * pipeline puts them, and this sheet is adopted after that one. */
++html:root {
++  --aerium-bg: #F2F7FD;
++  --aerium-surface: #FFFFFF;
++  --aerium-outline: #D8E6F5;
++  --aerium-outline-dim: #E1ECF9;
++  --aerium-accent: #2C6BAE;
++  --aerium-on-accent: #FFFFFF;
++  --aerium-text: #0B2138;
++  --aerium-label: #4A5D7A;
++
++  --md-background-color: var(--aerium-bg);
++  --color-webui-page-background: var(--aerium-bg);
++
++  /* A hairline ring instead of a drop shadow. A box-shadow with no blur and
++   * one pixel of spread draws exactly the outline the design asks for, and it
++   * arrives through a token every card already reads - the alternative is a
++   * border on an element whose padding upstream has already tuned. */
++  --cr-card-background-color: transparent;
++  --color-webui-card-background: transparent;
++  --cr-card-shadow: 0 0 0 1px var(--aerium-outline);
++  --cr-card-border-radius: 18px;
++
++  --cr-menu-background-color: var(--aerium-surface);
++  --cr-menu-background-focus-color: var(--aerium-outline-dim);
++  --cr-menu-shadow: 0 0 0 1px var(--aerium-outline);
++  --cr-dialog-background-color: var(--aerium-surface);
++  --color-webui-dialog-background: var(--aerium-surface);
++  --cr-dialog-border-radius: 16px;
++
++  --cr-separator-color: var(--aerium-outline-dim);
++  --cr-scrollable-border-color: var(--aerium-outline);
++  --cr-focused-item-color: var(--aerium-outline-dim);
++  --cr-hairline: 1px solid var(--aerium-outline-dim);
++
++  --cr-primary-text-color: var(--aerium-text);
++  --cr-secondary-text-color: var(--aerium-label);
++  --cr-title-text-color: var(--aerium-label);
++  --cr-form-field-label-color: var(--aerium-label);
++  --cr-link-color: var(--aerium-accent);
++  --cr-checked-color: var(--aerium-accent);
++  --cr-focus-outline-color: var(--aerium-accent);
++  --iron-icon-fill-color: var(--aerium-label);
++
++  --color-primary-foreground: var(--aerium-text);
++  --color-secondary-foreground: var(--aerium-label);
++  --color-link-foreground-default: var(--aerium-accent);
++  --color-checkbox-foreground-checked: var(--aerium-accent);
++  --color-toggle-button-track-on: var(--aerium-accent);
++  --color-toggle-button-thumb-on: var(--aerium-on-accent);
++  --color-toggle-button-track-off: transparent;
++  --color-toggle-button-thumb-off: var(--aerium-label);
++  --color-button-border: var(--aerium-outline);
++  --color-button-foreground: var(--aerium-accent);
++  --color-button-background-prominent: var(--aerium-accent);
++  --color-button-foreground-prominent: var(--aerium-on-accent);
++  --color-button-background-tonal: var(--aerium-outline-dim);
++  --color-button-foreground-tonal: var(--aerium-text);
++}
++
++@media (prefers-color-scheme: dark) {
++  html:root {
++    /* The base here is the one aerium-brand-surfaces gives ui::kColorSysBase,
++     * so the page and the window frame around it are the same colour rather
++     * than two darks that nearly match. */
++    --aerium-bg: #060B16;
++    --aerium-surface: #0E1834;
++    --aerium-outline: #22376E;
++    --aerium-outline-dim: #1B2A57;
++    --aerium-accent: #7FC4E4;
++    --aerium-on-accent: #06283D;
++    --aerium-text: #D8E6F5;
++    --aerium-label: #8FA3C4;
++  }
++}

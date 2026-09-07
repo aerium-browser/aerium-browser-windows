@@ -48,6 +48,13 @@ Not done here: the app menu, the toolbar and the other WebUI pages
 tokens but from cr_shared_vars.css rather than this file, so they are a second
 patch, not a wider selector in this one.
 
+chrome/browser/resources/settings runs stylelint as part of its build, on
+exactly these files, and pre-flight 39 failed on it: color-hex-length wants
+#FFF, not #FFFFFF. That is a real gate on this patch and a useful one - the
+config also bans duplicate custom properties in a block, unknown properties and
+unspaced calc, so a typo in the token list would be caught the same way rather
+than shipping as a colour that silently does nothing.
+
 Verified against the real 152.0.7977.82 sources: both files were fetched at that
 tag, edited, and the patch generated from the pair, then re-applied to a clean
 copy of them - it lands with no fuzz and reproduces both files byte for byte.
@@ -113,11 +120,11 @@ patches/ for both paths.
 + * pipeline puts them, and this sheet is adopted after that one. */
 +html:root {
 +  --aerium-bg: #F2F7FD;
-+  --aerium-surface: #FFFFFF;
++  --aerium-surface: #FFF;
 +  --aerium-outline: #D8E6F5;
 +  --aerium-outline-dim: #E1ECF9;
 +  --aerium-accent: #2C6BAE;
-+  --aerium-on-accent: #FFFFFF;
++  --aerium-on-accent: #FFF;
 +  --aerium-text: #0B2138;
 +  --aerium-label: #4A5D7A;
 +

@@ -1,0 +1,154 @@
+Give every WebUI page the new tab page's palette.
+
+One accent, one outline, one pair of text colours in each scheme, for Settings,
+History, Downloads, Extensions and every bubble built out of cr_elements. The
+values are the ones chrome://aerium-newtab already draws with.
+
+This is the shared half of what aerium-settings-style.patch did for one page.
+That patch stated the palette in settings_vars.css, which only Settings imports;
+this states it in cr_shared_vars.css, which every WebUI page does, and the
+settings patch keeps only the part that is genuinely about Settings.
+
+TOKENS, NOT RULES, for the reason that made the settings version work: a
+stylesheet cannot reach into a shadow root, but a custom property inherits
+through one, and every cr_elements component takes its colours from the same
+small set of names. Restating the names restyles all of them, and a component
+upstream adds next milestone arrives already themed.
+
+The selector is html:root rather than html. cr_shared_vars.css itself has an
+html[webui-refresh-2026] block that a bare html would lose to on specificity;
+:root matches its weight, and this block is last in the file, so it wins on
+order instead.
+
+Both --cr-* and --color-* are stated, and that is not redundancy. The controls
+resolve --color-* first and fall back to the cr palette only when it is absent -
+cr_toggle.css reads --color-toggle-button-track-on and cr_button.css reads
+--color-button-background-prominent before anything else - so an accent given
+only to the cr tokens never reaches a toggle or a button. The colour pipeline
+declares the --color-* names on the document at runtime; this sheet is adopted,
+and adopted sheets cascade after linked ones, so it lands on top.
+
+COLOURS ONLY, DELIBERATELY. The card shape - the transparent fill and hairline
+ring the design puts round a group - stays in the settings patch, applied to the
+one page whose card markup has been read. history_item.css draws its list as a
+single segmented card, with #background split across is-card-start and
+is-card-end and a box-shadow drawn deliberately past the edge to join the rows;
+a ring token there would draw a line between every row. Downloads is the same
+shape of risk. Those pages get the palette and keep their own geometry.
+
+The dark ground is #060B16 and the raised surface #0E1834, which are the values
+aerium-brand-surfaces already gives ui::kColorSysBase and ui::kColorSysSurface,
+so a WebUI page and the window frame around it are the same two colours rather
+than four that nearly match. Light is #F2F7FD and white, the new tab page's own.
+
+Nothing else in the series touches cr_elements - checked by grepping patches/
+for the directory, which returns only this patch's own prose.
+
+Verified against the real 152.0.7977.82 source: the file was fetched at that
+tag, edited, the patch generated from the pair, and re-applied to a clean copy -
+it lands with no fuzz and reproduces the file byte for byte. cr_elements is
+built with build_webui, which runs the same stylelint that rejected the first
+version of the settings patch, so the same rules were checked by hand first: no
+collapsible six-digit hex, no duplicate custom property in any block (seven
+blocks, none), a trailing newline, and both new rules preceded by a comment,
+which rule-empty-line-before ignores.
+
+--- a/ui/webui/resources/cr_elements/cr_shared_vars.css
++++ b/ui/webui/resources/cr_elements/cr_shared_vars.css
+@@ -377,3 +377,96 @@
+     --cr-animations-disabled: 1;
+   }
+ }
++
++/* --- Aerium: one palette for every WebUI page.
++ *
++ * These are the values chrome://aerium-newtab draws with, restated as the
++ * tokens the cr_elements components already read, so Settings, History,
++ * Downloads, Extensions and every bubble built out of these components share
++ * one accent, one outline and one pair of text colours in each scheme.
++ *
++ * Tokens rather than rules, because a stylesheet cannot reach into a shadow
++ * root but a custom property inherits through one. It also means a component
++ * added upstream next milestone arrives already themed.
++ *
++ * html:root, not html, on purpose: the html[webui-refresh-2026] block above
++ * would win against a bare html on specificity. :root matches its weight, and
++ * this block is last in the file, so it wins on order instead.
++ *
++ * Both --cr-* and --color-* are stated. The controls resolve --color-* first
++ * and fall back to the cr palette only when it is absent - cr_toggle.css reads
++ * --color-toggle-button-track-on and cr_button.css reads
++ * --color-button-background-prominent before anything else - so an accent
++ * given only to the cr tokens never reaches a toggle or a button. The colour
++ * pipeline declares the --color-* names on the document; this sheet is
++ * adopted, and adopted sheets cascade after linked ones.
++ *
++ * Colours only. Card shape - the transparent fill and hairline ring the design
++ * puts round a group - is left to aerium-settings-style.patch, which applies it
++ * to the one page whose card markup has actually been read. History draws its
++ * items as one segmented card and would grow a ring between every row. */
++html:root {
++  --aerium-bg: #F2F7FD;
++  --aerium-surface: #FFF;
++  --aerium-outline: #D8E6F5;
++  --aerium-outline-dim: #E1ECF9;
++  --aerium-accent: #2C6BAE;
++  --aerium-on-accent: #FFF;
++  --aerium-text: #0B2138;
++  --aerium-label: #4A5D7A;
++
++  --md-background-color: var(--aerium-bg);
++  --color-webui-page-background: var(--aerium-bg);
++
++  --cr-card-background-color: var(--aerium-surface);
++  --color-webui-card-background: var(--aerium-surface);
++  --cr-menu-background-color: var(--aerium-surface);
++  --cr-menu-background-focus-color: var(--aerium-outline-dim);
++  --cr-dialog-background-color: var(--aerium-surface);
++  --color-webui-dialog-background: var(--aerium-surface);
++
++  --cr-separator-color: var(--aerium-outline-dim);
++  --cr-scrollable-border-color: var(--aerium-outline);
++  --cr-focused-item-color: var(--aerium-outline-dim);
++  --cr-hairline: 1px solid var(--aerium-outline-dim);
++
++  --cr-primary-text-color: var(--aerium-text);
++  --cr-secondary-text-color: var(--aerium-label);
++  --cr-title-text-color: var(--aerium-label);
++  --cr-form-field-label-color: var(--aerium-label);
++  --cr-link-color: var(--aerium-accent);
++  --cr-checked-color: var(--aerium-accent);
++  --cr-focus-outline-color: var(--aerium-accent);
++
++  --color-primary-foreground: var(--aerium-text);
++  --color-secondary-foreground: var(--aerium-label);
++  --color-link-foreground-default: var(--aerium-accent);
++  --color-checkbox-foreground-checked: var(--aerium-accent);
++  --color-toggle-button-track-on: var(--aerium-accent);
++  --color-toggle-button-thumb-on: var(--aerium-on-accent);
++  --color-toggle-button-track-off: transparent;
++  --color-toggle-button-thumb-off: var(--aerium-label);
++  --color-button-border: var(--aerium-outline);
++  --color-button-foreground: var(--aerium-accent);
++  --color-button-background-prominent: var(--aerium-accent);
++  --color-button-foreground-prominent: var(--aerium-on-accent);
++  --color-button-background-tonal: var(--aerium-outline-dim);
++  --color-button-foreground-tonal: var(--aerium-text);
++}
++
++/* The dark ground is the value aerium-brand-surfaces gives ui::kColorSysBase
++ * and the raised surface is its kColorSysSurface, so a WebUI page and the
++ * window frame around it are the same two colours rather than four that nearly
++ * match. */
++@media (prefers-color-scheme: dark) {
++  html:root {
++    --aerium-bg: #060B16;
++    --aerium-surface: #0E1834;
++    --aerium-outline: #22376E;
++    --aerium-outline-dim: #1B2A57;
++    --aerium-accent: #7FC4E4;
++    --aerium-on-accent: #06283D;
++    --aerium-text: #D8E6F5;
++    --aerium-label: #8FA3C4;
++  }
++}

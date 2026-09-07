@@ -73,3 +73,4 @@ ungoogled-fatih/aerium-audio-noise.patch
 ungoogled-fatih/aerium-local-font-access.patch
 ungoogled-fatih/aerium-webui-style.patch
 ungoogled-fatih/aerium-settings-style.patch
+ungoogled-fatih/aerium-doh-hardening.patch

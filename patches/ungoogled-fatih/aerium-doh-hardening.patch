@@ -1,0 +1,215 @@
+Make secure DNS work where Chromium quietly gives up on it, and stop DoH
+queries carrying headers they have no business carrying.
+
+Requested as android issue 17, which asks for two Cromite patches by name:
+DoH-improvements.patch and
+Reduce-HTTP-headers-in-DoH-requests-to-bare-minimum.patch. This takes the parts
+of them that are defensible and leaves the parts that are not, so it is a port
+rather than a copy.
+
+WHAT IS TAKEN, and why each one.
+
+1. Minimal headers on DoH queries, which is the whole of the second patch. A
+   DoH query is an HTTP POST carrying wire-format DNS, and Chromium sends it
+   with a Referer, a User-Agent, Accept-Encoding advertising Brotli and Zstd,
+   and an Accept-Language. RFC 8484 section 6.1 says implementations SHOULD NOT
+   set non-essential headers in DoH requests, and the reason is exactly what it
+   sounds like: every one of those is a stable identifier handed to the
+   resolver on every lookup, and the resolver is the party you moved to DoH to
+   stop trusting. A new LOAD_MINIMAL_HEADERS flag, set only by DnsHTTPAttempt,
+   suppresses all four.
+
+2. An explicit DoH server plus a secure mode is now enough to build a DNS
+   config. Upstream requires DnsConfigOverrides::OverridesEverything(), so if
+   the system DNS configuration is missing or unreadable, BuildEffectiveConfig
+   returns nullopt and the resolver falls back - silently - to the platform
+   resolver, ignoring the DoH server the user chose. On Android that is not an
+   edge case: a VPN or Private DNS in the path is routine. This is the half of
+   the request that is a real bug fix rather than a preference.
+
+3. Secure DNS is no longer switched off because the device looks managed or
+   filtered. Chromium disables DoH when it detects an MDM owner or a
+   parental-control app, on the reasoning that those exist to see and filter
+   DNS. That reasoning does not survive contact with a browser people install
+   to stop exactly that: a setting the user turned on should not be revoked by
+   something else on the device.
+
+WHAT IS DELIBERATELY NOT TAKEN.
+
+Cromite's DoH-improvements.patch also rewrites SecureDnsConfig::ParseMode so
+that "automatic" means "secure". That is not a small change of default, it is a
+change of failure mode: in secure mode there is no fallback, so a DoH server
+that is unreachable - a captive portal, a hotel network, a resolver having a bad
+day - means no name resolution at all, with nothing in the UI explaining why.
+Chromium picks automatic for that reason and so does this. Anyone who wants
+secure mode can already have it by choosing a specific provider in Settings,
+which is what that choice means; and with change 2 above it now keeps working
+where it used to fall over. Getting the request's stated goal - reaching sites
+a plaintext resolver blocks - does not require taking the browser's DNS down
+with it when the DoH server is unreachable.
+
+Also not taken: the rename of DohProviderEntry::ui_name to ui_name_cromite and
+the forcing of display_globally, which exists to show every provider in the
+picker regardless of country. Aerium already has its own provider list in
+aerium-dns-providers.patch, so that is churn on a NET_EXPORT struct for
+something already solved here. And two LOG lines Cromite uses for its own
+debugging.
+
+The (true) guards are Cromite's idiom and are kept rather than deleting the
+bodies, so the diff stays small and what upstream does is still readable next
+to what replaced it.
+
+Verified against the real 152.0.7977.82 sources. All five files were fetched at
+that tag and every anchor confirmed present before anything was written -
+LOAD_FLAG(IS_MAIN_FRAME_ORIGIN_RECENTLY_ACCESSED, 1 << 19) is still the highest
+bit in use, so 1 << 20 is free; DnsConfigOverrides really does declare
+dns_over_https_config and secure_dns_mode as std::optional, so the added
+condition compiles as written. The patch was then generated from the pair and
+re-applied to a clean copy: it lands with no fuzz and reproduces all five files
+byte for byte. Nothing else in the series touches any of them - checked by
+grepping patches/ for each filename; the one hit on
+stub_resolver_config_reader.cc is a comment in aerium-first-run-page.patch, not
+an edit.
+
+--- a/chrome/browser/net/stub_resolver_config_reader.cc
++++ b/chrome/browser/net/stub_resolver_config_reader.cc
+@@ -57,6 +57,10 @@
+ 
+ #if BUILDFLAG(IS_WIN)
+ bool ShouldDisableDohForWindowsParentalControls() {
++  // Aerium: see ShouldDisableDohForManaged below - the same reasoning.
++  if ((true)) {
++    return false;
++  }
+   return GetWinParentalControls().web_filter;
+ }
+ 
+@@ -238,6 +242,15 @@
+ }
+ 
+ bool StubResolverConfigReader::ShouldDisableDohForManaged() {
++  // Aerium: do not turn off secure DNS because the device looks managed or
++  // filtered. Chromium switches DoH off when it detects an MDM owner or a
++  // parental-control app, on the reasoning that those want to see and filter
++  // DNS. In a browser whose users choose it to stop exactly that, a setting
++  // the user turned on should not be revoked by something else on the device.
++  // Ported from Cromite. See the patch description.
++  if ((true)) {
++    return false;
++  }
+ // This function ignores cloud policies which are loaded on a per-profile basis.
+ #if BUILDFLAG(IS_ANDROID)
+   // Check for MDM/management/owner apps. android_has_owner_ is true if either a
+@@ -266,6 +279,10 @@
+ }
+ 
+ bool StubResolverConfigReader::ShouldDisableDohForParentalControls() {
++  // Aerium: see ShouldDisableDohForManaged above - the same reasoning.
++  if ((true)) {
++    return false;
++  }
+   if (parental_controls_testing_override_.has_value())
+     return parental_controls_testing_override_.value();
+ 
+--- a/net/base/load_flags_list.h
++++ b/net/base/load_flags_list.h
+@@ -123,4 +123,9 @@
+ // compromised renderer concern is acceptable.
+ LOAD_FLAG(IS_MAIN_FRAME_ORIGIN_RECENTLY_ACCESSED, 1 << 19)
+ 
++// Aerium: send only the headers a DoH query needs. RFC 8484 section 6.1:
++// "Implementations SHOULD NOT set non-essential HTTP headers in DoH client
++// requests." Ported from Cromite. See the patch description.
++LOAD_FLAG(MINIMAL_HEADERS, 1 << 20)
++
+ // See note at top of file about why adding LoadFlags is often a bad idea.
+--- a/net/dns/dns_client.cc
++++ b/net/dns/dns_client.cc
+@@ -337,7 +337,15 @@
+  private:
+   std::optional<DnsConfig> BuildEffectiveConfig() const {
+     DnsConfig config;
+-    if (config_overrides_.OverridesEverything()) {
++    // Aerium: an explicit DoH server plus a secure mode is enough to build a
++    // config on its own. Upstream requires OverridesEverything(), so a device
++    // whose system DNS configuration is missing or unreadable - which on
++    // Android is routine, with a VPN or Private DNS in the way - returns
++    // nullopt here and silently stops using the DoH server the user chose.
++    // Ported from Cromite. See the patch description.
++    if (config_overrides_.OverridesEverything() ||
++        (config_overrides_.dns_over_https_config &&
++         config_overrides_.secure_dns_mode)) {
+       config = config_overrides_.ApplyOverrides(DnsConfig());
+     } else {
+       if (!system_config_)
+--- a/net/dns/dns_http_attempt.cc
++++ b/net/dns/dns_http_attempt.cc
+@@ -175,8 +175,10 @@
+   // Apply special policy to DNS lookups for for a DoH server hostname to
+   // avoid deadlock and enable the use of preconfigured IP addresses.
+   request_->SetSecureDnsPolicy(SecureDnsPolicy::kBootstrap);
++  // Aerium: LOAD_MINIMAL_HEADERS - a DoH query carries no Referer, no
++  // User-Agent and no Accept-Language. See net/base/load_flags_list.h.
+   request_->SetLoadFlags(request_->load_flags() | LOAD_DISABLE_CACHE |
+-                         LOAD_BYPASS_PROXY);
++                         LOAD_MINIMAL_HEADERS | LOAD_BYPASS_PROXY);
+   request_->set_disallow_credentials();
+   request_->set_isolation_info(GetDohIsolationInfo());
+ }
+--- a/net/url_request/url_request_http_job.cc
++++ b/net/url_request/url_request_http_job.cc
+@@ -515,18 +515,22 @@
+   // fields in the referrer.
+   GURL referrer(request_->referrer());
+ 
+-  // Our consumer should have made sure that this is a safe referrer (e.g. via
+-  // URLRequestJob::ComputeReferrerForPolicy).
+-  if (referrer.is_valid()) {
+-    std::string referer_value = referrer.spec();
+-    request_info_.extra_headers.SetHeader(HttpRequestHeaders::kReferer,
+-                                          referer_value);
+-  }
++  // Aerium: a request that asked for minimal headers gets no Referer and no
++  // User-Agent. Only DoH sets that flag - see net/dns/dns_http_attempt.cc.
++  if (!(request_info_.load_flags & LOAD_MINIMAL_HEADERS)) {
++    // Our consumer should have made sure that this is a safe referrer (e.g. via
++    // URLRequestJob::ComputeReferrerForPolicy).
++    if (referrer.is_valid()) {
++      std::string referer_value = referrer.spec();
++      request_info_.extra_headers.SetHeader(HttpRequestHeaders::kReferer,
++                                            referer_value);
++    }
+ 
+-  request_info_.extra_headers.SetHeaderIfMissing(
+-      HttpRequestHeaders::kUserAgent,
+-      http_user_agent_settings_ ? http_user_agent_settings_->GetUserAgent()
+-                                : std::string());
++    request_info_.extra_headers.SetHeaderIfMissing(
++        HttpRequestHeaders::kUserAgent,
++        http_user_agent_settings_ ? http_user_agent_settings_->GetUserAgent()
++                                  : std::string());
++  }
+ 
+   AddExtraHeaders();
+ 
+@@ -779,12 +783,17 @@
+ }
+ 
+ void URLRequestHttpJob::AddExtraHeaders() {
++  // Aerium: and no Brotli, Zstd or Accept-Language either. A DoH response is a
++  // few hundred bytes of wire-format DNS; advertising encodings for it only
++  // adds bytes that identify the client.
++  const bool minimal_headers =
++      (request_info_.load_flags & LOAD_MINIMAL_HEADERS) != 0;
+   request_info_.extra_headers.SetAcceptEncodingIfMissing(
+       request()->url(), request()->accepted_stream_types(),
+-      request()->context()->enable_brotli(),
+-      request()->context()->enable_zstd());
++      !minimal_headers && request()->context()->enable_brotli(),
++      !minimal_headers && request()->context()->enable_zstd());
+ 
+-  if (http_user_agent_settings_) {
++  if (!minimal_headers && http_user_agent_settings_) {
+     // Only add default Accept-Language if the request didn't have it
+     // specified.
+     std::string accept_language =

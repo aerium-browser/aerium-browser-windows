@@ -51,9 +51,9 @@ premature terminator, and the finished patch was re-applied to a clean copy of
 that baseline: it lands with no fuzz and reproduces all four files byte for
 byte, checked with diff.
 
-Not done yet: a settings screen for it, rows and columns controls, drag to
-reorder, editing a shortcut in place, and the background chooser. The grid is
-fixed at four columns here.
+Not done yet at that point: a settings screen for it, rows and columns controls,
+drag to reorder, editing a shortcut in place, and the background chooser. The
+grid was fixed at four columns. All of those landed in the sections below.
 
 SETTINGS AND BACKGROUNDS, added after the first version of this patch.
 
@@ -106,6 +106,18 @@ was visible earlier today: chrome_browsing_data_lifetime_manager.cc in this same
 tree has GetOriginTypeMask(const base::ListValue&), which I read this morning
 and did not follow up. Checking the actual declaration in web_ui.h would have
 cost one fetch.
+
+EDITING A SHORTCUT IN PLACE, added last.
+
+One dialog serves both adding and editing: they differ in a heading, a button
+label and two prefilled fields, which is not enough to justify a second one. A
+click on a cell opens it only while the grid is in edit mode - the mode the
+right-click already toggles, and the one the remove buttons appear in. Outside
+that mode a cell is still an ordinary anchor, so middle click, dragging a link
+out and the status-bar preview keep working.
+
+The script was re-run through node --check and the new getElementById target
+(dlgTitle) was added to the markup in the same change.
 --- a/chrome/browser/chrome_content_browser_client.cc
 +++ b/chrome/browser/chrome_content_browser_client.cc
 @@ -886,6 +886,17 @@ bool HandleNewTabPageLocationOverride(
@@ -147,7 +159,7 @@ cost one fetch.
    certificate_transparency::prefs::RegisterPrefs(registry);
 --- /dev/null
 +++ b/chrome/browser/ui/webui/aerium_newtab.h
-@@ -0,0 +1,467 @@
+@@ -0,0 +1,491 @@
 +#ifndef CHROME_BROWSER_UI_WEBUI_AERIUM_NEWTAB_H_
 +#define CHROME_BROWSER_UI_WEBUI_AERIUM_NEWTAB_H_
 +
@@ -329,7 +341,7 @@ cost one fetch.
 +  </div>
 +</dialog>
 +<dialog id="dlg">
-+  <h2>Add a shortcut</h2>
++  <h2 id="dlgTitle">Add a shortcut</h2>
 +  <input id="n" placeholder="Name" autocomplete="off">
 +  <input id="u" placeholder="Address" autocomplete="off">
 +  <div class="buttons">
@@ -340,6 +352,7 @@ cost one fetch.
 +<script>
 + let tiles = [];
 + let dragFrom = null;
++ let editIndex = -1;
 + let cfg = { bg: 'black', set: 'dusk', cols: 4, row: true };
 + const grid = document.getElementById('grid');
 + const dlg = document.getElementById('dlg');
@@ -413,6 +426,13 @@ cost one fetch.
 +     a.addEventListener('contextmenu', e => {
 +       e.preventDefault(); document.body.classList.toggle('editing');
 +     });
++     // While editing, a click opens the shortcut for editing rather than
++     // following it. The cells stay anchors so middle click, drag and the
++     // status bar keep working the rest of the time.
++     a.addEventListener('click', e => {
++       if (!document.body.classList.contains('editing')) return;
++       e.preventDefault(); openDialog(i);
++     });
 +     // Reorder by dragging. The cells are anchors, so the browser would drag
 +     // the link by default; setting the payload here replaces that with a move
 +     // within the grid.
@@ -445,8 +465,21 @@ cost one fetch.
 +   const f = document.createElement('div'); f.className = 'face'; f.textContent = '+';
 +   const l = document.createElement('div'); l.className = 'label'; l.textContent = 'Add';
 +   add.append(f, l);
-+   add.addEventListener('click', () => { dlg.showModal(); document.getElementById('n').focus(); });
++   add.addEventListener('click', () => openDialog(-1));
 +   grid.append(add);
++ }
++
++ // One dialog for adding and editing: they differ in a heading, a button label
++ // and two prefilled fields.
++ function openDialog(i){
++   editIndex = (i >= 0 && i < tiles.length) ? i : -1;
++   const t = editIndex >= 0 ? tiles[editIndex] : null;
++   document.getElementById('dlgTitle').textContent = t ? 'Edit shortcut' : 'Add a shortcut';
++   document.getElementById('ok').textContent = t ? 'Save' : 'Add';
++   document.getElementById('n').value = t ? (t.title || '') : '';
++   document.getElementById('u').value = t ? t.url : '';
++   dlg.showModal();
++   document.getElementById('n').focus();
 + }
 +
 + // Called by the controller.
@@ -511,7 +544,9 @@ cost one fetch.
 +   cfg.row = !cfg.row; saveCfg(); applyCfg(); syncPanel();
 + });
 +
-+ document.getElementById('cancel').addEventListener('click', () => dlg.close());
++ document.getElementById('cancel').addEventListener('click', () => {
++   editIndex = -1; dlg.close();
++ });
 + document.getElementById('ok').addEventListener('click', () => {
 +   let u = document.getElementById('u').value.trim();
 +   if (!u) return;
@@ -519,9 +554,10 @@ cost one fetch.
 +   let parsed;
 +   try { parsed = new URL(u); } catch (e) { return; }
 +   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
-+   tiles.push({ title: document.getElementById('n').value.trim(), url: u });
-+   document.getElementById('n').value = '';
-+   document.getElementById('u').value = '';
++   const entry = { title: document.getElementById('n').value.trim(), url: u };
++   if (editIndex >= 0 && editIndex < tiles.length) tiles[editIndex] = entry;
++   else tiles.push(entry);
++   editIndex = -1;
 +   dlg.close(); save(); render();
 + });
 +

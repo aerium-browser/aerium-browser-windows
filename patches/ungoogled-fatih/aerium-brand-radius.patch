@@ -1,0 +1,62 @@
+Draw menus and dialogs at the radius the design uses.
+
+The app menu, its submenus, its touch variant and every dialog were at 12px.
+The design draws a card at 16 to 18, and now so does everything else in the
+browser: aerium-settings-style.patch gives the settings cards an 18px radius and
+dialogs 16, and the new tab page's own panel is 16. A 12px native menu opening
+over a 16px WebUI dialog reads as two browsers in one window, which is exactly
+what this whole run of work exists to stop.
+
+A TOKEN REMAP, NOT A NEW NUMBER. ui/views/layout/layout_provider.cc already maps
+each ShapeContextTokens to a ShapeSysTokens, and resolves kMedium to 16 - the
+value the expanded omnibox is already drawn at. So the four context tokens move
+from kMediumSmall to kMedium and no pixel constant is introduced. Those four
+were the only entries pointing at kMediumSmall, so nothing else moves with them.
+
+Textfields were left alone. The design's inputs are 10px and kSmall is 8, but
+kSmall is shared with the combobox, the find bar and the content separator, so
+two pixels on a text field is not worth the blast radius.
+
+The outlines were left alone too, and that is a decision rather than an
+omission. The design puts a hairline ring on a card instead of a shadow, which
+worked in CSS because a box-shadow token was already on the element; a native
+menu gets its edge from views::BubbleBorder and its shadow from the compositor,
+and swapping that is a much larger change with a much worse failure mode - a
+menu with no visible edge against a dark window. The WebUI surfaces carry the
+ring; the native ones keep their shadow.
+
+Verified against the real 152.0.7977.82 source: the file was fetched at that
+tag, edited, the patch generated from the pair, and re-applied to a clean copy -
+it lands with no fuzz and reproduces the file byte for byte. Nothing else in the
+series touches layout_provider.cc, checked by grepping patches/ for the
+filename.
+
+Not covered by pre-flight: layout_provider.o is not in the target list and no
+path for it has been guessed, so the full build is the first compiler to see it.
+
+--- a/ui/views/layout/layout_provider.cc
++++ b/ui/views/layout/layout_provider.cc
+@@ -209,13 +209,19 @@
+           {ShapeContextTokens::kBadgeRadius, ShapeSysTokens::kXSmall},
+           {ShapeContextTokens::kButtonRadius, ShapeSysTokens::kFull},
+           {ShapeContextTokens::kComboboxRadius, ShapeSysTokens::kSmall},
+-          {ShapeContextTokens::kDialogRadius, ShapeSysTokens::kMediumSmall},
++          // Aerium: 12 -> 16 for the four surfaces that read as cards - the
++          // app menu, its submenus and touch variant, and every dialog. The
++          // design draws those at the same radius as the new tab page's own
++          // panel, and 12 next to a 16px WebUI dialog reads as two different
++          // browsers. This is a token remap rather than a new number:
++          // kMedium is already 16 and is what the expanded omnibox uses.
++          {ShapeContextTokens::kDialogRadius, ShapeSysTokens::kMedium},
+           {ShapeContextTokens::kExtensionsMenuButtonRadius,
+            ShapeSysTokens::kXSmall},
+           {ShapeContextTokens::kFindBarViewRadius, ShapeSysTokens::kSmall},
+-          {ShapeContextTokens::kMenuRadius, ShapeSysTokens::kMediumSmall},
+-          {ShapeContextTokens::kMenuAuxRadius, ShapeSysTokens::kMediumSmall},
+-          {ShapeContextTokens::kMenuTouchRadius, ShapeSysTokens::kMediumSmall},
++          {ShapeContextTokens::kMenuRadius, ShapeSysTokens::kMedium},
++          {ShapeContextTokens::kMenuAuxRadius, ShapeSysTokens::kMedium},
++          {ShapeContextTokens::kMenuTouchRadius, ShapeSysTokens::kMedium},
+           {ShapeContextTokens::kOmniboxExpandedRadius, ShapeSysTokens::kMedium},
+           {ShapeContextTokens::kTextfieldRadius, ShapeSysTokens::kSmall},
+           {ShapeContextTokens::kContentSeparatorRadius, ShapeSysTokens::kSmall},

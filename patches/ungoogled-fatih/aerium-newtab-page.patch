@@ -55,6 +55,32 @@ Not done yet: a settings screen for it, rows and columns controls, drag to
 reorder, editing a shortcut in place, and the background chooser. The grid is
 fixed at four columns here.
 
+SETTINGS AND BACKGROUNDS, added after the first version of this patch.
+
+The settings live on the page, behind a gear, rather than in chrome://settings.
+That is a real difference from the Android build, which got a proper Settings
+screen, and it is deliberate twice over: a desktop settings section means the
+TypeScript, Polymer and BUILD.gn resource pipeline this whole header-only shape
+exists to avoid, and Chrome's own new tab page customises itself from the page
+for the same reason. The panel covers background, shortcuts per row, the
+bookmarks row, and clearing the grid.
+
+The backgrounds are DRAWN, not photographs, and that is the one thing here that
+is a placeholder rather than a decision. Shipping real photos means shipping
+image files, and there are none in the tree; the sets below are CSS gradients in
+four moods, four each, so the chooser behaves exactly as it will with photographs
+and costs nothing on disk. Dropping real images in later changes the SETS table
+and nothing else. If you want photographs, they need to arrive as files.
+
+Settings ride in one JSON string for the same reason the shortcuts do: the page
+is the only reader and writer, so a pref per checkbox would be four more
+registrations and four more handlers to say the same thing. An unparsable value
+falls back to the defaults in the page rather than failing.
+
+Verified the same way as the rest, plus two checks the page itself earned: its
+script was extracted and run through node --check, and every getElementById
+target in it was cross-checked against the ids in the markup - both clean. The
+raw string was re-checked for a premature terminator after the additions.
 --- a/chrome/browser/chrome_content_browser_client.cc
 +++ b/chrome/browser/chrome_content_browser_client.cc
 @@ -886,6 +886,17 @@ bool HandleNewTabPageLocationOverride(
@@ -77,25 +103,26 @@ fixed at four columns here.
    }
 --- a/chrome/browser/prefs/browser_prefs.cc
 +++ b/chrome/browser/prefs/browser_prefs.cc
-@@ -1744,6 +1744,15 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
+@@ -1744,6 +1744,16 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
    AimEligibilityService::RegisterProfilePrefs(registry);
    AnnouncementNotificationService::RegisterProfilePrefs(registry);
    autofill::prefs::RegisterProfilePrefs(registry);
 +  // Aerium: the new tab page. Registered here rather than beside a subsystem
-+  // because it belongs to none - it is read by
++  // because it belongs to none - they are read by
 +  // HandleNewTabPageLocationOverride in chrome_content_browser_client.cc and
 +  // by chrome://aerium-newtab itself. Literal names for the same reason
 +  // aerium.drm_enabled above uses them: the alternative is pulling a WebUI
-+  // header into the prefs file. They must match kAeriumNewTabPagePref and
-+  // kAeriumNewTabTilesPref in chrome/browser/ui/webui/aerium_newtab.h.
++  // header into the prefs file. They must match the kAeriumNewTab* constants
++  // in chrome/browser/ui/webui/aerium_newtab.h.
 +  registry->RegisterBooleanPref("aerium.new_tab_page", true);
 +  registry->RegisterStringPref("aerium.new_tab_page.tiles", std::string());
++  registry->RegisterStringPref("aerium.new_tab_page.settings", std::string());
    browsing_data::prefs::RegisterBrowserUserPrefs(registry);
    capture_policy::RegisterProfilePrefs(registry);
    certificate_transparency::prefs::RegisterPrefs(registry);
 --- /dev/null
 +++ b/chrome/browser/ui/webui/aerium_newtab.h
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,433 @@
 +#ifndef CHROME_BROWSER_UI_WEBUI_AERIUM_NEWTAB_H_
 +#define CHROME_BROWSER_UI_WEBUI_AERIUM_NEWTAB_H_
 +
@@ -138,6 +165,8 @@ fixed at four columns here.
 +
 +inline constexpr char kAeriumNewTabPagePref[] = "aerium.new_tab_page";
 +inline constexpr char kAeriumNewTabTilesPref[] = "aerium.new_tab_page.tiles";
++inline constexpr char kAeriumNewTabSettingsPref[] =
++    "aerium.new_tab_page.settings";
 +
 +class AeriumNewTabDataSource : public content::URLDataSource {
 + public:
@@ -175,6 +204,28 @@ fixed at four columns here.
 + }
 + html{background:var(--bg);color:var(--text);
 +      font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
++ #photo{position:fixed;inset:0;z-index:-2}
++ #scrim{position:fixed;inset:0;z-index:-1;
++        background:linear-gradient(180deg,rgba(0,0,0,.30),rgba(0,0,0,.12) 30%,
++                   rgba(0,0,0,.50))}
++ body.photo{--text:#EAF1FA;--label:#DCE8F6;--label-dim:#C2D2E6;
++            --outline:rgba(216,230,245,.28);--outline-dim:rgba(216,230,245,.20)}
++ body.photo .face,body.photo #row a{background:rgba(6,11,22,.48)}
++ body.photo .label{text-shadow:0 1px 3px rgba(0,0,0,.75)}
++ #gear{position:fixed;top:16px;right:16px;width:36px;height:36px;
++       border-radius:10px;border:1px solid var(--outline);background:transparent;
++       color:var(--label);cursor:pointer;font-size:15px;line-height:1}
++ #gear:hover{border-color:var(--accent);color:var(--accent)}
++ .group{margin:0 0 18px}
++ .group h3{margin:0 0 9px;font-size:11px;letter-spacing:.5px;color:var(--accent);
++           font-weight:600}
++ .chips{display:flex;gap:8px;flex-wrap:wrap}
++ .chip{height:32px;padding:0 14px;border-radius:16px;border:1px solid var(--outline);
++       background:transparent;color:var(--label);font:12px system-ui;cursor:pointer}
++ .chip[aria-pressed="true"]{background:var(--accent);color:var(--bg);
++                            border-color:var(--accent)}
++ .swatches{display:flex;gap:8px;margin-top:10px}
++ .sw{flex:1;height:44px;border-radius:10px;border:1px solid var(--outline)}
 + body{margin:0;min-height:100vh;display:flex;flex-direction:column;
 +      align-items:center;justify-content:center;padding:48px 24px}
 + main{width:100%;max-width:640px}
@@ -211,6 +262,9 @@ fixed at four columns here.
 +               background:transparent;color:var(--label)}
 + dialog button.primary{background:var(--accent);color:var(--bg);border-color:var(--accent)}
 +</style>
++<div id="photo" hidden></div>
++<div id="scrim" hidden></div>
++<button id="gear" title="Customise">&#9881;</button>
 +<main>
 +  <div id="grid"></div>
 +  <div id="row">
@@ -219,6 +273,34 @@ fixed at four columns here.
 +    <a href="chrome://downloads/">Downloads</a>
 +  </div>
 +</main>
++<dialog id="cfg">
++  <h2>New tab page</h2>
++  <div class="group">
++    <h3>BACKGROUND</h3>
++    <div class="chips" id="bgChips">
++      <button class="chip" data-bg="black">Pure black</button>
++      <button class="chip" data-bg="navy">Aerium navy</button>
++      <button class="chip" data-bg="photo">Bundled photo</button>
++    </div>
++    <div class="chips" id="setChips" style="margin-top:10px"></div>
++    <div class="swatches" id="swatches"></div>
++  </div>
++  <div class="group">
++    <h3>LAYOUT</h3>
++    <div class="chips" id="colChips">
++      <button class="chip" data-cols="3">3 per row</button>
++      <button class="chip" data-cols="4">4 per row</button>
++      <button class="chip" data-cols="5">5 per row</button>
++    </div>
++    <div class="chips" style="margin-top:10px">
++      <button class="chip" id="rowChip">Bookmarks, history and downloads</button>
++    </div>
++  </div>
++  <div class="buttons">
++    <button id="cfgClear">Clear shortcuts</button>
++    <button id="cfgDone" class="primary">Done</button>
++  </div>
++</dialog>
 +<dialog id="dlg">
 +  <h2>Add a shortcut</h2>
 +  <input id="n" placeholder="Name" autocomplete="off">
@@ -230,8 +312,56 @@ fixed at four columns here.
 +</dialog>
 +<script>
 + let tiles = [];
++ let cfg = { bg: 'black', set: 'dusk', cols: 4, row: true };
 + const grid = document.getElementById('grid');
 + const dlg = document.getElementById('dlg');
++ const panel = document.getElementById('cfg');
++
++ // Bundled backgrounds. Drawn rather than photographic: shipping real photos
++ // means shipping image files, and none are in the tree yet. Each set is four
++ // so the choice behaves the way a photo set would, and the page reads its
++ // background from here whatever the source turns out to be later.
++ const SETS = {
++   dusk: ['radial-gradient(120% 70% at 78% 12%,rgba(255,214,170,.55),rgba(255,150,120,.2) 34%,transparent 62%),linear-gradient(178deg,#1a2d4d,#2b3f60 26%,#6a5570 52%,#b07a63 74%,#14121c)',
++          'radial-gradient(90% 60% at 20% 15%,rgba(255,196,150,.45),transparent 60%),linear-gradient(180deg,#221a2e,#43304a 40%,#9c6a5c 78%,#171320)',
++          'linear-gradient(170deg,#10203a,#28405f 38%,#7b6a78 70%,#1a1622)',
++          'radial-gradient(100% 60% at 60% 10%,rgba(255,180,140,.4),transparent 58%),linear-gradient(185deg,#141d38,#33456b 44%,#8d6f72 80%,#12111c)'],
++   deep: ['linear-gradient(180deg,#03060f,#0b1830 45%,#16304f 78%,#050a14)',
++          'radial-gradient(80% 50% at 30% 20%,rgba(80,140,200,.35),transparent 62%),linear-gradient(175deg,#040a16,#0e1f3a 55%,#071022)',
++          'linear-gradient(190deg,#060d1c,#122743 50%,#1d3c60 80%,#060c18)',
++          'radial-gradient(90% 55% at 70% 80%,rgba(60,110,160,.4),transparent 60%),linear-gradient(180deg,#02060e,#0a1729 60%,#040810)'],
++   stone: ['linear-gradient(175deg,#1b1b1e,#33333a 42%,#55555f 74%,#141416)',
++           'radial-gradient(90% 55% at 25% 18%,rgba(200,200,210,.18),transparent 60%),linear-gradient(180deg,#17171a,#2c2c33 55%,#111113)',
++           'linear-gradient(188deg,#141417,#2a2a31 48%,#46464f 80%,#101012)',
++           'radial-gradient(100% 60% at 75% 85%,rgba(150,150,165,.22),transparent 58%),linear-gradient(180deg,#131316,#26262c 60%,#0e0e10)'],
++   moss: ['linear-gradient(178deg,#0b1a16,#16332a 44%,#2f5a44 76%,#08120f)',
++          'radial-gradient(85% 55% at 28% 20%,rgba(120,190,150,.3),transparent 60%),linear-gradient(180deg,#091613,#153027 58%,#070f0d)',
++          'linear-gradient(186deg,#0a1714,#1a3a2d 50%,#376a4f 82%,#081210)',
++          'radial-gradient(95% 58% at 72% 82%,rgba(100,170,130,.32),transparent 58%),linear-gradient(180deg,#08130f,#122b22 60%,#060d0b)']
++ };
++ const SET_NAMES = { dusk: 'dusk', deep: 'deep water', stone: 'stone', moss: 'moss' };
++
++ function applyCfg(){
++   document.body.classList.toggle('photo', cfg.bg === 'photo');
++   const photo = document.getElementById('photo');
++   const scrim = document.getElementById('scrim');
++   if (cfg.bg === 'photo') {
++     const list = SETS[cfg.set] || SETS.dusk;
++     photo.style.background = list[Math.floor(Math.random() * list.length)];
++     photo.style.backgroundSize = 'cover';
++     photo.hidden = false; scrim.hidden = false;
++     document.documentElement.style.background = '';
++   } else {
++     photo.hidden = true; scrim.hidden = true;
++     document.documentElement.style.background =
++         cfg.bg === 'navy' ? '#0E1834' : '';
++   }
++   const n = (cfg.cols === 3 || cfg.cols === 5) ? cfg.cols : 4;
++   grid.style.gridTemplateColumns = 'repeat(' + n + ',minmax(0,1fr))';
++   document.getElementById('row').style.display = cfg.row ? 'flex' : 'none';
++ }
++
++ function saveCfg(){ chrome.send('aeriumNewTabSetSettings', [JSON.stringify(cfg)]); }
 +
 + function host(u){ try { return new URL(u).hostname.replace(/^www\./,''); } catch(e){ return ''; } }
 + function mono(t){ const s = t.title || host(t.url); return s ? s[0].toUpperCase() : '?'; }
@@ -267,11 +397,66 @@ fixed at four columns here.
 + }
 +
 + // Called by the controller.
++ window.aeriumNewTabSettings = raw => {
++   try {
++     const v = JSON.parse(raw || '{}');
++     if (v && typeof v === 'object') cfg = Object.assign(cfg, v);
++   } catch (e) { /* defaults stand */ }
++   applyCfg(); syncPanel();
++ };
++
 + window.aeriumNewTabTiles = raw => {
 +   try { const v = JSON.parse(raw || '[]'); tiles = Array.isArray(v) ? v : []; }
 +   catch (e) { tiles = []; }
 +   render();
 + };
++
++ function syncPanel(){
++   document.querySelectorAll('#bgChips .chip').forEach(c =>
++       c.setAttribute('aria-pressed', String(c.dataset.bg === cfg.bg)));
++   document.querySelectorAll('#colChips .chip').forEach(c =>
++       c.setAttribute('aria-pressed', String(Number(c.dataset.cols) === cfg.cols)));
++   document.getElementById('rowChip').setAttribute('aria-pressed', String(!!cfg.row));
++
++   const sets = document.getElementById('setChips');
++   const sws = document.getElementById('swatches');
++   const showSets = cfg.bg === 'photo';
++   sets.style.display = showSets ? 'flex' : 'none';
++   sws.style.display = showSets ? 'flex' : 'none';
++   if (!showSets) return;
++   sets.textContent = ''; sws.textContent = '';
++   Object.keys(SETS).forEach(k => {
++     const b = document.createElement('button');
++     b.className = 'chip'; b.textContent = SET_NAMES[k];
++     b.setAttribute('aria-pressed', String(k === cfg.set));
++     b.addEventListener('click', () => { cfg.set = k; saveCfg(); applyCfg(); syncPanel(); });
++     sets.append(b);
++   });
++   (SETS[cfg.set] || SETS.dusk).forEach(g => {
++     const d = document.createElement('div');
++     d.className = 'sw'; d.style.background = g; d.style.backgroundSize = 'cover';
++     sws.append(d);
++   });
++ }
++
++ document.getElementById('gear').addEventListener('click', () => {
++   syncPanel(); panel.showModal();
++ });
++ document.getElementById('cfgDone').addEventListener('click', () => panel.close());
++ document.getElementById('cfgClear').addEventListener('click', () => {
++   tiles = []; save(); render();
++ });
++ document.getElementById('bgChips').addEventListener('click', e => {
++   const b = e.target.closest('.chip'); if (!b) return;
++   cfg.bg = b.dataset.bg; saveCfg(); applyCfg(); syncPanel();
++ });
++ document.getElementById('colChips').addEventListener('click', e => {
++   const b = e.target.closest('.chip'); if (!b) return;
++   cfg.cols = Number(b.dataset.cols); saveCfg(); applyCfg(); syncPanel();
++ });
++ document.getElementById('rowChip').addEventListener('click', () => {
++   cfg.row = !cfg.row; saveCfg(); applyCfg(); syncPanel();
++ });
 +
 + document.getElementById('cancel').addEventListener('click', () => dlg.close());
 + document.getElementById('ok').addEventListener('click', () => {
@@ -287,7 +472,9 @@ fixed at four columns here.
 +   dlg.close(); save(); render();
 + });
 +
++ applyCfg();
 + render();
++ chrome.send('aeriumNewTabGetSettings');
 + chrome.send('aeriumNewTabGetTiles');
 +</script>
 +)";
@@ -318,6 +505,14 @@ fixed at four columns here.
 +        "aeriumNewTabSetTiles",
 +        base::BindRepeating(&AeriumNewTab::HandleSetTiles,
 +                            base::Unretained(this)));
++    web_ui->RegisterMessageCallback(
++        "aeriumNewTabGetSettings",
++        base::BindRepeating(&AeriumNewTab::HandleGetSettings,
++                            base::Unretained(this)));
++    web_ui->RegisterMessageCallback(
++        "aeriumNewTabSetSettings",
++        base::BindRepeating(&AeriumNewTab::HandleSetSettings,
++                            base::Unretained(this)));
 +  }
 +  AeriumNewTab(const AeriumNewTab&) = delete;
 +  AeriumNewTab& operator=(const AeriumNewTab&) = delete;
@@ -340,6 +535,23 @@ fixed at four columns here.
 +      return;
 +    }
 +    prefs()->SetString(kAeriumNewTabTilesPref, args[0].GetString());
++  }
++
++  // Settings ride in one JSON string for the same reason the shortcuts do: the
++  // page is the only thing that reads or writes them, so a pref per checkbox
++  // would be four more registrations and four more handlers to say the same
++  // thing. An unparsable value falls back to the defaults in the page.
++  void HandleGetSettings(const base::Value::List& args) {
++    web_ui()->CallJavascriptFunctionUnsafe(
++        "aeriumNewTabSettings",
++        base::Value(prefs()->GetString(kAeriumNewTabSettingsPref)));
++  }
++
++  void HandleSetSettings(const base::Value::List& args) {
++    if (args.empty() || !args[0].is_string()) {
++      return;
++    }
++    prefs()->SetString(kAeriumNewTabSettingsPref, args[0].GetString());
 +  }
 +};
 +

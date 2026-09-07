@@ -1,0 +1,85 @@
+Make the delete-on-exit keep list read the rules table it was replaced by.
+
+Reported against the Windows build: a site added to the keep list is signed out
+anyway on exit. The list is not consulted at all, and has not been since the
+rules table landed.
+
+aerium-site-rules.patch replaced three site-list prefs with one rules table and
+updated the paths that read them - the tab-close cleanup, the session-only
+sweep - but not this one. ChromeBrowsingDataLifetimeManager still builds its
+shutdown preserve filter from AeriumOnExitPreservedDomains(), which reads
+browsing_data::prefs::kAeriumClearOnExitExcludedSites: the legacy pref.
+
+MigrateLegacyLists() copies that pref into kAeriumSiteRules once and sets
+kAeriumSiteRulesMigrated. It does not keep the two in step afterwards, and
+nothing does, because the Settings table writes only to kAeriumSiteRules. So
+every site added through the UI that exists today lands somewhere the exit path
+never looks. preserved_domains comes back empty, the code takes its documented
+"nothing to keep" branch - a single unfiltered RemoveAndReply - and deletes
+everything, including the cookies that keep the user signed in.
+
+It is worse than a list that does nothing, because it is a list that looks like
+it works: the entry is in the table, the table persists, and the data is gone
+anyway. A profile migrated from before the rules table kept working, which is
+why this survived - the legacy pref still held those entries. Anything added
+since has been ignored.
+
+So the helper reads the rules table. A rule counts when its list type is kKeep,
+which is exactly what the old pref meant; kSession is cleared at shutdown by
+definition and kReset at tab close, so neither belongs in a shutdown preserve
+filter.
+
+Regex rules are skipped rather than approximated. BrowsingDataFilterBuilder
+takes registrable domains, not patterns, and there is no correct conversion -
+guessing one could preserve data the user expected to be deleted, which is the
+failure that matters in this direction.
+
+Known imprecision, stated rather than left to be found: the exit path applies
+one preserve filter across every filterable type it deletes, so a rule that
+keeps only some types has all of them preserved on exit. The tab-close path
+already groups hosts by keep mask and does this exactly; doing the same here
+means splitting the shutdown removal per distinct keep set, which is a larger
+change than this fix. The error is toward keeping data on a site the user
+explicitly listed, and the common rule - keep everything for this site, which
+is what migration writes and what the Add dialog defaults to - is exact.
+
+--- a/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc
++++ b/chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.cc
+@@ -1,20 +1,30 @@
+ std::vector<std::string> AeriumOnExitPreservedDomains(PrefService* prefs) {
+   std::vector<std::string> result;
+-  for (const auto& entry :
+-       prefs->GetList(browsing_data::prefs::kAeriumClearOnExitExcludedSites)) {
+-    if (!entry.is_string()) {
++  if (!prefs) {
++    return result;
++  }
++  for (const aerium_site_rules::Rule& rule :
++       aerium_site_rules::ReadRules(prefs)) {
++    // Only "never delete". kSession is cleared at shutdown by definition and
++    // kReset at tab close, so neither belongs in a shutdown preserve filter.
++    if (rule.list != aerium_site_rules::ListType::kKeep) {
++      continue;
++    }
++    // A regex rule has no registrable domain to hand a filter builder, and
++    // guessing one could preserve data the user expected to be deleted.
++    if (rule.regex) {
+       continue;
+     }
+-    const std::string& host = entry.GetString();
+-    if (host.empty()) {
++    if (rule.host_suffix.empty()) {
+       continue;
+     }
+     std::string domain = net::registry_controlled_domains::GetDomainAndRegistry(
+-        host, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
++        rule.host_suffix,
++        net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
+     if (domain.empty()) {
+-      domain = host;  // IP address or internal hostname.
++      domain = rule.host_suffix;  // IP address or internal hostname.
+     }
+     result.push_back(std::move(domain));
+   }
+   return result;
+ }

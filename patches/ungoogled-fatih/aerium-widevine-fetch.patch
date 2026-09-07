@@ -1,102 +1,130 @@
-Let the DRM switch actually fetch the CDM, for the one component it needs.
+Let the DRM switch actually fetch the CDM, for the one component that needs it.
 
 Reported on Linux: a player says "failed to init media keys for EME", and a
 test page reports only org.w3.clearkey with security level none. That is a
 browser with no Widevine CDM at all, and it is what every Aerium desktop build
-has been. The switch added by aerium-drm-media.patch could never do anything.
+has been. The switch aerium-drm-media.patch added could never have done
+anything.
 
-Read out of the 152 sources rather than assumed:
+Four facts, each read out of the 152 sources rather than recalled:
 
   enable_widevine=true comes from ungoogled-chromium's flags.gn, so the EME
-  plumbing is compiled and the key system looks like it exists.
+  plumbing compiles and the key system looks like it is there.
 
   bundle_widevine_cdm is enable_library_widevine_cdm && (is_chrome_branded ||
-  is_chrome_for_testing_branded) in third_party/widevine/cdm/widevine.gni.
-  Aerium is neither, so it is false and GetBundledWidevine() is not compiled.
+  is_chrome_for_testing_branded) in third_party/widevine/cdm/widevine.gni. We
+  are neither, so it is false and GetBundledWidevine() is not compiled at all.
 
   enable_widevine_cdm_component is computed, not a build argument, and is true
   for us - so GetHintedWidevine() IS compiled. It reads a hint file that only
   Component Updater writes.
 
-  Component Updater cannot write it. component_updater_url_constants.cc is in
+  Component Updater cannot write it: component_updater_url_constants.cc is in
   ungoogled-chromium's domain_substitution.list, and the regex
   google([A-Za-z\-]*?\\*?)\.com rewrites update.googleapis.com to a host that
   does not resolve.
 
 So AddWidevine() falls through to its own "Widevine enabled but no library
-found" and registers nothing, leaving ClearKey - which is built into Chromium
-and needs no CDM - as the only key system. That is exactly the report.
+found" and registers nothing, leaving ClearKey - built into Chromium, needing
+no CDM - as the only key system. Which is the report, exactly.
 
-The fix is to let the component do its job, because the component is already
-the right answer. It fetches over the update protocol, verifies the CRX3
-signature, unpacks, and then either calls UpdateWidevineCdmHintFile() on Linux
-or CdmRegistry::RegisterCdm() directly everywhere else - so this covers Windows
-as well, and covers it without a restart, since that path registers at runtime.
-Writing a downloader by hand would have meant reimplementing signature
-verification for a binary that gets dlopen'd, which is not a thing to hand-roll.
+The component is already the right mechanism, so this lets it run rather than
+replacing it. It fetches over the update protocol, verifies the CRX3 signature,
+unpacks, and then writes the hint file on Linux or calls
+CdmRegistry::RegisterCdm() directly everywhere else. Hand-rolling a downloader
+would have meant hand-rolling signature verification for a binary that gets
+dlopen'd, which is not a thing to hand-roll.
 
 There is no simpler source to fetch from. The dl.google.com/widevine-cdm bucket
-that older helper scripts use is gone: versions.txt and every version-specific
-zip return 404 now. The update service is what is left.
+the old helper scripts use is gone: versions.txt and every version-specific zip
+return 404 now.
 
-Two changes, in two files chosen because neither is in domain_substitution.list
-- checked, not assumed - and apply_patches runs before apply_domsub in
-scripts/build.sh, so a real hostname written in them survives:
+Two files, both chosen because neither is in domain_substitution.list - checked,
+not assumed - and apply_patches runs before apply_domsub in scripts/build.sh, so
+a real hostname written in them survives the rewrite.
 
-  ChromeConfigurator::UpdateUrl() returns the real service when the switch is
-  on, and upstream's rewritten one when it is not.
+ChromeConfigurator::UpdateUrl() returns the real service while the switch is on.
+It reads pref_service_, which browser_process_impl.cc sets to
+g_browser_process->local_state() - the same PrefService aerium.drm_enabled is
+registered in - and which the constructor CHECKs. No new global and no thread
+question: the member is already there.
 
-  RegisterComponentsForUpdate() registers the Widevine CDM component and
-  returns, so it is the only component registered at all.
+RegisterComponentsForUpdate() registers the Widevine CDM component and returns,
+so it is the only component registered at all, and it watches the pref so that
+flipping the switch takes effect in the running session.
 
-That second half is what keeps this honest. UpdateUrl() belongs to the
-configurator rather than to a component, so a real URL is a real URL for
-everything registered against it. Registering nothing else means there is
-nothing else to ask about. Nothing is lost by skipping them: with the switch
-off they are all pointed at the rewritten host already, so they have never
-updated in this browser and they do not begin to now.
+WHY THE NARROWNESS IS REQUIRED, and why it costs nothing.
+
+UpdateUrl() is a property of the configurator, not of a component: a real URL
+is a real URL for everything registered against it. Turning DRM on must
+therefore leave exactly one thing registered, or it would quietly hand Google
+an update check for thirty-odd other components. At startup the gate does that
+by returning early. Flipping the switch at runtime arrives too late for that -
+everything was registered while DRM was off - so that path unregisters what is
+there before registering the CDM, which puts the session in the state a launch
+with DRM on would have been in.
+
+Dropping the rest was audited rather than waved through. Every one of them has
+spent its whole life pointed at the rewritten host, so none has ever downloaded
+a payload, so none has an on-disk copy for its installer to load and no
+ComponentReady() has ever fired for any of them in this browser. Unregistering
+removes nothing that was doing anything. The ones worth naming because they
+sound load-bearing - CRLSet, PKI metadata, file type policies, SSL error
+assistant - are exactly in that position already: they are empty here today,
+with or without this patch, and the fallbacks they use are compiled into the
+binary rather than delivered by the component.
+
+WHAT THE USER SEES. Turning it on now starts the download immediately. On
+Windows and Mac that is the whole flow, because ComponentReady() registers the
+CDM at runtime. On Linux the CDM must be registered before the zygote sandbox
+closes, so it takes one restart after the download lands - which is Chromium's
+design and not something a patch can remove. Before the pref watcher it took
+two restarts, one to begin the download and one to use it.
 
 Stated plainly, because the switch now means more than it did: turning DRM on
-contacts Google's update service. It asks for one component and downloads one
-thing. The string under the switch says so.
+contacts Google's update service. It asks about one component and downloads one
+thing, and the string under the switch says so.
 
 Off by default, unchanged. PingUrl() is deliberately left rewritten - pings are
 telemetry, a failed ping is non-fatal to the update flow, and fetching a CDM
 does not need one.
 
-Verified by applying this to the real 152.0.7977.82 registration.cc and
-chrome_component_updater_configurator.cc with the same flags build.py uses:
-both hunks land, and the result reads back correct. The hunks were generated
-with git diff against those files rather than counted by hand.
+VERIFIED, not assumed. The component's app id was derived from
+kWidevineSha2Hash in widevine_cdm_component_installer.cc rather than recalled,
+giving oimompecagnajdejgnnjijobebaeigek, and a real update request for it to the
+URL written below returns HTTP 200, status "ok", Widevine CDM 4.10.3050.0, and
+a 21,685,984-byte .crx3 with its SHA-256. Range-fetching that package returns
+the Cr24 magic and format version 3, so the mirror serves a real signed CRX3.
+Its hostnames arrive in the response body rather than from source text, so
+domain substitution never touches them.
+
+Both hunks were generated with git diff against the real 152.0.7977.82 files
+and verified to apply with the same flags build.py uses.
 
 --- a/chrome/browser/component_updater/chrome_component_updater_configurator.cc
 +++ b/chrome/browser/component_updater/chrome_component_updater_configurator.cc
-@@ -10,6 +10,7 @@
- #include <vector>
- 
- #include "base/check.h"
-+#include "base/command_line.h"
- #include "base/files/file_path.h"
- #include "base/functional/bind.h"
- #include "base/functional/callback.h"
-@@ -161,6 +162,22 @@ base::TimeDelta ChromeConfigurator::UpdateDelay() const {
+@@ -161,6 +161,26 @@ base::TimeDelta ChromeConfigurator::UpdateDelay() const {
  
  std::vector<GURL> ChromeConfigurator::UpdateUrl() const {
    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-+  // Aerium: the real update service, and only when the user has switched DRM
-+  // on. This file is not in ungoogled-chromium's domain_substitution.list, so
-+  // the host written here survives apply_domsub - which runs after
-+  // apply_patches in scripts/build.sh - where the same string in
++  // Aerium: the real update service, and only while the user has DRM switched
++  // on. This file is not in ungoogled-chromium's domain_substitution.list, and
++  // apply_patches runs before apply_domsub in scripts/build.sh, so the host
++  // written here survives - where the same string in
 +  // component_updater_url_constants.cc does not. That rewrite is why the
-+  // Widevine CDM component has never been able to download anything, and it
-+  // stays in force for every other build of this browser.
++  // Widevine CDM component has never been able to download anything.
 +  //
-+  // Reached only with exactly one component registered; see
-+  // RegisterComponentsForUpdate() in registration.cc for why that matters.
-+  // PingUrl() is deliberately left rewritten: pings are telemetry, the update
-+  // flow treats a failed ping as non-fatal, and nothing about fetching a CDM
-+  // needs one.
-+  if (base::CommandLine::ForCurrentProcess()->HasSwitch("enable-widevine")) {
++  // pref_service_ is g_browser_process->local_state(), which is where
++  // aerium.drm_enabled is registered - browser_process_impl.cc passes it to
++  // MakeChromeComponentUpdaterConfigurator, and the constructor CHECKs it.
++  //
++  // This is a property of the configurator, not of a component, so it applies
++  // to everything registered. RegisterComponentsForUpdate() in registration.cc
++  // is what makes sure that is only ever the CDM.
++  //
++  // PingUrl() is deliberately left rewritten: pings are telemetry, a failed
++  // ping is non-fatal to the update flow, and fetching a CDM does not need one.
++  if (pref_service_->GetBoolean("aerium.drm_enabled")) {
 +    return {GURL("https://update.googleapis.com/service/update2/json")};
 +  }
    return configurator_impl_.UpdateUrl();
@@ -104,35 +132,95 @@ with git diff against those files rather than counted by hand.
  
 --- a/chrome/browser/component_updater/registration.cc
 +++ b/chrome/browser/component_updater/registration.cc
-@@ -5,6 +5,7 @@
- #include "chrome/browser/component_updater/registration.h"
- 
- #include "base/feature_list.h"
-+#include "base/command_line.h"
- #include "base/files/file_path.h"
+@@ -9,6 +9,7 @@
  #include "base/files/file_util.h"
  #include "base/functional/bind.h"
-@@ -139,6 +140,28 @@ void DeleteOldComponents(const base::FilePath& user_data_dir) {
+ #include "base/functional/callback.h"
++#include "base/memory/no_destructor.h"
+ #include "base/metrics/histogram_functions.h"
+ #include "base/path_service.h"
+ #include "base/task/thread_pool.h"
+@@ -48,6 +49,7 @@
+ #include "components/on_device_translation/buildflags/buildflags.h"
+ #include "components/optimization_guide/core/model_execution/model_execution_prefs.h"
+ #include "components/optimization_guide/core/model_execution/model_execution_util.h"
++#include "components/prefs/pref_change_registrar.h"
+ #include "components/prefs/pref_service.h"
+ #include "components/safe_browsing/core/common/features.h"
+ #include "device/vr/buildflags/buildflags.h"
+@@ -134,11 +136,80 @@ void DeleteOldComponents(const base::FilePath& user_data_dir) {
+   }
+ }
+ 
++#if BUILDFLAG(ENABLE_WIDEVINE_CDM_COMPONENT)
++// Aerium: the Settings > Media switch, in Local State. See browser_prefs.cc.
++constexpr char kAeriumDrmEnabledPref[] = "aerium.drm_enabled";
++
++bool AeriumDrmEnabled() {
++  PrefService* const local_state = g_browser_process->local_state();
++  return local_state && local_state->GetBoolean(kAeriumDrmEnabledPref);
++}
++
++// Aerium: run when the switch is flipped, so that turning DRM on starts the
++// download in this session rather than one launch later.
++//
++// The unregister loop is not tidiness, it is the whole reason this is safe.
++// ChromeConfigurator::UpdateUrl() is about to start returning the real update
++// service, and it returns it for whatever is registered - so at startup the
++// gate below registers Widevine and nothing else. Flipping the switch at
++// runtime arrives too late for that: everything was already registered while
++// DRM was off. Clearing the list first puts this session in the same state a
++// launch with DRM on would have been in.
++//
++// Dropping them costs nothing. component_updater_url_constants.cc is in
++// ungoogled-chromium's domain_substitution.list, so every one of them has
++// spent its whole life pointed at a host that does not resolve: none has ever
++// downloaded a payload, so none has an on-disk copy for its installer to load,
++// so unregistering removes nothing that was doing anything. That was checked
++// rather than assumed - it is why an installer's ComponentReady() never fires
++// in this browser today.
++void AeriumOnDrmPrefChanged() {
++  if (!AeriumDrmEnabled()) {
++    // Turning it off leaves the CDM registered for the rest of this session -
++    // it is already loaded - and takes effect at the next launch.
++    return;
++  }
++  ComponentUpdateService* const cus = g_browser_process->component_updater();
++  if (!cus) {
++    return;
++  }
++  for (const std::string& id : cus->GetComponentIDs()) {
++    cus->UnregisterComponent(id);
++  }
++  RegisterWidevineCdmComponent(cus);
++}
++#endif  // BUILDFLAG(ENABLE_WIDEVINE_CDM_COMPONENT)
++
+ }  // namespace
+ 
  void RegisterComponentsForUpdate() {
    auto* const cus = g_browser_process->component_updater();
  
 +#if BUILDFLAG(ENABLE_WIDEVINE_CDM_COMPONENT)
-+  // Aerium: when DRM is switched on, the Widevine CDM component is the ONLY
-+  // component registered, and this returns before reaching any other.
-+  //
-+  // That narrowness is the whole point. ChromeConfigurator::UpdateUrl() is a
-+  // property of the configurator, not of a component, so pointing it at the
-+  // real update service to fetch the CDM points every registered component at
-+  // it too. Registering nothing else means there is nothing else to fetch:
-+  // turning on DRM asks Google for one thing, the CDM, and not for a list of
-+  // everything else this browser could be told about.
-+  //
-+  // Nothing is lost by skipping them. ungoogled-chromium has
-+  // component_updater_url_constants.cc in domain_substitution.list, so with
-+  // the switch off every component below is already registered against a
-+  // rewritten host that does not resolve. They have never updated in this
-+  // browser and they do not start now.
-+  if (base::CommandLine::ForCurrentProcess()->HasSwitch("enable-widevine")) {
++  // Aerium: watch the switch, so flipping it in Settings takes effect without
++  // a restart. On Windows and Mac that is the whole flow - the installer's
++  // ComponentReady() calls CdmRegistry::RegisterCdm() directly. On Linux the
++  // CDM has to be registered before the zygote sandbox closes, so the download
++  // lands in this session and one restart picks it up; without this it took
++  // two, one to start the download and one to use it.
++  static base::NoDestructor<PrefChangeRegistrar> aerium_drm_registrar;
++  if (aerium_drm_registrar->IsEmpty()) {
++    if (PrefService* const local_state = g_browser_process->local_state()) {
++      aerium_drm_registrar->Init(local_state);
++      aerium_drm_registrar->Add(kAeriumDrmEnabledPref,
++                                base::BindRepeating(&AeriumOnDrmPrefChanged));
++    }
++  }
++
++  // With DRM on, the Widevine CDM component is the ONLY component registered.
++  // See AeriumOnDrmPrefChanged() above for why that narrowness is required and
++  // why it costs nothing.
++  if (AeriumDrmEnabled()) {
 +    RegisterWidevineCdmComponent(cus);
 +    return;
 +  }

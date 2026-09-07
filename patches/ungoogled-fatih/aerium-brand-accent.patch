@@ -1,0 +1,60 @@
+State the accent colour instead of generating it.
+
+aerium-brand-surfaces.patch, which this sits on top of, says in as many words
+that it sets surfaces only and leaves the accent to the generated palette: that
+kColorSysPrimary already resolves to a blue from our seed, and that overriding
+text and accent tokens as well would be re-deriving readability by hand for no
+gain. That was right when nothing else in the browser stated an accent. It is
+no longer, and this reverses that one line of it deliberately.
+
+What changed is that three other places now state the accent outright. The new
+tab page draws #7FC4E4 in dark and #2C6BAE in light; aerium-webui-style.patch
+gives the same two values to every WebUI page; aerium-settings-style.patch uses
+them for links, toggles, buttons and the section labels. Leaving the native
+toolbar, menus and dialogs on whatever Material 3 derives from the #2C6BAE seed
+guarantees two accents in one window - and a generated tone is not the seed, it
+is a tone-40 or tone-80 step away from it, so they were never going to agree by
+accident.
+
+DELIBERATELY TWO TOKENS. kColorSysPrimary and kColorSysOnPrimary, in the mixer
+that patch already adds, and nothing else. The readability argument it makes
+still holds for every on-surface text token, so those stay generated; what is
+overridden is one accent and the colour drawn on top of it. Both are stated per
+scheme rather than derived, which is the whole point.
+
+The two values are the Material roles they replace, not arbitrary. In dark mode
+primary is a light tone and on-primary a dark one, so #7FC4E4 sits on #06283D -
+the same pair the new tab page uses for its accent chips. In light mode primary
+is a mid tone on white, so #2C6BAE on white, which is the seed itself and the
+core of the lens in the logo.
+
+The IDs were read out of ui/color/color_id.h at 152.0.7977.82 rather than
+recalled: kColorSysPrimary and kColorSysOnPrimary are declared on consecutive
+lines, in the same block as kColorSysBaseContainerElevated, which the surfaces
+patch already assigns.
+
+Verified against the real 152.0.7977.82 source. The pristine file was fetched at
+that tag, aerium-brand-surfaces.patch applied to it, this patch generated from
+the result, and then re-applied to a clean copy of that same baseline: it lands
+with no fuzz and reproduces the file byte for byte. Nothing else in the series
+touches chrome_color_mixer.cc, checked by grepping patches/ for the filename.
+
+--- a/chrome/browser/ui/color/chrome_color_mixer.cc
++++ b/chrome/browser/ui/color/chrome_color_mixer.cc
+@@ -1191,6 +1191,8 @@
+         SkColorSetRGB(0x14, 0x1F, 0x44)};
+     aerium_mixer[ui::kColorSysBaseContainerElevated] = {
+         SkColorSetRGB(0x1B, 0x2A, 0x57)};
++    aerium_mixer[ui::kColorSysPrimary] = {SkColorSetRGB(0x7F, 0xC4, 0xE4)};
++    aerium_mixer[ui::kColorSysOnPrimary] = {SkColorSetRGB(0x06, 0x28, 0x3D)};
+   } else {
+     aerium_mixer[ui::kColorSysBase] = {SK_ColorWHITE};
+     aerium_mixer[ui::kColorSysHeader] = {SkColorSetRGB(0xD8, 0xE6, 0xF5)};
+@@ -1200,5 +1202,7 @@
+     aerium_mixer[ui::kColorSysBaseContainer] = {
+         SkColorSetRGB(0xE9, 0xF1, 0xFB)};
+     aerium_mixer[ui::kColorSysBaseContainerElevated] = {SK_ColorWHITE};
++    aerium_mixer[ui::kColorSysPrimary] = {SkColorSetRGB(0x2C, 0x6B, 0xAE)};
++    aerium_mixer[ui::kColorSysOnPrimary] = {SK_ColorWHITE};
+   }
+ }

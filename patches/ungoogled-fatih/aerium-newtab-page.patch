@@ -81,6 +81,31 @@ Verified the same way as the rest, plus two checks the page itself earned: its
 script was extracted and run through node --check, and every getElementById
 target in it was cross-checked against the ids in the markup - both clean. The
 raw string was re-checked for a premature terminator after the additions.
+
+DRAG TO REORDER, and the base::ListValue correction.
+
+Reordering is a drag within the grid. The cells are anchors, so the browser
+would drag the link by default; setting the payload in dragstart replaces that
+with a move.
+
+The handlers take const base::ListValue&, not const base::Value::List&. That is
+not a style choice: content/public/browser/web_ui.h in this tree declares
+MessageCallback as RepeatingCallback<void(const base::ListValue&)>, and
+base::ListValue is a top-level class in base/values.h here rather than a nested
+Value::List. The first version of this patch used the nested spelling and
+pre-flight 36 rejected it four times over, once per handler:
+
+    aerium_newtab.h:425:45: error: no type named 'List' in 'base::Value'
+
+The element API is identical - empty(), size(), operator[] - so only the
+parameter type changed and every handler body is untouched. The reason is
+written next to the first handler so it does not get "corrected" back.
+
+This is a variant difference rather than an upstream API I misremembered, and it
+was visible earlier today: chrome_browsing_data_lifetime_manager.cc in this same
+tree has GetOriginTypeMask(const base::ListValue&), which I read this morning
+and did not follow up. Checking the actual declaration in web_ui.h would have
+cost one fetch.
 --- a/chrome/browser/chrome_content_browser_client.cc
 +++ b/chrome/browser/chrome_content_browser_client.cc
 @@ -886,6 +886,17 @@ bool HandleNewTabPageLocationOverride(
@@ -122,7 +147,7 @@ raw string was re-checked for a premature terminator after the additions.
    certificate_transparency::prefs::RegisterPrefs(registry);
 --- /dev/null
 +++ b/chrome/browser/ui/webui/aerium_newtab.h
-@@ -0,0 +1,433 @@
+@@ -0,0 +1,467 @@
 +#ifndef CHROME_BROWSER_UI_WEBUI_AERIUM_NEWTAB_H_
 +#define CHROME_BROWSER_UI_WEBUI_AERIUM_NEWTAB_H_
 +
@@ -241,6 +266,8 @@ raw string was re-checked for a premature terminator after the additions.
 + .label{font-size:12px;color:var(--label);text-align:center;
 +        overflow-wrap:anywhere;max-width:100%}
 + .cell.add .label{color:var(--label-dim)}
++ .cell.dragging{opacity:.35}
++ .cell.over .face{border-color:var(--accent);border-style:dashed}
 + .x{position:absolute;top:-6px;right:calc(50% - 40px);width:22px;height:22px;
 +    border-radius:11px;background:var(--accent);color:var(--bg);border:0;
 +    font:600 13px/1 system-ui;cursor:pointer;display:none}
@@ -312,6 +339,7 @@ raw string was re-checked for a premature terminator after the additions.
 +</dialog>
 +<script>
 + let tiles = [];
++ let dragFrom = null;
 + let cfg = { bg: 'black', set: 'dusk', cols: 4, row: true };
 + const grid = document.getElementById('grid');
 + const dlg = document.getElementById('dlg');
@@ -373,7 +401,7 @@ raw string was re-checked for a premature terminator after the additions.
 +   grid.textContent = '';
 +   tiles.forEach((t, i) => {
 +     const a = document.createElement('a');
-+     a.className = 'cell'; a.href = t.url;
++     a.className = 'cell'; a.href = t.url; a.draggable = true;
 +     const f = document.createElement('div'); f.className = 'face'; f.textContent = mono(t);
 +     const l = document.createElement('div'); l.className = 'label'; l.textContent = name(t);
 +     const x = document.createElement('button'); x.className = 'x'; x.textContent = '×';
@@ -384,6 +412,31 @@ raw string was re-checked for a premature terminator after the additions.
 +     a.append(f, l, x);
 +     a.addEventListener('contextmenu', e => {
 +       e.preventDefault(); document.body.classList.toggle('editing');
++     });
++     // Reorder by dragging. The cells are anchors, so the browser would drag
++     // the link by default; setting the payload here replaces that with a move
++     // within the grid.
++     a.addEventListener('dragstart', e => {
++       dragFrom = i; a.classList.add('dragging');
++       e.dataTransfer.effectAllowed = 'move';
++       e.dataTransfer.setData('text/plain', String(i));
++     });
++     a.addEventListener('dragend', () => {
++       dragFrom = null; a.classList.remove('dragging');
++       grid.querySelectorAll('.over').forEach(n => n.classList.remove('over'));
++     });
++     a.addEventListener('dragover', e => {
++       if (dragFrom === null || dragFrom === i) return;
++       e.preventDefault(); e.dataTransfer.dropEffect = 'move';
++       a.classList.add('over');
++     });
++     a.addEventListener('dragleave', () => a.classList.remove('over'));
++     a.addEventListener('drop', e => {
++       e.preventDefault(); a.classList.remove('over');
++       if (dragFrom === null || dragFrom === i) return;
++       const moved = tiles.splice(dragFrom, 1)[0];
++       tiles.splice(i, 0, moved);
++       dragFrom = null; save(); render();
 +     });
 +     grid.append(a);
 +   });
@@ -520,7 +573,13 @@ raw string was re-checked for a premature terminator after the additions.
 + private:
 +  PrefService* prefs() { return Profile::FromWebUI(web_ui())->GetPrefs(); }
 +
-+  void HandleGetTiles(const base::Value::List& args) {
++  // base::ListValue, not base::Value::List. content/public/browser/web_ui.h in
++  // this tree declares MessageCallback as
++  // RepeatingCallback<void(const base::ListValue&)>, and base::ListValue is a
++  // top-level class in base/values.h here rather than a nested Value::List.
++  // The element API is the same - empty(), size(), operator[] - so only the
++  // parameter type differs from what upstream Chromium documents elsewhere.
++  void HandleGetTiles(const base::ListValue& args) {
 +    web_ui()->CallJavascriptFunctionUnsafe(
 +        "aeriumNewTabTiles",
 +        base::Value(prefs()->GetString(kAeriumNewTabTilesPref)));
@@ -530,7 +589,7 @@ raw string was re-checked for a premature terminator after the additions.
 +  // stores the string as given. It is read back by the page alone and parsed
 +  // there inside a try, so a value hand-edited into nonsense costs an empty
 +  // grid rather than anything worse.
-+  void HandleSetTiles(const base::Value::List& args) {
++  void HandleSetTiles(const base::ListValue& args) {
 +    if (args.empty() || !args[0].is_string()) {
 +      return;
 +    }
@@ -541,13 +600,13 @@ raw string was re-checked for a premature terminator after the additions.
 +  // page is the only thing that reads or writes them, so a pref per checkbox
 +  // would be four more registrations and four more handlers to say the same
 +  // thing. An unparsable value falls back to the defaults in the page.
-+  void HandleGetSettings(const base::Value::List& args) {
++  void HandleGetSettings(const base::ListValue& args) {
 +    web_ui()->CallJavascriptFunctionUnsafe(
 +        "aeriumNewTabSettings",
 +        base::Value(prefs()->GetString(kAeriumNewTabSettingsPref)));
 +  }
 +
-+  void HandleSetSettings(const base::Value::List& args) {
++  void HandleSetSettings(const base::ListValue& args) {
 +    if (args.empty() || !args[0].is_string()) {
 +      return;
 +    }

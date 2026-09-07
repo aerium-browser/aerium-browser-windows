@@ -65,12 +65,8 @@ exists to avoid, and Chrome's own new tab page customises itself from the page
 for the same reason. The panel covers background, shortcuts per row, the
 bookmarks row, and clearing the grid.
 
-The backgrounds are DRAWN, not photographs, and that is the one thing here that
-is a placeholder rather than a decision. Shipping real photos means shipping
-image files, and there are none in the tree; the sets below are CSS gradients in
-four moods, four each, so the chooser behaves exactly as it will with photographs
-and costs nothing on disk. Dropping real images in later changes the SETS table
-and nothing else. If you want photographs, they need to arrive as files.
+The backgrounds were CSS gradients in four sets, standing in for photographs
+nobody had. That is gone; see YOUR PHOTO below.
 
 Settings ride in one JSON string for the same reason the shortcuts do: the page
 is the only reader and writer, so a pref per checkbox would be four more
@@ -118,6 +114,51 @@ out and the status-bar preview keep working.
 
 The script was re-run through node --check and the new getElementById target
 (dlgTitle) was added to the markup in the same change.
+
+YOUR PHOTO, which replaces the bundled gradients.
+
+Three backgrounds now: pure black, Aerium navy, and an image the user chooses.
+The four gradient sets are deleted rather than kept alongside - they only ever
+existed because there were no photographs to ship, and an image picker is the
+thing they were standing in for.
+
+THE IMAGE IS DOWNSCALED IN THE PAGE BEFORE IT IS STORED, and that is the part
+that matters. It is drawn onto a canvas capped at 2560x1440 and re-encoded as
+JPEG at 0.82, so what reaches the browser is a few hundred kilobytes rather
+than whatever came off a camera. It lands in a profile pref, like the shortcuts
+and the settings, which means it is parsed into memory for the life of the
+profile and written into a JSON file - so the size is not a detail. The handler
+refuses anything that is not a data:image/ URL and anything past 8 MB, as a
+backstop rather than as the policy.
+
+A pref is not the obvious place for a few hundred kilobytes of base64 and the
+alternative was considered: a file in the profile directory, served back
+through the URLDataSource. That is the better shape at ten times the size -
+file IO on a worker sequence, a lifetime to manage, a read path to write - and
+it would break the one property this whole header is built on, which is that it
+needs no .cc. If the cap ever needs raising, that is the change to make.
+
+localStorage was not used, for the same reason the shortcuts do not use it, and
+the reason is written above.
+
+Choosing the chip before choosing a file leaves the plain background showing
+rather than a blank screen, so the half-configured state does not read as a
+bug. Nothing else in the page changed: the scrim, the lightened text and the
+translucent tiles that made a photo legible were already there for the
+gradients and apply unchanged to a real image.
+
+CSP was checked rather than assumed. URLDataSource emits no img-src and no
+default-src for a trusted chrome:// source - both return an empty string in
+content/public/browser/url_data_source.cc - so a data: URL in a background-image
+is allowed without relaxing anything. It does emit require-trusted-types-for
+'script' with an empty trusted-types allowlist, which is why the picker builds
+its preview with createElement and style properties and never assigns a string
+to innerHTML.
+
+Re-verified: the script through node --check, all 22 getElementById targets
+cross-checked against the ids in the markup (none missing), no reference to the
+deleted SETS table left anywhere, and the raw string scanned for a premature
+terminator - the first )" in the page is the intended one.
 --- a/chrome/browser/chrome_content_browser_client.cc
 +++ b/chrome/browser/chrome_content_browser_client.cc
 @@ -886,6 +886,17 @@ bool HandleNewTabPageLocationOverride(
@@ -140,7 +181,7 @@ The script was re-run through node --check and the new getElementById target
    }
 --- a/chrome/browser/prefs/browser_prefs.cc
 +++ b/chrome/browser/prefs/browser_prefs.cc
-@@ -1744,6 +1744,16 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
+@@ -1744,6 +1744,17 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
    AimEligibilityService::RegisterProfilePrefs(registry);
    AnnouncementNotificationService::RegisterProfilePrefs(registry);
    autofill::prefs::RegisterProfilePrefs(registry);
@@ -154,12 +195,13 @@ The script was re-run through node --check and the new getElementById target
 +  registry->RegisterBooleanPref("aerium.new_tab_page", true);
 +  registry->RegisterStringPref("aerium.new_tab_page.tiles", std::string());
 +  registry->RegisterStringPref("aerium.new_tab_page.settings", std::string());
++  registry->RegisterStringPref("aerium.new_tab_page.image", std::string());
    browsing_data::prefs::RegisterBrowserUserPrefs(registry);
    capture_policy::RegisterProfilePrefs(registry);
    certificate_transparency::prefs::RegisterPrefs(registry);
 --- /dev/null
 +++ b/chrome/browser/ui/webui/aerium_newtab.h
-@@ -0,0 +1,491 @@
+@@ -0,0 +1,565 @@
 +#ifndef CHROME_BROWSER_UI_WEBUI_AERIUM_NEWTAB_H_
 +#define CHROME_BROWSER_UI_WEBUI_AERIUM_NEWTAB_H_
 +
@@ -169,6 +211,7 @@ The script was re-run through node --check and the new getElementById target
 +
 +#include "base/functional/bind.h"
 +#include "base/memory/ref_counted_memory.h"
++#include "base/strings/string_util.h"
 +#include "base/values.h"
 +#include "chrome/browser/profiles/profile.h"
 +#include "components/prefs/pref_service.h"
@@ -204,6 +247,7 @@ The script was re-run through node --check and the new getElementById target
 +inline constexpr char kAeriumNewTabTilesPref[] = "aerium.new_tab_page.tiles";
 +inline constexpr char kAeriumNewTabSettingsPref[] =
 +    "aerium.new_tab_page.settings";
++inline constexpr char kAeriumNewTabImagePref[] = "aerium.new_tab_page.image";
 +
 +class AeriumNewTabDataSource : public content::URLDataSource {
 + public:
@@ -241,7 +285,8 @@ The script was re-run through node --check and the new getElementById target
 + }
 + html{background:var(--bg);color:var(--text);
 +      font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-+ #photo{position:fixed;inset:0;z-index:-2}
++ #photo{position:fixed;inset:0;z-index:-2;background-size:cover;
++        background-position:center}
 + #scrim{position:fixed;inset:0;z-index:-1;
 +        background:linear-gradient(180deg,rgba(0,0,0,.30),rgba(0,0,0,.12) 30%,
 +                   rgba(0,0,0,.50))}
@@ -319,10 +364,14 @@ The script was re-run through node --check and the new getElementById target
 +    <div class="chips" id="bgChips">
 +      <button class="chip" data-bg="black">Pure black</button>
 +      <button class="chip" data-bg="navy">Aerium navy</button>
-+      <button class="chip" data-bg="photo">Bundled photo</button>
++      <button class="chip" data-bg="photo">Your photo</button>
 +    </div>
-+    <div class="chips" id="setChips" style="margin-top:10px"></div>
++    <div class="chips" id="photoRow" style="margin-top:10px">
++      <button class="chip" id="pickPhoto">Choose image</button>
++      <button class="chip" id="clearPhoto">Remove</button>
++    </div>
 +    <div class="swatches" id="swatches"></div>
++    <input type="file" id="photoFile" accept="image/*" hidden>
 +  </div>
 +  <div class="group">
 +    <h3>LAYOUT</h3>
@@ -353,47 +402,46 @@ The script was re-run through node --check and the new getElementById target
 + let tiles = [];
 + let dragFrom = null;
 + let editIndex = -1;
-+ let cfg = { bg: 'black', set: 'dusk', cols: 4, row: true };
++ let cfg = { bg: 'black', cols: 4, row: true };
++ let photo = '';
 + const grid = document.getElementById('grid');
 + const dlg = document.getElementById('dlg');
 + const panel = document.getElementById('cfg');
 +
-+ // Bundled backgrounds. Drawn rather than photographic: shipping real photos
-+ // means shipping image files, and none are in the tree yet. Each set is four
-+ // so the choice behaves the way a photo set would, and the page reads its
-+ // background from here whatever the source turns out to be later.
-+ const SETS = {
-+   dusk: ['radial-gradient(120% 70% at 78% 12%,rgba(255,214,170,.55),rgba(255,150,120,.2) 34%,transparent 62%),linear-gradient(178deg,#1a2d4d,#2b3f60 26%,#6a5570 52%,#b07a63 74%,#14121c)',
-+          'radial-gradient(90% 60% at 20% 15%,rgba(255,196,150,.45),transparent 60%),linear-gradient(180deg,#221a2e,#43304a 40%,#9c6a5c 78%,#171320)',
-+          'linear-gradient(170deg,#10203a,#28405f 38%,#7b6a78 70%,#1a1622)',
-+          'radial-gradient(100% 60% at 60% 10%,rgba(255,180,140,.4),transparent 58%),linear-gradient(185deg,#141d38,#33456b 44%,#8d6f72 80%,#12111c)'],
-+   deep: ['linear-gradient(180deg,#03060f,#0b1830 45%,#16304f 78%,#050a14)',
-+          'radial-gradient(80% 50% at 30% 20%,rgba(80,140,200,.35),transparent 62%),linear-gradient(175deg,#040a16,#0e1f3a 55%,#071022)',
-+          'linear-gradient(190deg,#060d1c,#122743 50%,#1d3c60 80%,#060c18)',
-+          'radial-gradient(90% 55% at 70% 80%,rgba(60,110,160,.4),transparent 60%),linear-gradient(180deg,#02060e,#0a1729 60%,#040810)'],
-+   stone: ['linear-gradient(175deg,#1b1b1e,#33333a 42%,#55555f 74%,#141416)',
-+           'radial-gradient(90% 55% at 25% 18%,rgba(200,200,210,.18),transparent 60%),linear-gradient(180deg,#17171a,#2c2c33 55%,#111113)',
-+           'linear-gradient(188deg,#141417,#2a2a31 48%,#46464f 80%,#101012)',
-+           'radial-gradient(100% 60% at 75% 85%,rgba(150,150,165,.22),transparent 58%),linear-gradient(180deg,#131316,#26262c 60%,#0e0e10)'],
-+   moss: ['linear-gradient(178deg,#0b1a16,#16332a 44%,#2f5a44 76%,#08120f)',
-+          'radial-gradient(85% 55% at 28% 20%,rgba(120,190,150,.3),transparent 60%),linear-gradient(180deg,#091613,#153027 58%,#070f0d)',
-+          'linear-gradient(186deg,#0a1714,#1a3a2d 50%,#376a4f 82%,#081210)',
-+          'radial-gradient(95% 58% at 72% 82%,rgba(100,170,130,.32),transparent 58%),linear-gradient(180deg,#08130f,#122b22 60%,#060d0b)']
-+ };
-+ const SET_NAMES = { dusk: 'dusk', deep: 'deep water', stone: 'stone', moss: 'moss' };
++ // The wallpaper is whatever image the user picked, downscaled and re-encoded
++ // here before it is stored. A phone camera file is several megabytes and this
++ // ends up in a profile pref that is read into memory for the life of the
++ // profile; a wallpaper needs no more pixels than the screen has.
++ const MAX_W = 2560, MAX_H = 1440;
++
++ function downscale(img){
++   let w = img.naturalWidth, h = img.naturalHeight;
++   if (!w || !h) return '';
++   const s = Math.min(1, MAX_W / w, MAX_H / h);
++   w = Math.round(w * s); h = Math.round(h * s);
++   const c = document.createElement('canvas');
++   c.width = w; c.height = h;
++   c.getContext('2d').drawImage(img, 0, 0, w, h);
++   return c.toDataURL('image/jpeg', 0.82);
++ }
++
++ function hasPhoto(){ return photo.startsWith('data:image/'); }
 +
 + function applyCfg(){
-+   document.body.classList.toggle('photo', cfg.bg === 'photo');
-+   const photo = document.getElementById('photo');
++   // "Your photo" with no photo yet behaves as the plain background rather
++   // than as a blank screen, so choosing the chip before choosing a file does
++   // not look like a bug.
++   const on = cfg.bg === 'photo' && hasPhoto();
++   document.body.classList.toggle('photo', on);
++   const layer = document.getElementById('photo');
 +   const scrim = document.getElementById('scrim');
-+   if (cfg.bg === 'photo') {
-+     const list = SETS[cfg.set] || SETS.dusk;
-+     photo.style.background = list[Math.floor(Math.random() * list.length)];
-+     photo.style.backgroundSize = 'cover';
-+     photo.hidden = false; scrim.hidden = false;
++   if (on) {
++     layer.style.backgroundImage = 'url("' + photo + '")';
++     layer.hidden = false; scrim.hidden = false;
 +     document.documentElement.style.background = '';
 +   } else {
-+     photo.hidden = true; scrim.hidden = true;
++     layer.hidden = true; scrim.hidden = true;
++     layer.style.backgroundImage = '';
 +     document.documentElement.style.background =
 +         cfg.bg === 'navy' ? '#0E1834' : '';
 +   }
@@ -491,6 +539,11 @@ The script was re-run through node --check and the new getElementById target
 +   applyCfg(); syncPanel();
 + };
 +
++ window.aeriumNewTabImage = raw => {
++   photo = (typeof raw === 'string' && raw.startsWith('data:image/')) ? raw : '';
++   applyCfg(); syncPanel();
++ };
++
 + window.aeriumNewTabTiles = raw => {
 +   try { const v = JSON.parse(raw || '[]'); tiles = Array.isArray(v) ? v : []; }
 +   catch (e) { tiles = []; }
@@ -504,25 +557,21 @@ The script was re-run through node --check and the new getElementById target
 +       c.setAttribute('aria-pressed', String(Number(c.dataset.cols) === cfg.cols)));
 +   document.getElementById('rowChip').setAttribute('aria-pressed', String(!!cfg.row));
 +
-+   const sets = document.getElementById('setChips');
++   const row = document.getElementById('photoRow');
 +   const sws = document.getElementById('swatches');
-+   const showSets = cfg.bg === 'photo';
-+   sets.style.display = showSets ? 'flex' : 'none';
-+   sws.style.display = showSets ? 'flex' : 'none';
-+   if (!showSets) return;
-+   sets.textContent = ''; sws.textContent = '';
-+   Object.keys(SETS).forEach(k => {
-+     const b = document.createElement('button');
-+     b.className = 'chip'; b.textContent = SET_NAMES[k];
-+     b.setAttribute('aria-pressed', String(k === cfg.set));
-+     b.addEventListener('click', () => { cfg.set = k; saveCfg(); applyCfg(); syncPanel(); });
-+     sets.append(b);
-+   });
-+   (SETS[cfg.set] || SETS.dusk).forEach(g => {
++   const show = cfg.bg === 'photo';
++   row.style.display = show ? 'flex' : 'none';
++   sws.style.display = show && hasPhoto() ? 'flex' : 'none';
++   document.getElementById('clearPhoto').disabled = !hasPhoto();
++   sws.textContent = '';
++   if (show && hasPhoto()) {
 +     const d = document.createElement('div');
-+     d.className = 'sw'; d.style.background = g; d.style.backgroundSize = 'cover';
++     d.className = 'sw';
++     d.style.backgroundImage = 'url("' + photo + '")';
++     d.style.backgroundSize = 'cover';
++     d.style.backgroundPosition = 'center';
 +     sws.append(d);
-+   });
++   }
 + }
 +
 + document.getElementById('gear').addEventListener('click', () => {
@@ -542,6 +591,34 @@ The script was re-run through node --check and the new getElementById target
 + });
 + document.getElementById('rowChip').addEventListener('click', () => {
 +   cfg.row = !cfg.row; saveCfg(); applyCfg(); syncPanel();
++ });
++
++ document.getElementById('pickPhoto').addEventListener('click', () =>
++     document.getElementById('photoFile').click());
++
++ document.getElementById('photoFile').addEventListener('change', e => {
++   const f = e.target.files && e.target.files[0];
++   e.target.value = '';
++   if (!f) return;
++   const url = URL.createObjectURL(f);
++   const img = new Image();
++   img.addEventListener('load', () => {
++     URL.revokeObjectURL(url);
++     const data = downscale(img);
++     if (!data.startsWith('data:image/')) return;
++     photo = data;
++     cfg.bg = 'photo';
++     chrome.send('aeriumNewTabSetImage', [photo]);
++     saveCfg(); applyCfg(); syncPanel();
++   });
++   img.addEventListener('error', () => URL.revokeObjectURL(url));
++   img.src = url;
++ });
++
++ document.getElementById('clearPhoto').addEventListener('click', () => {
++   photo = '';
++   chrome.send('aeriumNewTabSetImage', ['']);
++   applyCfg(); syncPanel();
 + });
 +
 + document.getElementById('cancel').addEventListener('click', () => {
@@ -564,6 +641,7 @@ The script was re-run through node --check and the new getElementById target
 + applyCfg();
 + render();
 + chrome.send('aeriumNewTabGetSettings');
++ chrome.send('aeriumNewTabGetImage');
 + chrome.send('aeriumNewTabGetTiles');
 +</script>
 +)";
@@ -601,6 +679,14 @@ The script was re-run through node --check and the new getElementById target
 +    web_ui->RegisterMessageCallback(
 +        "aeriumNewTabSetSettings",
 +        base::BindRepeating(&AeriumNewTab::HandleSetSettings,
++                            base::Unretained(this)));
++    web_ui->RegisterMessageCallback(
++        "aeriumNewTabGetImage",
++        base::BindRepeating(&AeriumNewTab::HandleGetImage,
++                            base::Unretained(this)));
++    web_ui->RegisterMessageCallback(
++        "aeriumNewTabSetImage",
++        base::BindRepeating(&AeriumNewTab::HandleSetImage,
 +                            base::Unretained(this)));
 +  }
 +  AeriumNewTab(const AeriumNewTab&) = delete;
@@ -647,6 +733,36 @@ The script was re-run through node --check and the new getElementById target
 +      return;
 +    }
 +    prefs()->SetString(kAeriumNewTabSettingsPref, args[0].GetString());
++  }
++
++  // The wallpaper, as a data: URL. It rides in a pref like everything else
++  // here, and the page downscales and re-encodes before sending, so what
++  // arrives is a JPEG no larger than a screen rather than whatever came off a
++  // camera. The two guards below are the backstop for that rather than the
++  // policy itself: this pref is read into memory for the life of the profile
++  // and written into a JSON file, which is no place for an arbitrary blob.
++  static constexpr size_t kMaxImageBytes = 8u * 1024u * 1024u;
++
++  void HandleGetImage(const base::ListValue& args) {
++    web_ui()->CallJavascriptFunctionUnsafe(
++        "aeriumNewTabImage",
++        base::Value(prefs()->GetString(kAeriumNewTabImagePref)));
++  }
++
++  void HandleSetImage(const base::ListValue& args) {
++    if (args.empty() || !args[0].is_string()) {
++      return;
++    }
++    const std::string& value = args[0].GetString();
++    if (value.empty()) {
++      prefs()->SetString(kAeriumNewTabImagePref, std::string());
++      return;
++    }
++    if (value.size() > kMaxImageBytes ||
++        !base::StartsWith(value, "data:image/", base::CompareCase::SENSITIVE)) {
++      return;
++    }
++    prefs()->SetString(kAeriumNewTabImagePref, value);
 +  }
 +};
 +

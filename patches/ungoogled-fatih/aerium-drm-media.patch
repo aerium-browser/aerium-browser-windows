@@ -76,7 +76,7 @@ resolves whichever webuiRoundedIconsEnabled turns out to be.
 +      Play DRM-protected content
 +    </message>
 +    <message name="IDS_SETTINGS_AERIUM_DRM_DESC" desc="Explanation under the DRM switch. Says it is off by default, that the CDM is proprietary Google software Aerium downloads from Google on request, and that Linux needs a restart.">
-+      Register the Widevine CDM so sites like Netflix can play protected video. Off by default: the CDM is proprietary Google software that Aerium does not ship. Turning this on downloads it from Google's update service - one request, for that one component and nothing else - and Aerium contacts that service at no other time. On Linux, restart Aerium after it arrives.
++      Register the Widevine CDM so sites like Netflix can play protected video. Off by default: the CDM is proprietary Google software that Aerium does not ship. Turning this on downloads it from Google's update service - one request, for that one component and nothing else - and Aerium contacts that service at no other time. On Linux it takes effect after one restart, because the CDM has to be loaded before the sandbox closes.
 +    </message>
      <message name="IDS_SETTINGS_MANAGE_CERTIFICATES" desc="Text for manage certificates button in Privacy options">
        Manage certificates

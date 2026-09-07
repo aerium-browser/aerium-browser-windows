@@ -467,6 +467,31 @@ def main():
         # already contains buildtools, so skipping it there is correct.
         _provide_clang_format(source_tree)
 
+    # chrome://aerium's patch list is generated into the source tree, and the
+    # block above is skipped entirely on a resumed CI tree (line 365: the tree
+    # already has BUILD.gn, so prepare does not re-run). That makes the .inc a
+    # build input the resume path assumes survived in the checkpoint - and when
+    # it does not, the failure is a compile error four hours in rather than
+    # anything that names the real cause:
+    #
+    #   aerium_patches.h(44,10): fatal error:
+    #       'chrome/browser/ui/webui/aerium_patch_manifest.inc' file not found
+    #
+    # That is what killed run 143 and then its auto-resume, run 144, which
+    # retried three times and hit the identical error each time.
+    #
+    # Regenerating when it is absent costs a fraction of a second and makes a
+    # resume self-healing. Guarded on existence rather than run unconditionally
+    # so a fresh build keeps the ordering the block above documents: generated
+    # after domain substitution, so hostnames in the patch descriptions are not
+    # rewritten into the placeholder domain. On a resume substitution ran in an
+    # earlier stage and will not run again, so generating here produces the same
+    # file it would have produced then.
+    patch_manifest = source_tree / 'chrome' / 'browser' / 'ui' / 'webui' / 'aerium_patch_manifest.inc'
+    if not patch_manifest.exists():
+        get_logger().info('Patch manifest missing from the tree - regenerating')
+        _generate_patch_manifest(source_tree)
+
     # Check if rust-toolchain folder has been populated
     HOST_CPU_IS_64BIT = sys.maxsize > 2**32
     RUST_DIR_DST = source_tree / 'third_party' / 'rust-toolchain'

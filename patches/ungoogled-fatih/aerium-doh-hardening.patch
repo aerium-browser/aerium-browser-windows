@@ -27,6 +27,29 @@ WHAT IS TAKEN, and why each one.
    edge case: a VPN or Private DNS in the path is routine. This is the half of
    the request that is a real bug fix rather than a preference.
 
+3. Secure DNS is no longer switched off because the device merely looks managed
+   or parentally filtered. Chromium disables DoH when it detects an MDM or
+   device-owner app, or a parental-control filter, on the reasoning that those
+   exist to see and filter DNS. That does not survive contact with a browser
+   people install to stop exactly that: a work profile on the same phone should
+   not silently revoke a setting the user chose for their own browsing.
+
+   This is the part an earlier version of this patch took from Cromite, wrote
+   the way Cromite writes it - `if ((true)) return false;` at the top of three
+   functions, original bodies left behind - and then removed again, because
+   Chromium 152 compiles with -Wunreachable-code-aggressive (line 2173 of
+   build/config/compiler/BUILD.gn) and warnings are errors. It is back, done
+   differently: the detection functions are untouched, and the two call sites
+   that actually turn DoH off are gated on a base::Feature. A feature keeps each
+   condition a runtime value, so nothing is provably unreachable, and it leaves
+   a way back for anyone who does want the platform's answer to win.
+
+   Only the two call sites that disable DoH are gated. The third use of
+   ShouldDisableDohForManaged() is inside `if (record_metrics)` and only picks a
+   histogram, so it still reports the truth about the device, and the
+   parental-controls delay timer is left alone because all it does is trigger a
+   config refresh.
+
 WHAT IS DELIBERATELY NOT TAKEN.
 
 Cromite's DoH-improvements.patch also rewrites SecureDnsConfig::ParseMode so
@@ -48,23 +71,6 @@ aerium-dns-providers.patch, so that is churn on a NET_EXPORT struct for
 something already solved here. And two LOG lines Cromite uses for its own
 debugging.
 
-Also not taken, and this one was a near miss worth writing down. Cromite's third
-change stops Chromium switching DoH off when it detects an MDM owner or a
-parental-control app, which is a defensible thing for this browser to want. It
-does it with `if ((true)) return false;` at the top of three functions, leaving
-the original body behind as dead code. Chromium 152 compiles with
--Wunreachable-code-aggressive - it is on line 2173 of
-build/config/compiler/BUILD.gn - and warnings are errors. Clang does have a
-carve-out that silences this analysis for conditions that look like
-compile-time configuration, which is exactly why Cromite doubles the
-parentheses, but "probably survives the aggressive variant" is not worth an
-hours-long build to find out, and theme.sh already carries a comment from the
-last time this project reasoned about that same flag. The two changes above
-introduce no unreachable code at all: both new conditions are runtime values.
-Neutralising the managed/parental-control checks without dead code means
-rewriting those function bodies rather than short-circuiting them, and that is
-a separate change with its own risks - an actually-managed device losing its
-DNS policy - rather than something to fold in here.
 
 Verified against the real 152.0.7977.82 sources. All five files were fetched at
 that tag and every anchor confirmed present before anything was written -
@@ -72,10 +78,60 @@ LOAD_FLAG(IS_MAIN_FRAME_ORIGIN_RECENTLY_ACCESSED, 1 << 19) is still the highest
 bit in use, so 1 << 20 is free; DnsConfigOverrides really does declare
 dns_over_https_config and secure_dns_mode as std::optional, so the added
 condition compiles as written. The patch was then generated from the pair and
-re-applied to a clean copy: it lands with no fuzz and reproduces all four files
-byte for byte. Nothing else in the series touches any of them, checked by
-grepping patches/ for each filename.
+re-applied to a clean copy: it lands with no fuzz and reproduces all five files
+byte for byte. Nothing else in the series edits any of them - the single grep
+hit on stub_resolver_config_reader.cc is a comment in aerium-first-run-page.patch.
+base/feature_list.h is already included in that file at line 13, and both call
+site anchors match exactly once.
 
+--- a/chrome/browser/net/stub_resolver_config_reader.cc
++++ b/chrome/browser/net/stub_resolver_config_reader.cc
+@@ -55,6 +55,25 @@
+ 
+ namespace {
+ 
++// Aerium: when enabled - which it is by default - a device that merely looks
++// managed or parentally filtered no longer switches secure DNS off.
++//
++// Chromium turns DoH off when it detects an MDM or device-owner app, or a
++// parental-control filter, on the reasoning that those exist to see and filter
++// DNS and would otherwise break. That reasoning does not survive contact with a
++// browser people install to stop exactly that: a work profile on the same phone
++// should not silently revoke a setting the user chose for their own browsing.
++//
++// A feature rather than a deletion, for two reasons. It leaves a way back for
++// anyone who does want the platform's answer to win. And it keeps the condition
++// at each call site a runtime value: short-circuiting these with a constant
++// would leave the branch behind it unreachable, and Chromium builds with
++// -Wunreachable-code-aggressive with warnings as errors.
++//
++// The detection functions themselves are untouched, so the histogram below that
++// records whether a config was managed still reports the truth.
++BASE_FEATURE(kAeriumIgnoreManagedDnsDisable, base::FEATURE_ENABLED_BY_DEFAULT);
++
+ #if BUILDFLAG(IS_WIN)
+ bool ShouldDisableDohForWindowsParentalControls() {
+   return GetWinParentalControls().web_filter;
+@@ -341,7 +360,8 @@
+   SecureDnsConfig::ManagementMode forced_management_mode =
+       SecureDnsConfig::ManagementMode::kNoOverride;
+   bool is_managed = GetDnsOverHttpsConfigSource()->IsConfigManaged();
+-  if (!is_managed && ShouldDisableDohForManaged()) {
++  if (!base::FeatureList::IsEnabled(kAeriumIgnoreManagedDnsDisable) &&
++      !is_managed && ShouldDisableDohForManaged()) {
+     secure_dns_mode = net::SecureDnsMode::kOff;
+     forced_management_mode = SecureDnsConfig::ManagementMode::kDisabledManaged;
+   } else {
+@@ -399,7 +419,8 @@
+   // Check parental controls last because it can be expensive and should only be
+   // checked if necessary for the otherwise-determined mode.
+   if (check_parental_controls) {
+-    if (ShouldDisableDohForParentalControls()) {
++    if (!base::FeatureList::IsEnabled(kAeriumIgnoreManagedDnsDisable) &&
++        ShouldDisableDohForParentalControls()) {
+       forced_management_mode =
+           SecureDnsConfig::ManagementMode::kDisabledParentalControls;
+       secure_dns_mode = net::SecureDnsMode::kOff;
 --- a/net/base/load_flags_list.h
 +++ b/net/base/load_flags_list.h
 @@ -123,4 +123,9 @@
@@ -123,36 +179,20 @@ grepping patches/ for each filename.
  }
 --- a/net/url_request/url_request_http_job.cc
 +++ b/net/url_request/url_request_http_job.cc
-@@ -515,18 +515,22 @@
+@@ -515,6 +515,9 @@
    // fields in the referrer.
    GURL referrer(request_->referrer());
  
--  // Our consumer should have made sure that this is a safe referrer (e.g. via
--  // URLRequestJob::ComputeReferrerForPolicy).
--  if (referrer.is_valid()) {
--    std::string referer_value = referrer.spec();
--    request_info_.extra_headers.SetHeader(HttpRequestHeaders::kReferer,
--                                          referer_value);
--  }
 +  // Aerium: a request that asked for minimal headers gets no Referer and no
 +  // User-Agent. Only DoH sets that flag - see net/dns/dns_http_attempt.cc.
 +  if (!(request_info_.load_flags & LOAD_MINIMAL_HEADERS)) {
-+    // Our consumer should have made sure that this is a safe referrer (e.g. via
-+    // URLRequestJob::ComputeReferrerForPolicy).
-+    if (referrer.is_valid()) {
-+      std::string referer_value = referrer.spec();
-+      request_info_.extra_headers.SetHeader(HttpRequestHeaders::kReferer,
-+                                            referer_value);
-+    }
- 
--  request_info_.extra_headers.SetHeaderIfMissing(
--      HttpRequestHeaders::kUserAgent,
--      http_user_agent_settings_ ? http_user_agent_settings_->GetUserAgent()
--                                : std::string());
-+    request_info_.extra_headers.SetHeaderIfMissing(
-+        HttpRequestHeaders::kUserAgent,
-+        http_user_agent_settings_ ? http_user_agent_settings_->GetUserAgent()
-+                                  : std::string());
+   // Our consumer should have made sure that this is a safe referrer (e.g. via
+   // URLRequestJob::ComputeReferrerForPolicy).
+   if (referrer.is_valid()) {
+@@ -527,6 +530,7 @@
+       HttpRequestHeaders::kUserAgent,
+       http_user_agent_settings_ ? http_user_agent_settings_->GetUserAgent()
+                                 : std::string());
 +  }
  
    AddExtraHeaders();
@@ -163,7 +203,7 @@ grepping patches/ for each filename.
  void URLRequestHttpJob::AddExtraHeaders() {
 +  // Aerium: and no Brotli, Zstd or Accept-Language either. A DoH response is a
 +  // few hundred bytes of wire-format DNS; advertising encodings for it only
-+  // adds bytes that identify the client.
++  // adds bytes that identify the client. See net/base/load_flags_list.h.
 +  const bool minimal_headers =
 +      (request_info_.load_flags & LOAD_MINIMAL_HEADERS) != 0;
    request_info_.extra_headers.SetAcceptEncodingIfMissing(

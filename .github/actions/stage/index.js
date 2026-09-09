@@ -143,42 +143,77 @@ async function run() {
             throw new Error(
                 `no checkpoint to resume from: neither ${artifactSlots.join(' nor ')} exists`);
         }
-        const newest = found.reduce((a, b) => (b.id > a.id ? b : a));
-        console.log(`resuming from ${newest.name} (artifact ${newest.id})`);
-        await artifact.downloadArtifact(newest.id, {path: 'C:\\ungoogled-chromium-windows\\build', findBy});
-
-        // Immediately after a large download, Windows Defender's on-access
-        // scanner can still hold a lock on the freshly-written zip for a
-        // moment, making 7z fail with "The process cannot access the file
-        // because it is being used by another process." A short retry
-        // clears this transient race without masking a real extraction
-        // failure (a corrupt/missing archive fails the same way on every
-        // attempt).
-        for (let attempt = 1; ; attempt++) {
+        // Newest checkpoint first; the other slot is the fallback. A slot
+        // can hold an unreadable archive after an interrupted upload - the
+        // artifact exists, but 7z fails on it identically on every retry -
+        // and without the fallback the whole run dies even though the older
+        // slot holds a complete checkpoint one stage stale. Trying in
+        // newest-first order costs at worst a stage's worth of work.
+        found.sort((a, b) => b.id - a.id);
+        const zipPath = 'C:\\ungoogled-chromium-windows\\build\\artifacts.zip';
+        let restored = false;
+        let lastError = null;
+        for (const candidate of found) {
             try {
-                await exec.exec('7z', ['x', 'C:\\ungoogled-chromium-windows\\build\\artifacts.zip',
-                    '-oC:\\ungoogled-chromium-windows\\build', '-y']);
+                console.log(`resuming from ${candidate.name} (artifact ${candidate.id})`);
+                await artifact.downloadArtifact(candidate.id,
+                    {path: 'C:\\ungoogled-chromium-windows\\build', findBy});
+
+                // Immediately after a large download, Windows Defender's
+                // on-access scanner can still hold a lock on the
+                // freshly-written zip for a moment, making 7z fail with
+                // "The process cannot access the file because it is being
+                // used by another process." A short retry clears this
+                // transient race without masking a real extraction failure
+                // (a corrupt/missing archive fails the same way on every
+                // attempt).
+                for (let attempt = 1; ; attempt++) {
+                    try {
+                        await exec.exec('7z', ['x', zipPath,
+                            '-oC:\\ungoogled-chromium-windows\\build', '-y']);
+                        break;
+                    } catch (err) {
+                        if (attempt >= 5) {
+                            throw err;
+                        }
+                        console.log(`7z extract failed (attempt ${attempt}), retrying in 5s: ${err}`);
+                        await new Promise(resolve => setTimeout(resolve, 5000));
+                    }
+                }
+                await io.rmRF(zipPath);
+
+                // The restored tree came from a different machine via a zip
+                // round-trip. 7z's -mtc=on preserves NTFS timestamps, but
+                // ninja's incremental correctness still rests on each
+                // output's current mtime matching what .ninja_log recorded -
+                // `-t restat` re-syncs the log to the files' actual on-disk
+                // state without rebuilding anything
+                // (https://ninja-build.org/manual.html#_extra_tools). Cheap
+                // insurance against any mtime drift in the archive
+                // round-trip; a no-op when the tree is already consistent.
+                if (fs.existsSync(NINJA_EXE)) {
+                    await exec.exec(NINJA_EXE, ['-C', NINJA_OUT, '-t', 'restat'], {ignoreReturnCode: true});
+                }
+                restored = true;
                 break;
             } catch (err) {
-                if (attempt >= 5) {
-                    throw err;
+                lastError = err;
+                console.error(`restore from ${candidate.name} (artifact ${candidate.id}) failed: ${err}`);
+                // A failed extract can leave a partial tree behind, and a
+                // later attempt must not build on the mixture. Deleting is
+                // expensive, but this runs only on the fallback path, where
+                // the alternative is losing the whole run.
+                try {
+                    await io.rmRF('C:\\ungoogled-chromium-windows\\build\\src');
+                    await io.rmRF(zipPath);
+                } catch (cleanupError) {
+                    console.log(`cleanup after failed restore: ${cleanupError}`);
                 }
-                console.log(`7z extract failed (attempt ${attempt}), retrying in 5s: ${err}`);
-                await new Promise(resolve => setTimeout(resolve, 5000));
             }
         }
-        await io.rmRF('C:\\ungoogled-chromium-windows\\build\\artifacts.zip');
-
-        // The restored tree came from a different machine via a zip
-        // round-trip. 7z's -mtc=on preserves NTFS timestamps, but ninja's
-        // incremental correctness still rests on each output's current mtime
-        // matching what .ninja_log recorded - `-t restat` re-syncs the log
-        // to the files' actual on-disk state without rebuilding anything
-        // (https://ninja-build.org/manual.html#_extra_tools). Cheap
-        // insurance against any mtime drift in the archive round-trip; a
-        // no-op when the tree is already consistent.
-        if (fs.existsSync(NINJA_EXE)) {
-            await exec.exec(NINJA_EXE, ['-C', NINJA_OUT, '-t', 'restat'], {ignoreReturnCode: true});
+        if (!restored) {
+            throw new Error(`no checkpoint could be restored from `
+                + `${found.map(f => `${f.name}#${f.id}`).join(', ')}; last error: ${lastError}`);
         }
     }
 
@@ -316,8 +351,37 @@ async function run() {
         }
     } else {
         await new Promise(r => setTimeout(r, 5000));
-        await exec.exec('7z', ['a', '-tzip', 'C:\\ungoogled-chromium-windows\\artifacts.zip',
-            'C:\\ungoogled-chromium-windows\\build\\src', '-mx=3', '-mtc=on'], {ignoreReturnCode: true});
+        // A stale zip from an earlier attempt must not survive into this
+        // one: `7z a` ADDS to an existing archive, and a pack failure used
+        // to be swallowed by ignoreReturnCode here - leaving either the
+        // previous zip in place for the upload below (silently
+        // checkpointing an old tree) or nothing sensible at all.
+        await io.rmRF('C:\\ungoogled-chromium-windows\\artifacts.zip');
+        // Packing reads every file in the tree, so the same Defender
+        // transient that can break the extract above can break this; retry
+        // rather than give up, and delete the half-written zip between
+        // attempts so no attempt ever adds to another's output.
+        let packed = false;
+        let packError = null;
+        for (let attempt = 1; attempt <= 3 && !packed; ++attempt) {
+            try {
+                await exec.exec('7z', ['a', '-tzip', 'C:\\ungoogled-chromium-windows\\artifacts.zip',
+                    'C:\\ungoogled-chromium-windows\\build\\src', '-mx=3', '-mtc=on']);
+                packed = true;
+            } catch (err) {
+                packError = err;
+                console.error(`7z pack failed (attempt ${attempt}/3): ${err}`);
+                await io.rmRF('C:\\ungoogled-chromium-windows\\artifacts.zip');
+                await new Promise(r => setTimeout(r, 10000));
+            }
+        }
+        if (!packed) {
+            // Fail loudly WITHOUT uploading: the other slot still holds the
+            // last good checkpoint, and the next stage resumes from it
+            // instead of from a stale or half-written zip.
+            appendSummary('- **checkpoint**: pack failed, keeping the previous one');
+            throw new Error(`7z pack failed on all attempts: ${packError}`);
+        }
         // Write to the free slot, keeping the existing checkpoint intact for
         // the whole of the pack-and-upload window, and only drop it once the
         // replacement is actually stored. See the slot comment above for the

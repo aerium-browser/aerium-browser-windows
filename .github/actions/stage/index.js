@@ -167,18 +167,27 @@ async function run() {
                 // transient race without masking a real extraction failure
                 // (a corrupt/missing archive fails the same way on every
                 // attempt).
+                //
+                // 7z exit codes are graded, not boolean: 0 = ok, 1 = warnings
+                // (extraction completed anyway), 2 = fatal. exec.exec throws
+                // on anything non-zero unless ignoreReturnCode is set, so a
+                // mere warning used to land in this retry loop and re-fail
+                // all five times. Accept 0/1; retry only on 2+.
                 for (let attempt = 1; ; attempt++) {
-                    try {
-                        await exec.exec('7z', ['x', zipPath,
-                            '-oC:\\ungoogled-chromium-windows\\build', '-y']);
-                        break;
-                    } catch (err) {
-                        if (attempt >= 5) {
-                            throw err;
+                    const rc = await exec.exec('7z', ['x', zipPath,
+                        '-oC:\\ungoogled-chromium-windows\\build', '-y'],
+                        {ignoreReturnCode: true});
+                    if (rc <= 1) {
+                        if (rc === 1) {
+                            console.log('7z extract completed with warnings (exit 1); files were extracted');
                         }
-                        console.log(`7z extract failed (attempt ${attempt}), retrying in 5s: ${err}`);
-                        await new Promise(resolve => setTimeout(resolve, 5000));
+                        break;
                     }
+                    if (attempt >= 5) {
+                        throw new Error(`7z extract failed with exit code ${rc}`);
+                    }
+                    console.log(`7z extract failed (attempt ${attempt}, exit ${rc}), retrying in 5s`);
+                    await new Promise(resolve => setTimeout(resolve, 5000));
                 }
                 await io.rmRF(zipPath);
 
@@ -361,17 +370,34 @@ async function run() {
         // transient that can break the extract above can break this; retry
         // rather than give up, and delete the half-written zip between
         // attempts so no attempt ever adds to another's output.
+        //
+        // 7z exit codes are graded: 0 = ok, 1 = warnings (e.g. files that
+        // vanished between scan and compress while build processes from the
+        // stage were still winding down), 2 = fatal. exec.exec throws on any
+        // non-zero unless ignoreReturnCode is set, so the old code treated a
+        // bare warning as a pack failure - and since the vanishing-file
+        // warning is deterministic, all three retries failed identically and
+        // the stage threw away hours of compiling even though 7z had written
+        // a complete archive. Run 34371402734 build-7: exit 1 three times,
+        // 13 GiB zip left on disk, stage failed. Accept 0/1 with the archive
+        // verified present and non-empty; retry only on 2+ or a missing zip.
         let packed = false;
         let packError = null;
         for (let attempt = 1; attempt <= 3 && !packed; ++attempt) {
-            try {
-                await exec.exec('7z', ['a', '-tzip', 'C:\\ungoogled-chromium-windows\\artifacts.zip',
-                    'C:\\ungoogled-chromium-windows\\build\\src', '-mx=3', '-mtc=on']);
+            const rc = await exec.exec('7z', ['a', '-tzip', 'C:\\ungoogled-chromium-windows\\artifacts.zip',
+                'C:\\ungoogled-chromium-windows\\build\\src', '-mx=3', '-mtc=on'],
+                {ignoreReturnCode: true});
+            const zipFile = 'C:\\ungoogled-chromium-windows\\artifacts.zip';
+            const zipOk = fs.existsSync(zipFile) && fs.statSync(zipFile).size > 0;
+            if (rc <= 1 && zipOk) {
+                if (rc === 1) {
+                    appendSummary('- **checkpoint**: 7z pack reported warnings (exit 1); archive written and used');
+                }
                 packed = true;
-            } catch (err) {
-                packError = err;
-                console.error(`7z pack failed (attempt ${attempt}/3): ${err}`);
-                await io.rmRF('C:\\ungoogled-chromium-windows\\artifacts.zip');
+            } else {
+                packError = new Error(`7z pack exited ${rc}${zipOk ? '' : ' with no usable archive'}`);
+                console.error(`7z pack failed (attempt ${attempt}/3): ${packError.message}`);
+                await io.rmRF(zipFile);
                 await new Promise(r => setTimeout(r, 10000));
             }
         }

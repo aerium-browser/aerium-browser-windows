@@ -108,7 +108,7 @@
 +   <span class="card-badge">Recommended</span>
 +   <h3>uBlock Origin</h3>
 +   <p>Efficient, open-source content blocking.</p>
-+   <a class="card-cta" href="https://chromewebstore.google.com/detail/ublock-origin/cjpalhdlnbpafiamejdnhcphjbkeiagm">Install uBlock Origin</a>
++   <a class="card-cta" href="https://github.com/gorhill/uBlock/releases/latest">Install uBlock Origin</a>
 +  </div>
 +  <div class="card">
 +   <h3>uBlock Origin Lite</h3>

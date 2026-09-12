@@ -48,7 +48,7 @@ patches already touched.
 
 --- a/chrome/browser/resources/settings/about_page/about_page.html.ts
 +++ b/chrome/browser/resources/settings/about_page/about_page.html.ts
-@@ -106,6 +106,9 @@
+@@ -104,6 +104,9 @@
    <cr-link-row class="hr" id="supportAerium"
        @click="${this.onSupportAeriumClick_}"
        label="$i18n{aboutSupportAerium}" external></cr-link-row>

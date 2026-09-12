@@ -1,0 +1,41 @@
+# Freeze the SharedWorkers of an already-frozen tab.
+#
+# aerium-runtime-efficiency.patch enables kInfiniteTabsFreezing, which freezes
+# tabs beyond the five most recently used. A SharedWorker a frozen tab created
+# is a separate object with its own lifetime, not part of the tab's own
+# renderer frame tree, and FreezingPolicy's freeze does not reach it on its
+# own - so a page that opened a SharedWorker for, say, cross-tab
+# synchronisation keeps that worker running full speed after the tab that
+# created it stops. Some of what tab-freezing is meant to save leaks straight
+# through.
+#
+# kFreezeSharedWorker closes that gap: a SharedWorker with no non-frozen
+# client left freezes along with them. Left off by default here rather than
+# folded into the already-enabled family in aerium-runtime-efficiency.patch,
+# because a SharedWorker is explicitly the tool a page reaches for to
+# coordinate BETWEEN tabs - a chat app keeping a shared connection alive, a
+# tab syncing state to others in the same site. Freezing it the moment every
+# tab that touches it happens to be backgrounded is a real behaviour change
+# for that pattern specifically, not the internal-scheduling-only bet the rest
+# of that file makes. Reachable at
+# chrome://flags/#aerium-freeze-shared-workers for anyone who wants the extra
+# saving and does not rely on a background SharedWorker staying live.
+#
+# DISABLED_BY_DEFAULT with no platform guard in Chromium, so wiring the flag
+# is the whole change - no separate default flip needed.
+--- a/chrome/browser/aerium_flag_entries.h
++++ b/chrome/browser/aerium_flag_entries.h
+@@ -34,4 +34,13 @@
+      "Chrome does not offer it on Android. Turn it on if you use a design tool "
+      "in the browser that needs your fonts. Aerium flag.",
+      kOsAll, FEATURE_VALUE_TYPE(blink::features::kFontAccess)},
++    {"aerium-freeze-shared-workers",
++     "Freeze SharedWorkers of frozen tabs",
++     "Extend Aerium tab freezing to a SharedWorker once every tab that uses "
++     "it is frozen. Closes a real gap - a SharedWorker is a separate object "
++     "from the tab that created it, so it keeps running at full speed after "
++     "the tab freezes unless told otherwise - but a SharedWorker is also how "
++     "a page keeps state live between tabs on purpose, so this is off until "
++     "asked for rather than folded into tab freezing itself.",
++     kOsAll, FEATURE_VALUE_TYPE(blink::features::kFreezeSharedWorker)},
+ #endif  // CHROME_BROWSER_AERIUM_FLAG_ENTRIES_H_

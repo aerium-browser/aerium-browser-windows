@@ -31,6 +31,14 @@
 # Not seeded: aerium-time-zone. It is the one mitigation whose breakage is
 # silent - a wrong meeting time looks like a wrong meeting time, not like a
 # browser setting - so it stays opt-in on every platform.
+#
+# Also not seeded, for the same reason as each other rather than as
+# aerium-time-zone: aerium-freeze-shared-workers and
+# aerium-throttle-fullscreen-video (see aerium-freeze-shared-worker.patch and
+# theme.sh) both trade a real behaviour change - a background SharedWorker
+# going quiet, a fullscreen video's own JS timers slowing down - for CPU and
+# battery, on pages that specifically rely on the behaviour being traded away.
+# Worth reaching for, not worth defaulting to.
 --- a/components/webui/flags/pref_service_flags_storage.cc
 +++ b/components/webui/flags/pref_service_flags_storage.cc
 @@ -87,7 +87,49 @@

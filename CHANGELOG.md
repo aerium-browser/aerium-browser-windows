@@ -68,6 +68,20 @@ behind any of this.
 - Background housekeeping is held back while a page you are looking at is
   loading or while you are typing, and released when neither is true.
 - On Windows, tabs are also frozen when free memory drops below 15%.
+- Those iframes' own scripts are throttled too, not just their drawing: a
+  background timer in one of them now wakes up every 32 milliseconds instead
+  of running full speed while nobody is looking at it.
+- A frozen tab's memory is now reclaimed as well as its CPU - the V8 heap and
+  caches a frozen tab was still holding onto get freed, not just left idle.
+- The GPU process and a backgrounded tab's own thread pool are both
+  deprioritised while backgrounded, so they are what the system reclaims
+  first under memory pressure rather than a tab you're using.
+- Memory Saver's own render-side tuning is on, and Battery Saver now turns
+  on as soon as you're running on battery rather than waiting for charge to
+  drop below a threshold.
+- New, off by default: a SharedWorker belonging to a frozen tab can now
+  freeze with it (`chrome://flags/#aerium-freeze-shared-workers`) - useful if
+  you don't rely on a background SharedWorker staying live across tabs.
 - These were all written by Chromium and shipped switched off, waiting to be
   turned on from Google's servers. A browser that never talks to those servers
   never gets the message, so it is sent here instead.

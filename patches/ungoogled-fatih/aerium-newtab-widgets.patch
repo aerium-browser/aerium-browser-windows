@@ -101,6 +101,26 @@ extra work; the gap this fix closes is specific to a page that otherwise
 uses real buttons and anchors throughout, which android has no equivalent
 of.
 
+Two more found reviewing this same fix rather than trusting it on sight.
+
+aria-label on #wQuoteGroup replaces its accessible name outright rather than
+adding to it - that is what aria-label does. Without anything else, a screen
+reader would announce "Show another quote, button" and never the quote or
+its author, on a widget whose entire purpose is to show that text. Fixed
+with aria-describedby="wQuote wAuthor" alongside it: the name stays the
+short action ARIA guidelines ask for on a control, and the description -
+read right after - carries the two lines a sighted user already sees.
+
+renderQuote() hid the button on cfg.quote alone, not on quoteIndex still
+being null. applyCfg() runs once immediately at page load, before
+window.aeriumNewTabSettings has ever fired - quoteIndex is null then, cfg.quote
+defaults true - so the button was visible with two empty divs inside it until
+real settings arrived and the second, correct render replaced it. Fixed by
+folding quoteIndex === null into the same hidden check already guarding the
+render below it, so the button stays hidden for that gap instead of showing
+empty.
+
+
 --- a/chrome/browser/ui/webui/aerium_newtab.h
 +++ b/chrome/browser/ui/webui/aerium_newtab.h
 @@ -105,6 +105,20 @@
@@ -132,7 +152,7 @@ of.
 +  <div class="clock" id="wClock"></div>
 +  <div class="date" id="wDate"></div>
 +  <div class="greeting" id="wGreeting"></div>
-+  <button type="button" id="wQuoteGroup" aria-label="Show another quote">
++  <button type="button" id="wQuoteGroup" aria-label="Show another quote" aria-describedby="wQuote wAuthor">
 +    <div class="quote" id="wQuote"></div>
 +    <div class="author" id="wAuthor"></div>
 +  </button>
@@ -165,7 +185,7 @@ of.
   let photo = '';
   const grid = document.getElementById('grid');
   const dlg = document.getElementById('dlg');
-@@ -224,6 +256,123 @@
+@@ -224,6 +256,125 @@
  
   function hasPhoto(){ return photo.startsWith('data:image/'); }
  
@@ -233,10 +253,12 @@ of.
 + }
 +
 + function renderQuote(){
-+   // Hides the button as a whole, not each line inside it - the two lines
-+   // are its accessible name and its click target, and a hidden button
-+   // still visible in the DOM isn't hidden.
-+   document.getElementById('wQuoteGroup').hidden = !cfg.quote;
++   // Hides the button as a whole, not each line inside it. Also hidden while
++   // quoteIndex is still null - the gap between the page's first applyCfg()
++   // call and settings actually arriving - so nothing shows an empty button
++   // with no quote in it yet.
++   const g = document.getElementById('wQuoteGroup');
++   g.hidden = !cfg.quote || quoteIndex === null;
 +   if (!cfg.quote || quoteIndex === null) return;
 +   const q = QUOTES[quoteIndex];
 +   document.getElementById('wQuote').textContent = '“' + q[0] + '”';
@@ -289,7 +311,7 @@ of.
   function applyCfg(){
     // "Your photo" with no photo yet behaves as the plain background rather
     // than as a blank screen, so choosing the chip before choosing a file does
-@@ -245,6 +394,7 @@
+@@ -245,6 +396,7 @@
     const n = (cfg.cols === 3 || cfg.cols === 5) ? cfg.cols : 4;
     grid.style.gridTemplateColumns = 'repeat(' + n + ',minmax(0,1fr))';
     document.getElementById('row').style.display = cfg.row ? 'flex' : 'none';
@@ -297,7 +319,7 @@ of.
   }
  
   function saveCfg(){ chrome.send('aeriumNewTabSetSettings', [JSON.stringify(cfg)]); }
-@@ -333,6 +483,19 @@
+@@ -333,6 +485,19 @@
       const v = JSON.parse(raw || '{}');
       if (v && typeof v === 'object') cfg = Object.assign(cfg, v);
     } catch (e) { /* defaults stand */ }
@@ -317,7 +339,7 @@ of.
     applyCfg(); syncPanel();
   };
  
-@@ -353,6 +516,9 @@
+@@ -353,6 +518,9 @@
     document.querySelectorAll('#colChips .chip').forEach(c =>
         c.setAttribute('aria-pressed', String(Number(c.dataset.cols) === cfg.cols)));
     document.getElementById('rowChip').setAttribute('aria-pressed', String(!!cfg.row));
@@ -327,7 +349,7 @@ of.
  
     const row = document.getElementById('photoRow');
     const sws = document.getElementById('swatches');
-@@ -389,6 +555,35 @@
+@@ -389,6 +557,35 @@
   document.getElementById('rowChip').addEventListener('click', () => {
     cfg.row = !cfg.row; saveCfg(); applyCfg(); syncPanel();
   });
@@ -363,7 +385,7 @@ of.
  
   document.getElementById('pickPhoto').addEventListener('click', () =>
       document.getElementById('photoFile').click());
-@@ -440,6 +635,14 @@
+@@ -440,6 +637,14 @@
   chrome.send('aeriumNewTabGetSettings');
   chrome.send('aeriumNewTabGetImage');
   chrome.send('aeriumNewTabGetTiles');

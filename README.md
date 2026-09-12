@@ -9,6 +9,7 @@
 [![release](https://img.shields.io/github/v/release/aerium-browser/aerium-browser-windows)](https://github.com/aerium-browser/aerium-browser-windows/releases/latest)
 [![released](https://img.shields.io/github/release-date/aerium-browser/aerium-browser-windows?label=released)](https://github.com/aerium-browser/aerium-browser-windows/releases/latest)
 [![downloads](https://img.shields.io/github/downloads/aerium-browser/aerium-browser-windows/total?label=downloads)](https://github.com/aerium-browser/aerium-browser-windows/releases)
+[![license](https://img.shields.io/badge/License-GPLv2-blue.svg)](LICENSE)
 [![Donate XMR](https://img.shields.io/badge/XMR-Donate-FF6600?logo=monero&logoColor=white)](https://aerium-browser.github.io/donate/xmr)
 [![Donate LTC](https://img.shields.io/badge/LTC-Donate-345D9D?logo=litecoin&logoColor=white)](https://aerium-browser.github.io/donate/ltc)
 
@@ -62,4 +63,4 @@ Issues and pull requests are welcome. See [UPDATING.md](UPDATING.md) for how the
 
 ## About
 
-Aerium is built on [Chromium](https://www.chromium.org/) via [ungoogled-chromium](https://github.com/ungoogled-software/ungoogled-chromium), with its own branding and defaults layered on top. The bundled store integration comes from [chromium-web-store](https://github.com/NeverDecaf/chromium-web-store). Licensed under Chromium's BSD-style license; see [LICENSE](LICENSE).
+Aerium is built on [Chromium](https://www.chromium.org/) via [ungoogled-chromium](https://github.com/ungoogled-software/ungoogled-chromium), with its own branding and defaults layered on top. The bundled store integration comes from [chromium-web-store](https://github.com/NeverDecaf/chromium-web-store). Licensed under [GPLv2](LICENSE).

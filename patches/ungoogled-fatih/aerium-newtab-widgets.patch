@@ -31,9 +31,18 @@ through node --check, every new getElementById target cross-checked against
 the ids added to the markup in this same patch, and the raw string rescanned
 for a premature terminator.
 
+#widgets hides as a whole when every row inside it is off, not only its
+children individually - an oversight in the first version of this patch,
+caught before either desktop repo had shipped a release with it. Without
+that, turning off the clock, the greeting and the quote all at once left the
+container's own margin behind: an empty 40px gap sitting above the shortcuts
+for nothing. The dead `#widgets:empty` rule this was meant to lean on is
+removed with it - `:empty` never matches here, since the five child divs stay
+in the DOM and are only ever individually hidden.
+
 --- a/chrome/browser/ui/webui/aerium_newtab.h
 +++ b/chrome/browser/ui/webui/aerium_newtab.h
-@@ -105,6 +105,15 @@
+@@ -105,6 +105,14 @@
                              border-color:var(--accent)}
   .swatches{display:flex;gap:8px;margin-top:10px}
   .sw{flex:1;height:44px;border-radius:10px;border:1px solid var(--outline)}
@@ -44,12 +53,11 @@ for a premature terminator.
 + #widgets .quote{font-size:13px;color:var(--label);margin-top:14px;max-width:420px;
 +                 margin-left:auto;margin-right:auto}
 + #widgets .author{font-size:11px;color:var(--label-dim);margin-top:2px}
-+ #widgets:empty{margin:0}
 + #greetName{margin-top:10px}
   body{margin:0;min-height:100vh;display:flex;flex-direction:column;
        align-items:center;justify-content:center;padding:48px 24px}
   main{width:100%;max-width:640px}
-@@ -146,6 +155,13 @@
+@@ -146,6 +154,13 @@
  <div id="photo" hidden></div>
  <div id="scrim" hidden></div>
  <button id="gear" title="Customise">&#9881;</button>
@@ -63,7 +71,7 @@ for a premature terminator.
  <main>
    <div id="grid"></div>
    <div id="row">
-@@ -181,6 +197,15 @@
+@@ -181,6 +196,15 @@
        <button class="chip" id="rowChip">Bookmarks, history and downloads</button>
      </div>
    </div>
@@ -79,7 +87,7 @@ for a premature terminator.
    <div class="buttons">
      <button id="cfgClear">Clear shortcuts</button>
      <button id="cfgDone" class="primary">Done</button>
-@@ -199,7 +224,7 @@
+@@ -199,7 +223,7 @@
   let tiles = [];
   let dragFrom = null;
   let editIndex = -1;
@@ -88,7 +96,7 @@ for a premature terminator.
   let photo = '';
   const grid = document.getElementById('grid');
   const dlg = document.getElementById('dlg');
-@@ -224,6 +249,77 @@
+@@ -224,6 +248,81 @@
  
   function hasPhoto(){ return photo.startsWith('data:image/'); }
  
@@ -140,6 +148,10 @@ for a premature terminator.
 +
 + function renderWidgets(){
 +   const now = new Date();
++   // The container itself, not just its children - each row below hides on
++   // its own toggle, but with all three off the container would otherwise
++   // keep its own margin and leave an empty gap above the shortcuts.
++   document.getElementById('widgets').hidden = !cfg.clock && !cfg.greeting && !cfg.quote;
 +   const wc = document.getElementById('wClock');
 +   const wd = document.getElementById('wDate');
 +   wc.hidden = wd.hidden = !cfg.clock;
@@ -166,7 +178,7 @@ for a premature terminator.
   function applyCfg(){
     // "Your photo" with no photo yet behaves as the plain background rather
     // than as a blank screen, so choosing the chip before choosing a file does
-@@ -245,6 +341,7 @@
+@@ -245,6 +344,7 @@
     const n = (cfg.cols === 3 || cfg.cols === 5) ? cfg.cols : 4;
     grid.style.gridTemplateColumns = 'repeat(' + n + ',minmax(0,1fr))';
     document.getElementById('row').style.display = cfg.row ? 'flex' : 'none';
@@ -174,7 +186,7 @@ for a premature terminator.
   }
  
   function saveCfg(){ chrome.send('aeriumNewTabSetSettings', [JSON.stringify(cfg)]); }
-@@ -353,6 +450,9 @@
+@@ -353,6 +453,9 @@
     document.querySelectorAll('#colChips .chip').forEach(c =>
         c.setAttribute('aria-pressed', String(Number(c.dataset.cols) === cfg.cols)));
     document.getElementById('rowChip').setAttribute('aria-pressed', String(!!cfg.row));
@@ -184,7 +196,7 @@ for a premature terminator.
  
     const row = document.getElementById('photoRow');
     const sws = document.getElementById('swatches');
-@@ -389,6 +489,17 @@
+@@ -389,6 +492,17 @@
   document.getElementById('rowChip').addEventListener('click', () => {
     cfg.row = !cfg.row; saveCfg(); applyCfg(); syncPanel();
   });
@@ -202,7 +214,7 @@ for a premature terminator.
  
   document.getElementById('pickPhoto').addEventListener('click', () =>
       document.getElementById('photoFile').click());
-@@ -440,6 +551,10 @@
+@@ -440,6 +554,10 @@
   chrome.send('aeriumNewTabGetSettings');
   chrome.send('aeriumNewTabGetImage');
   chrome.send('aeriumNewTabGetTiles');

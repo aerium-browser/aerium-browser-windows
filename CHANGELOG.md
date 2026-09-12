@@ -6,6 +6,13 @@ behind any of this.
 
 ## 152.0.7977.82-1 (next release)
 
+**Added**
+
+- **Share Aerium**, next to Support Aerium on the About page
+  (`chrome://settings/help`). Copies a one-line pitch and the download link
+  to the clipboard - there's no share-target API on the desktop web platform
+  the way there is on Android, so paste it wherever you'd send it.
+
 **Fingerprinting**
 
 - `window.queryLocalFonts()` is off. The Local Font Access API returns every

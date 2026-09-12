@@ -1,0 +1,123 @@
+Add a "Share Aerium" row to the About page, next to Support Aerium.
+
+No share-target API exists on the desktop web platform the way Android's
+Intent.ACTION_SEND does - see the Android build's own equivalent feature -
+so this copies a one-line pitch plus the download link to the clipboard
+instead, for pasting wherever the person wants to send it.
+
+Confirmation is a label swap on the row itself rather than a toast:
+chrome://settings mounts no <cr-toast-manager>, unlike chrome://downloads or
+chrome://extensions, so calling getToastManager() here would assert instead
+of showing anything. The row's own label becoming "Copied to clipboard" for
+two seconds needs no extra element and nothing new to mount.
+
+Verified by applying aerium-update-checker.patch and
+aerium-about-page-support-link.patch for real against the real files at this
+tag, then diffing this change against that result rather than against
+pristine - same method aerium-about-page-support-link.patch itself used, and
+for the same reason: three of these four hunks land inside text those two
+patches already touched.
+
+--- a/chrome/app/settings_chromium_strings.grdp
++++ b/chrome/app/settings_chromium_strings.grdp
+@@ -29,6 +29,12 @@
+   <message name="IDS_SETTINGS_ABOUT_PAGE_SUPPORT_AERIUM" desc="Text of the button on the About page which takes the user to Aerium's donation page.">
+     Support Aerium
+   </message>
++  <message name="IDS_SETTINGS_ABOUT_PAGE_SHARE_AERIUM" desc="Text of the button on the About page which copies a short pitch and the download link to the clipboard, for pasting somewhere to tell someone else about the browser.">
++    Share Aerium
++  </message>
++  <message name="IDS_SETTINGS_ABOUT_PAGE_SHARE_AERIUM_COPIED" desc="Replaces the Share Aerium button's own text for a couple of seconds right after it is clicked, confirming the copy happened.">
++    Copied to clipboard
++  </message>
+   <if expr="not is_chromeos">
+     <message name="IDS_SETTINGS_UPGRADE_UPDATING" desc="Status label: Updating Chromium">
+       Updating Chromium
+
+--- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
++++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+@@ -322,6 +322,8 @@
+       {"aeriumUpdateAvailableLabel",
+        IDS_SETTINGS_AERIUM_UPDATE_AVAILABLE_LABEL},
+       {"aboutSupportAerium", IDS_SETTINGS_ABOUT_PAGE_SUPPORT_AERIUM},
++      {"aboutShareAerium", IDS_SETTINGS_ABOUT_PAGE_SHARE_AERIUM},
++      {"aboutShareAeriumCopied", IDS_SETTINGS_ABOUT_PAGE_SHARE_AERIUM_COPIED},
+       {"aboutPageTitle", IDS_SETTINGS_ABOUT_PROGRAM},
+       {"aboutProductTitle", IDS_PRODUCT_NAME},
+       {"aboutLearnMoreUpdatingErrors",
+
+--- a/chrome/browser/resources/settings/about_page/about_page.html.ts
++++ b/chrome/browser/resources/settings/about_page/about_page.html.ts
+@@ -106,6 +106,9 @@
+   <cr-link-row class="hr" id="supportAerium"
+       @click="${this.onSupportAeriumClick_}"
+       label="$i18n{aboutSupportAerium}" external></cr-link-row>
++  <cr-link-row class="hr" id="shareAerium"
++      @click="${this.onShareAeriumClick_}"
++      label="${this.shareRowLabel_}"></cr-link-row>
+ <if expr="_google_chrome">
+   <cr-link-row class="hr" id="reportIssue" @click="${this.onReportIssueClick_}"
+       ?hidden="${!this.feedbackAllowedPref_?.value}"
+
+--- a/chrome/browser/resources/settings/about_page/about_page.ts
++++ b/chrome/browser/resources/settings/about_page/about_page.ts
+@@ -50,6 +50,14 @@
+ export const ABOUT_PAGE_SUPPORT_URL: string =
+     'https://aerium-browser.github.io/#support';
+ 
++// Aerium: text copied to the clipboard by the Share Aerium row. Plain text
++// rather than a share-target API - no such thing exists on the desktop web
++// platform the way it does on Android, and clipboard-then-paste-anywhere is
++// the closest desktop equivalent.
++export const ABOUT_PAGE_SHARE_TEXT: string =
++    'Aerium is a de-googled Chromium browser with no telemetry or bundled ' +
++    'Google services. https://aerium-browser.github.io/';
++
+ export interface SettingsAboutPageElement {
+   $: {
+     productLogo: HTMLImageElement,
+@@ -101,6 +109,10 @@
+       // chrome/browser/aerium/aerium_update_checker.h.
+       aeriumLatestVersionPref_: {type: Object},
+       aeriumLatestUrlPref_: {type: Object},
++
++      // Aerium: swaps to a confirmation message for a couple of seconds
++      // after the Share Aerium row is clicked, then back.
++      shareRowLabel_: {type: String},
+     };
+   }
+ 
+@@ -141,6 +153,9 @@
+   protected accessor aeriumLatestUrlPref_:
+       chrome.settingsPrivate.PrefObject<string>|undefined;
+ 
++  protected accessor shareRowLabel_: string =
++      loadTimeData.getString('aboutShareAerium');
++
+   private aboutBrowserProxy_: AboutPageBrowserProxy =
+       AboutPageBrowserProxyImpl.getInstance();
+ 
+@@ -261,6 +276,22 @@
+     OpenWindowProxyImpl.getInstance().openUrl(ABOUT_PAGE_SUPPORT_URL);
+   }
+ 
++  // Aerium: no share-target API exists on the desktop web platform, so this
++  // copies to the clipboard instead of opening a share sheet the way the
++  // Android build's equivalent row does. The label swap is the only
++  // confirmation available without a toast host mounted in this page - see
++  // theme.sh's Android equivalent for why a real toast wasn't used here
++  // either: chrome://settings mounts no <cr-toast-manager>, unlike
++  // chrome://downloads or chrome://extensions, so getToastManager() would
++  // assert rather than show anything.
++  protected async onShareAeriumClick_() {
++    await navigator.clipboard.writeText(ABOUT_PAGE_SHARE_TEXT);
++    this.shareRowLabel_ = loadTimeData.getString('aboutShareAeriumCopied');
++    setTimeout(() => {
++      this.shareRowLabel_ = loadTimeData.getString('aboutShareAerium');
++    }, 2000);
++  }
++
+   protected onRelaunchClick_() {
+     this.performRestart(RestartType.RELAUNCH);
+   }
+

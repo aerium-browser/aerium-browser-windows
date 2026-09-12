@@ -9,6 +9,27 @@
 [![release](https://img.shields.io/github/v/release/aerium-browser/aerium-browser-windows)](https://github.com/aerium-browser/aerium-browser-windows/releases/latest)
 [![released](https://img.shields.io/github/release-date/aerium-browser/aerium-browser-windows?label=released)](https://github.com/aerium-browser/aerium-browser-windows/releases/latest)
 [![downloads](https://img.shields.io/github/downloads/aerium-browser/aerium-browser-windows/total?label=downloads)](https://github.com/aerium-browser/aerium-browser-windows/releases)
+[![Donate XMR](https://img.shields.io/badge/XMR-Donate-FF6600?logo=monero&logoColor=white)](#support-aerium)
+[![Donate LTC](https://img.shields.io/badge/LTC-Donate-345D9D?logo=litecoin&logoColor=white)](#support-aerium)
+
+### Support Aerium
+
+Aerium runs on donations and spare time: no ads, no data sales. Scan or copy an address to help keep it going.
+
+<table>
+<tr>
+<td align="center">
+<img src="donate/xmr-qr.png" width="140" height="140" alt="Monero donation QR code"><br>
+<b>Monero (XMR)</b><br>
+<code>49TPHGjCk52cr6f8LWwDrwAvCWmXWfVPy5DUt7KTEnLBfsm6xa9bUgaAVV5xYU6LH5WcoRNYZZSBuAjHFuVHFUDpRm6tKFA</code>
+</td>
+<td align="center">
+<img src="donate/ltc-qr.png" width="140" height="140" alt="Litecoin donation QR code"><br>
+<b>Litecoin (LTC)</b><br>
+<code>ltc1q8cpevsanzlmuc0ja8d0eltj72qk55nu7dty59v</code>
+</td>
+</tr>
+</table>
 
 Aerium is a browser for people who'd rather their browser stayed out of the way. No telemetry calling home, no bundled Google services, no ad platform baked into the settings page. Extensions install straight from the Chrome Web Store, no sideloading, no workarounds.
 
@@ -37,13 +58,6 @@ Want your own build? Fork the repo and run the `build-x64` workflow from the Act
 ## Contributing
 
 Issues and pull requests are welcome. See [UPDATING.md](UPDATING.md) for how the build stays in sync with upstream Chromium releases.
-
-## Support Aerium
-
-Aerium doesn't run ads or sell data, so development runs on donations and spare time. If you'd like to chip in:
-
-- **Monero (XMR):** `49TPHGjCk52cr6f8LWwDrwAvCWmXWfVPy5DUt7KTEnLBfsm6xa9bUgaAVV5xYU6LH5WcoRNYZZSBuAjHFuVHFUDpRm6tKFA`
-- **Litecoin (LTC):** `ltc1q8cpevsanzlmuc0ja8d0eltj72qk55nu7dty59v`
 
 ## About
 

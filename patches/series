@@ -74,3 +74,4 @@ ungoogled-fatih/aerium-local-font-access.patch
 ungoogled-fatih/aerium-webui-style.patch
 ungoogled-fatih/aerium-settings-style.patch
 ungoogled-fatih/aerium-doh-hardening.patch
+ungoogled-fatih/aerium-remove-glic-menu-item.patch

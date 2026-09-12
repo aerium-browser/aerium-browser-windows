@@ -201,7 +201,7 @@ terminator - the first )" in the page is the intended one.
    certificate_transparency::prefs::RegisterPrefs(registry);
 --- /dev/null
 +++ b/chrome/browser/ui/webui/aerium_newtab.h
-@@ -0,0 +1,565 @@
+@@ -0,0 +1,566 @@
 +#ifndef CHROME_BROWSER_UI_WEBUI_AERIUM_NEWTAB_H_
 +#define CHROME_BROWSER_UI_WEBUI_AERIUM_NEWTAB_H_
 +
@@ -285,6 +285,7 @@ terminator - the first )" in the page is the intended one.
 + }
 + html{background:var(--bg);color:var(--text);
 +      font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
++ ::-webkit-scrollbar{display:none}
 + #photo{position:fixed;inset:0;z-index:-2;background-size:cover;
 +        background-position:center}
 + #scrim{position:fixed;inset:0;z-index:-1;

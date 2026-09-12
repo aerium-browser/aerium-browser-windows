@@ -53,20 +53,33 @@ and saved immediately so it survives a reload.
 
 Tap to reshuffle. #wQuote and #wAuthor are clickable; either one advances to
 the next entry in QUOTES and re-renders just those two lines, with a quick
-opacity dip so the change reads as a response to the click. Deliberately not
-persisted - the next full render, from a reload or a settings change, goes
-back to today's pick. That mattered enough to restructure renderWidgets():
-it used to be the one function both the initial render and the 30-second
-interval called, and a reshuffle surviving less than 30 seconds would not
-have been much of a reshuffle. Split into updateClockAndGreeting() (what the
-interval calls now) and renderQuote() (what a reshuffle calls), with
-renderWidgets() left as the entry point that does both plus the container's
-hidden state, for the initial render and for applyCfg() after a settings
-change.
+opacity dip so the change reads as a response to the click. Only a reload
+forgets it - quoteIndex starts null, and window.aeriumNewTabSettings is the
+only place that ever sets it from the day/offset formula, once, when real
+settings first arrive.
+
+That was not the first shape this took. The first version had renderWidgets()
+recompute quoteIndex from the formula on every call, which sounds like "once
+per visit" but is not: applyCfg() (and so renderWidgets()) runs on every
+settings-panel click, including background, layout and photo changes that
+have nothing to do with the quote. A reshuffle would survive the 30-second
+interval and then get undone by clicking "3 per row". Fixed by moving the
+formula out of renderWidgets() entirely and into the settings handler, and
+splitting renderWidgets() into updateClockAndGreeting() (what the interval
+calls) and renderQuote() (what a reshuffle calls and what renderWidgets()
+now only re-renders from, never recomputes).
+
+Caught before either desktop repo had shipped a release with the reshuffle at
+all, the same way the two bugs above it were: rebuilding the tree this patch
+produces and working the settings panel by hand rather than trusting the
+first draft.
 
 Re-verified the same way as the rest of this patch: node --check on the
 re-extracted script, every id cross-checked, the raw string rescanned for a
-premature terminator.
+premature terminator - which caught a second, unrelated mistake this time: a
+code comment reading `dailyQuoteIndex()"` contains the same )" sequence the
+placeholder fix earlier in this file was about, and would have closed the
+raw string early. Reworded rather than repeated.
 
 --- a/chrome/browser/ui/webui/aerium_newtab.h
 +++ b/chrome/browser/ui/webui/aerium_newtab.h
@@ -124,7 +137,7 @@ premature terminator.
   let photo = '';
   const grid = document.getElementById('grid');
   const dlg = document.getElementById('dlg');
-@@ -224,6 +248,116 @@
+@@ -224,6 +248,122 @@
  
   function hasPhoto(){ return photo.startsWith('data:image/'); }
  
@@ -174,14 +187,16 @@ premature terminator.
 +   return hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 + }
 +
-+ // Which entry in QUOTES today's pick is offset by, so the whole install base
-+ // is not opening on the same quote on the same day - see cfg.quoteOffset
-+ // below, where it is generated once and saved. Also the entry a manual
-+ // reshuffle has moved to, which is why this is reassigned outside
-+ // dailyQuoteIndex() rather than being a return value read fresh each time:
-+ // a tap has to survive the next render without the day's pick overwriting
-+ // it, the same reason Android's mQuoteIndex is a field and not a local.
-+ let quoteIndex = 0;
++ // Which entry in QUOTES is showing. Null until window.aeriumNewTabSettings
++ // sets it from the real, loaded cfg.quoteOffset - not here at declaration
++ // and not inside renderWidgets(), because applyCfg() (and so renderWidgets)
++ // runs on every settings-panel click, not only once per visit the way
++ // Android's rebuild() does. Resetting it there would mean a reshuffle
++ // surviving the 30-second tick only to be undone by clicking an unrelated
++ // chip like column count. Left null, renderQuote() below leaves the
++ // question open rather than guessing, and reshuffleQuote() falls back to
++ // today's pick the one time it is asked to advance from nothing.
++ let quoteIndex = null;
 +
 + function dailyQuoteIndex(){
 +   const now = new Date();
@@ -193,7 +208,7 @@ premature terminator.
 +   const wq = document.getElementById('wQuote');
 +   const wa = document.getElementById('wAuthor');
 +   wq.hidden = wa.hidden = !cfg.quote;
-+   if (!cfg.quote) return;
++   if (!cfg.quote || quoteIndex === null) return;
 +   const q = QUOTES[quoteIndex];
 +   wq.textContent = '“' + q[0] + '”';
 +   wa.textContent = '— ' + q[1];
@@ -201,11 +216,12 @@ premature terminator.
 +
 + // A tap on either line moves to the next quote without waiting for the next
 + // calendar day - the two lines are one unit, not a headline and a caption
-+ // with different jobs, so either reshuffles. Not persisted: the next full
-+ // render (a reload, or a settings change) goes back to today's pick, the
-+ // same as Android's tap-to-reshuffle.
++ // with different jobs, so either reshuffles. Not persisted: a reload goes
++ // back to today's pick, the same as Android's tap-to-reshuffle - but an
++ // unrelated settings change no longer does, now that renderWidgets() leaves
++ // quoteIndex alone.
 + function reshuffleQuote(){
-+   quoteIndex = (quoteIndex + 1) % QUOTES.length;
++   quoteIndex = ((quoteIndex === null ? dailyQuoteIndex() : quoteIndex) + 1) % QUOTES.length;
 +   renderQuote();
 + }
 +
@@ -234,14 +250,17 @@ premature terminator.
 +   // keep its own margin and leave an empty gap above the shortcuts.
 +   document.getElementById('widgets').hidden = !cfg.clock && !cfg.greeting && !cfg.quote;
 +   updateClockAndGreeting();
-+   quoteIndex = dailyQuoteIndex();
++   // quoteIndex is deliberately not reset to the day's pick here - see the
++   // comment on its declaration. This runs on every settings-panel click,
++   // and resetting it here would undo a reshuffle the moment an unrelated
++   // chip was clicked.
 +   renderQuote();
 + }
 +
   function applyCfg(){
     // "Your photo" with no photo yet behaves as the plain background rather
     // than as a blank screen, so choosing the chip before choosing a file does
-@@ -245,6 +379,7 @@
+@@ -245,6 +385,7 @@
     const n = (cfg.cols === 3 || cfg.cols === 5) ? cfg.cols : 4;
     grid.style.gridTemplateColumns = 'repeat(' + n + ',minmax(0,1fr))';
     document.getElementById('row').style.display = cfg.row ? 'flex' : 'none';
@@ -249,7 +268,7 @@ premature terminator.
   }
  
   function saveCfg(){ chrome.send('aeriumNewTabSetSettings', [JSON.stringify(cfg)]); }
-@@ -333,6 +468,15 @@
+@@ -333,6 +474,19 @@
       const v = JSON.parse(raw || '{}');
       if (v && typeof v === 'object') cfg = Object.assign(cfg, v);
     } catch (e) { /* defaults stand */ }
@@ -262,10 +281,14 @@ premature terminator.
 +     cfg.quoteOffset = Math.floor(Math.random() * QUOTES.length);
 +     saveCfg();
 +   }
++   // The one point quoteIndex is set from the day/offset formula - real
++   // settings, including the real quoteOffset, are in by now. Every later
++   // call to applyCfg()/renderWidgets() leaves it alone.
++   quoteIndex = dailyQuoteIndex();
     applyCfg(); syncPanel();
   };
  
-@@ -353,6 +497,9 @@
+@@ -353,6 +507,9 @@
     document.querySelectorAll('#colChips .chip').forEach(c =>
         c.setAttribute('aria-pressed', String(Number(c.dataset.cols) === cfg.cols)));
     document.getElementById('rowChip').setAttribute('aria-pressed', String(!!cfg.row));
@@ -275,7 +298,7 @@ premature terminator.
  
     const row = document.getElementById('photoRow');
     const sws = document.getElementById('swatches');
-@@ -389,6 +536,34 @@
+@@ -389,6 +546,34 @@
   document.getElementById('rowChip').addEventListener('click', () => {
     cfg.row = !cfg.row; saveCfg(); applyCfg(); syncPanel();
   });
@@ -310,7 +333,7 @@ premature terminator.
  
   document.getElementById('pickPhoto').addEventListener('click', () =>
       document.getElementById('photoFile').click());
-@@ -440,6 +615,14 @@
+@@ -440,6 +625,14 @@
   chrome.send('aeriumNewTabGetSettings');
   chrome.send('aeriumNewTabGetImage');
   chrome.send('aeriumNewTabGetTiles');

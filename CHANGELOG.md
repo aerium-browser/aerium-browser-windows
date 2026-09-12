@@ -12,6 +12,10 @@ behind any of this.
   (`chrome://settings/help`). Copies a one-line pitch and the download link
   to the clipboard - there's no share-target API on the desktop web platform
   the way there is on Android, so paste it wherever you'd send it.
+- A clock, a greeting and a quote of the day on `chrome://aerium-newtab`,
+  each with its own switch in the page's own settings gear. Nothing here is
+  fetched: the clock reads your system time, and the quotes are a list built
+  into the page.
 
 **Fingerprinting**
 

@@ -1,0 +1,215 @@
+Add a clock, a greeting and a quote of the day to the new tab page.
+
+The three things a Tabliss-style new tab page offers that the speed dial and
+the background chooser next to them do not, held to the standard those two
+already set: nothing here is ever fetched. A live weather widget or a fetched
+background needs a request this page has no business making by default - the
+quote list below is compiled into the script instead, twenty-four lines of
+text long enough out of copyright to need no licence, and the clock and
+greeting read the browser's own clock. Same list as AeriumNtpWidgets.java on
+the Android build, for the same reason it gives: a few quotes commonly found
+to be misattributed (an "Aristotle" line on habit that is really Will
+Durant's summary of him, an "Emerson" line absent from his actual writing, a
+"Leonardo" line traced to a 1931 book about him) were left out rather than
+repeated.
+
+Rides in the same settings JSON blob as the background and layout choices -
+cfg.clock, cfg.greeting, cfg.quote, cfg.name - for the reason the patch that
+introduced that blob already gives: the page is the only reader and writer,
+so a pref per checkbox would be four more registrations to say the same
+thing an object key does. All three widgets default on; the name is empty by
+default, and the greeting reads "Good morning" and similar without one.
+
+Refreshed every 30 seconds while the page is open, the same interval and the
+same reasoning as AeriumNtpWidgets' Handler on Android: readable, not exact
+to the second, and cheap enough not to matter on a page people glance at and
+leave.
+
+Verified the same way aerium-newtab-page.patch's own settings addition was:
+built against the tree that patch produces, the script re-extracted and run
+through node --check, every new getElementById target cross-checked against
+the ids added to the markup in this same patch, and the raw string rescanned
+for a premature terminator.
+
+--- a/chrome/browser/ui/webui/aerium_newtab.h
++++ b/chrome/browser/ui/webui/aerium_newtab.h
+@@ -105,6 +105,15 @@
+                             border-color:var(--accent)}
+  .swatches{display:flex;gap:8px;margin-top:10px}
+  .sw{flex:1;height:44px;border-radius:10px;border:1px solid var(--outline)}
++ #widgets{text-align:center;margin:0 0 40px}
++ #widgets .clock{font-size:40px;color:var(--accent);line-height:1.1}
++ #widgets .date{font-size:13px;color:var(--label);margin-top:2px}
++ #widgets .greeting{font-size:16px;color:var(--label);margin-top:10px}
++ #widgets .quote{font-size:13px;color:var(--label);margin-top:14px;max-width:420px;
++                 margin-left:auto;margin-right:auto}
++ #widgets .author{font-size:11px;color:var(--label-dim);margin-top:2px}
++ #widgets:empty{margin:0}
++ #greetName{margin-top:10px}
+  body{margin:0;min-height:100vh;display:flex;flex-direction:column;
+       align-items:center;justify-content:center;padding:48px 24px}
+  main{width:100%;max-width:640px}
+@@ -146,6 +155,13 @@
+ <div id="photo" hidden></div>
+ <div id="scrim" hidden></div>
+ <button id="gear" title="Customise">&#9881;</button>
++<div id="widgets">
++  <div class="clock" id="wClock"></div>
++  <div class="date" id="wDate"></div>
++  <div class="greeting" id="wGreeting"></div>
++  <div class="quote" id="wQuote"></div>
++  <div class="author" id="wAuthor"></div>
++</div>
+ <main>
+   <div id="grid"></div>
+   <div id="row">
+@@ -181,6 +197,15 @@
+       <button class="chip" id="rowChip">Bookmarks, history and downloads</button>
+     </div>
+   </div>
++  <div class="group">
++    <h3>ON THIS PAGE</h3>
++    <div class="chips" id="widgetChips">
++      <button class="chip" data-widget="clock">Clock and date</button>
++      <button class="chip" data-widget="greeting">Greeting</button>
++      <button class="chip" data-widget="quote">Quote of the day</button>
++    </div>
++    <input id="greetName" placeholder="Your name, optional" autocomplete="off">
++  </div>
+   <div class="buttons">
+     <button id="cfgClear">Clear shortcuts</button>
+     <button id="cfgDone" class="primary">Done</button>
+@@ -199,7 +224,7 @@
+  let tiles = [];
+  let dragFrom = null;
+  let editIndex = -1;
+- let cfg = { bg: 'black', cols: 4, row: true };
++ let cfg = { bg: 'black', cols: 4, row: true, clock: true, greeting: true, quote: true, name: '' };
+  let photo = '';
+  const grid = document.getElementById('grid');
+  const dlg = document.getElementById('dlg');
+@@ -224,6 +249,77 @@
+ 
+  function hasPhoto(){ return photo.startsWith('data:image/'); }
+ 
++ // Public-domain lines, checked before being written rather than assumed - a
++ // few commonly found to be misattributed (an "Aristotle" line on habit that
++ // is really Will Durant's summary of him, an "Emerson" line absent from his
++ // actual writing, a "Leonardo" line traced to a 1931 book about him) were
++ // left out rather than repeated. Same list AeriumNtpWidgets.java carries on
++ // the Android build.
++ const QUOTES = [
++   ["You have power over your mind - not outside events. Realize this, and you will find strength.", "Marcus Aurelius"],
++   ["Our life is what our thoughts make it.", "Marcus Aurelius"],
++   ["The impediment to action advances action. What stands in the way becomes the way.", "Marcus Aurelius"],
++   ["Waste no more time arguing about what a good man should be. Be one.", "Marcus Aurelius"],
++   ["It is not that we have a short time to live, but that we waste a lot of it.", "Seneca"],
++   ["While we wait for life, life passes.", "Seneca"],
++   ["It is not the man who has too little, but the man who craves more, that is poor.", "Seneca"],
++   ["As is a tale, so is life: not how long it is, but how good it is, is what matters.", "Seneca"],
++   ["Only the educated are free.", "Epictetus"],
++   ["The unexamined life is not worth living.", "Socrates"],
++   ["The only true wisdom is in knowing you know nothing.", "Socrates"],
++   ["Nature does not hurry, yet everything is accomplished.", "Lao Tzu"],
++   ["The journey of a thousand miles begins with a single step.", "Lao Tzu"],
++   ["It does not matter how slowly you go as long as you do not stop.", "Confucius"],
++   ["Real knowledge is to know the extent of one's ignorance.", "Confucius"],
++   ["A room without books is like a body without a soul.", "Cicero"],
++   ["Go confidently in the direction of your dreams. Live the life you have imagined.", "Henry David Thoreau"],
++   ["Whatever you are, be a good one.", "Abraham Lincoln"],
++   ["I have not failed. I've just found ten thousand ways that won't work.", "Thomas Edison"],
++   ["Well done is better than well said.", "Benjamin Franklin"],
++   ["Either write something worth reading or do something worth writing.", "Benjamin Franklin"],
++   ["Be yourself; everyone else is already taken.", "Oscar Wilde"],
++   ["He who has a why to live can bear almost any how.", "Friedrich Nietzsche"],
++   ["That which does not kill us makes us stronger.", "Friedrich Nietzsche"],
++   ["Learning never exhausts the mind.", "Leonardo da Vinci"],
++ ];
++
++ // Stable for the day, so the page does not flicker between quotes on every
++ // reload, and changes across years rather than repeating on the same
++ // calendar day each time - the same rule AeriumNtpWidgets.java picks by.
++ function dayOfYear(d){
++   const start = new Date(d.getFullYear(), 0, 0);
++   return Math.floor((d - start) / 86400000);
++ }
++
++ function greetingWord(hour){
++   return hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
++ }
++
++ function renderWidgets(){
++   const now = new Date();
++   const wc = document.getElementById('wClock');
++   const wd = document.getElementById('wDate');
++   wc.hidden = wd.hidden = !cfg.clock;
++   if (cfg.clock) {
++     wc.textContent = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
++     wd.textContent = now.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
++   }
++   const wg = document.getElementById('wGreeting');
++   wg.hidden = !cfg.greeting;
++   if (cfg.greeting) {
++     const base = greetingWord(now.getHours());
++     wg.textContent = cfg.name ? base + ', ' + cfg.name : base;
++   }
++   const wq = document.getElementById('wQuote');
++   const wa = document.getElementById('wAuthor');
++   wq.hidden = wa.hidden = !cfg.quote;
++   if (cfg.quote) {
++     const q = QUOTES[(dayOfYear(now) + now.getFullYear()) % QUOTES.length];
++     wq.textContent = '“' + q[0] + '”';
++     wa.textContent = '— ' + q[1];
++   }
++ }
++
+  function applyCfg(){
+    // "Your photo" with no photo yet behaves as the plain background rather
+    // than as a blank screen, so choosing the chip before choosing a file does
+@@ -245,6 +341,7 @@
+    const n = (cfg.cols === 3 || cfg.cols === 5) ? cfg.cols : 4;
+    grid.style.gridTemplateColumns = 'repeat(' + n + ',minmax(0,1fr))';
+    document.getElementById('row').style.display = cfg.row ? 'flex' : 'none';
++   renderWidgets();
+  }
+ 
+  function saveCfg(){ chrome.send('aeriumNewTabSetSettings', [JSON.stringify(cfg)]); }
+@@ -353,6 +450,9 @@
+    document.querySelectorAll('#colChips .chip').forEach(c =>
+        c.setAttribute('aria-pressed', String(Number(c.dataset.cols) === cfg.cols)));
+    document.getElementById('rowChip').setAttribute('aria-pressed', String(!!cfg.row));
++   document.querySelectorAll('#widgetChips .chip').forEach(c =>
++       c.setAttribute('aria-pressed', String(!!cfg[c.dataset.widget])));
++   document.getElementById('greetName').value = cfg.name || '';
+ 
+    const row = document.getElementById('photoRow');
+    const sws = document.getElementById('swatches');
+@@ -389,6 +489,17 @@
+  document.getElementById('rowChip').addEventListener('click', () => {
+    cfg.row = !cfg.row; saveCfg(); applyCfg(); syncPanel();
+  });
++ document.getElementById('widgetChips').addEventListener('click', e => {
++   const b = e.target.closest('.chip'); if (!b) return;
++   const key = b.dataset.widget;
++   cfg[key] = !cfg[key]; saveCfg(); applyCfg(); syncPanel();
++ });
++ // Saved on blur rather than on every keystroke: the greeting only needs the
++ // finished name, and chrome.send on every character would be twenty-odd
++ // profile-pref writes for one word.
++ document.getElementById('greetName').addEventListener('blur', e => {
++   cfg.name = e.target.value.trim(); saveCfg(); applyCfg();
++ });
+ 
+  document.getElementById('pickPhoto').addEventListener('click', () =>
+      document.getElementById('photoFile').click());
+@@ -440,6 +551,10 @@
+  chrome.send('aeriumNewTabGetSettings');
+  chrome.send('aeriumNewTabGetImage');
+  chrome.send('aeriumNewTabGetTiles');
++ // 30 seconds: readable without being exact to the second, and cheap enough
++ // not to matter on a page people glance at and leave. Same interval
++ // AeriumNtpWidgets.java's Handler uses on the Android build.
++ setInterval(renderWidgets, 30000);
+ </script>
+ )";
+     std::move(callback).Run(

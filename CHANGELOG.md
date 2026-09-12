@@ -15,7 +15,8 @@ behind any of this.
 - A clock, a greeting and a quote of the day on `chrome://aerium-newtab`,
   each with its own switch in the page's own settings gear. Nothing here is
   fetched: the clock reads your system time, and the quotes are a list built
-  into the page.
+  into the page. Click the quote for another one; each install sees its own
+  rotation rather than everyone opening on the same quote the same day.
 
 **Fingerprinting**
 

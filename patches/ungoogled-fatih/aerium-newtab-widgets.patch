@@ -40,6 +40,34 @@ for nothing. The dead `#widgets:empty` rule this was meant to lean on is
 removed with it - `:empty` never matches here, since the five child divs stay
 in the DOM and are only ever individually hidden.
 
+TWO FOLLOW-UPS, both requested after the fact and both mirrored on the
+Android build's AeriumNtpWidgets.java so the two pages behave the same way.
+
+cfg.quoteOffset. Read alone, dailyQuoteIndex() is a pure function of the
+calendar date, which means every install of this browser would open on the
+exact same quote on the exact same day - fine for one person, odd once you
+picture the whole install base synchronised. Generated once, the first time
+settings are ever read back (a fresh profile and one upgrading from before
+this field existed both read as "not a number" here), folded into the index,
+and saved immediately so it survives a reload.
+
+Tap to reshuffle. #wQuote and #wAuthor are clickable; either one advances to
+the next entry in QUOTES and re-renders just those two lines, with a quick
+opacity dip so the change reads as a response to the click. Deliberately not
+persisted - the next full render, from a reload or a settings change, goes
+back to today's pick. That mattered enough to restructure renderWidgets():
+it used to be the one function both the initial render and the 30-second
+interval called, and a reshuffle surviving less than 30 seconds would not
+have been much of a reshuffle. Split into updateClockAndGreeting() (what the
+interval calls now) and renderQuote() (what a reshuffle calls), with
+renderWidgets() left as the entry point that does both plus the container's
+hidden state, for the initial render and for applyCfg() after a settings
+change.
+
+Re-verified the same way as the rest of this patch: node --check on the
+re-extracted script, every id cross-checked, the raw string rescanned for a
+premature terminator.
+
 --- a/chrome/browser/ui/webui/aerium_newtab.h
 +++ b/chrome/browser/ui/webui/aerium_newtab.h
 @@ -105,6 +105,14 @@
@@ -51,8 +79,8 @@ in the DOM and are only ever individually hidden.
 + #widgets .date{font-size:13px;color:var(--label);margin-top:2px}
 + #widgets .greeting{font-size:16px;color:var(--label);margin-top:10px}
 + #widgets .quote{font-size:13px;color:var(--label);margin-top:14px;max-width:420px;
-+                 margin-left:auto;margin-right:auto}
-+ #widgets .author{font-size:11px;color:var(--label-dim);margin-top:2px}
++                 margin-left:auto;margin-right:auto;cursor:pointer}
++ #widgets .author{font-size:11px;color:var(--label-dim);margin-top:2px;cursor:pointer}
 + #greetName{margin-top:10px}
   body{margin:0;min-height:100vh;display:flex;flex-direction:column;
        align-items:center;justify-content:center;padding:48px 24px}
@@ -96,7 +124,7 @@ in the DOM and are only ever individually hidden.
   let photo = '';
   const grid = document.getElementById('grid');
   const dlg = document.getElementById('dlg');
-@@ -224,6 +248,81 @@
+@@ -224,6 +248,116 @@
  
   function hasPhoto(){ return photo.startsWith('data:image/'); }
  
@@ -146,12 +174,45 @@ in the DOM and are only ever individually hidden.
 +   return hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 + }
 +
-+ function renderWidgets(){
++ // Which entry in QUOTES today's pick is offset by, so the whole install base
++ // is not opening on the same quote on the same day - see cfg.quoteOffset
++ // below, where it is generated once and saved. Also the entry a manual
++ // reshuffle has moved to, which is why this is reassigned outside
++ // dailyQuoteIndex() rather than being a return value read fresh each time:
++ // a tap has to survive the next render without the day's pick overwriting
++ // it, the same reason Android's mQuoteIndex is a field and not a local.
++ let quoteIndex = 0;
++
++ function dailyQuoteIndex(){
 +   const now = new Date();
-+   // The container itself, not just its children - each row below hides on
-+   // its own toggle, but with all three off the container would otherwise
-+   // keep its own margin and leave an empty gap above the shortcuts.
-+   document.getElementById('widgets').hidden = !cfg.clock && !cfg.greeting && !cfg.quote;
++   const sum = dayOfYear(now) + now.getFullYear() + (cfg.quoteOffset || 0);
++   return sum % QUOTES.length;
++ }
++
++ function renderQuote(){
++   const wq = document.getElementById('wQuote');
++   const wa = document.getElementById('wAuthor');
++   wq.hidden = wa.hidden = !cfg.quote;
++   if (!cfg.quote) return;
++   const q = QUOTES[quoteIndex];
++   wq.textContent = '“' + q[0] + '”';
++   wa.textContent = '— ' + q[1];
++ }
++
++ // A tap on either line moves to the next quote without waiting for the next
++ // calendar day - the two lines are one unit, not a headline and a caption
++ // with different jobs, so either reshuffles. Not persisted: the next full
++ // render (a reload, or a settings change) goes back to today's pick, the
++ // same as Android's tap-to-reshuffle.
++ function reshuffleQuote(){
++   quoteIndex = (quoteIndex + 1) % QUOTES.length;
++   renderQuote();
++ }
++
++ // The parts of a full render worth redoing every 30 seconds without
++ // touching the quote - see the interval near the bottom of this script.
++ function updateClockAndGreeting(){
++   const now = new Date();
 +   const wc = document.getElementById('wClock');
 +   const wd = document.getElementById('wDate');
 +   wc.hidden = wd.hidden = !cfg.clock;
@@ -165,20 +226,22 @@ in the DOM and are only ever individually hidden.
 +     const base = greetingWord(now.getHours());
 +     wg.textContent = cfg.name ? base + ', ' + cfg.name : base;
 +   }
-+   const wq = document.getElementById('wQuote');
-+   const wa = document.getElementById('wAuthor');
-+   wq.hidden = wa.hidden = !cfg.quote;
-+   if (cfg.quote) {
-+     const q = QUOTES[(dayOfYear(now) + now.getFullYear()) % QUOTES.length];
-+     wq.textContent = '“' + q[0] + '”';
-+     wa.textContent = '— ' + q[1];
-+   }
++ }
++
++ function renderWidgets(){
++   // The container itself, not just its children - each row below hides on
++   // its own toggle, but with all three off the container would otherwise
++   // keep its own margin and leave an empty gap above the shortcuts.
++   document.getElementById('widgets').hidden = !cfg.clock && !cfg.greeting && !cfg.quote;
++   updateClockAndGreeting();
++   quoteIndex = dailyQuoteIndex();
++   renderQuote();
 + }
 +
   function applyCfg(){
     // "Your photo" with no photo yet behaves as the plain background rather
     // than as a blank screen, so choosing the chip before choosing a file does
-@@ -245,6 +344,7 @@
+@@ -245,6 +379,7 @@
     const n = (cfg.cols === 3 || cfg.cols === 5) ? cfg.cols : 4;
     grid.style.gridTemplateColumns = 'repeat(' + n + ',minmax(0,1fr))';
     document.getElementById('row').style.display = cfg.row ? 'flex' : 'none';
@@ -186,7 +249,23 @@ in the DOM and are only ever individually hidden.
   }
  
   function saveCfg(){ chrome.send('aeriumNewTabSetSettings', [JSON.stringify(cfg)]); }
-@@ -353,6 +453,9 @@
+@@ -333,6 +468,15 @@
+      const v = JSON.parse(raw || '{}');
+      if (v && typeof v === 'object') cfg = Object.assign(cfg, v);
+    } catch (e) { /* defaults stand */ }
++   // Generated once, the first time settings are ever read back, and saved
++   // immediately - without it every install would open on the same quote on
++   // the same day, since dailyQuoteIndex() is otherwise a pure function of
++   // the date. A profile with no saved settings yet and one whose saved JSON
++   // predates this field both read as "not a number" here.
++   if (typeof cfg.quoteOffset !== 'number') {
++     cfg.quoteOffset = Math.floor(Math.random() * QUOTES.length);
++     saveCfg();
++   }
+    applyCfg(); syncPanel();
+  };
+ 
+@@ -353,6 +497,9 @@
     document.querySelectorAll('#colChips .chip').forEach(c =>
         c.setAttribute('aria-pressed', String(Number(c.dataset.cols) === cfg.cols)));
     document.getElementById('rowChip').setAttribute('aria-pressed', String(!!cfg.row));
@@ -196,7 +275,7 @@ in the DOM and are only ever individually hidden.
  
     const row = document.getElementById('photoRow');
     const sws = document.getElementById('swatches');
-@@ -389,6 +492,17 @@
+@@ -389,6 +536,34 @@
   document.getElementById('rowChip').addEventListener('click', () => {
     cfg.row = !cfg.row; saveCfg(); applyCfg(); syncPanel();
   });
@@ -211,17 +290,38 @@ in the DOM and are only ever individually hidden.
 + document.getElementById('greetName').addEventListener('blur', e => {
 +   cfg.name = e.target.value.trim(); saveCfg(); applyCfg();
 + });
++
++ // Either line reshuffles - the two together are one unit, not a headline
++ // and a caption with different jobs. The opacity dip is the same
++ // eighty-then-hundred-and-fifty-millisecond flash AeriumNtpWidgets.java
++ // plays with ViewPropertyAnimator, so the change reads as a response to the
++ // click rather than the text simply having been different all along.
++ function flashAndReshuffle(el){
++   el.style.transition = 'opacity 80ms';
++   el.style.opacity = '0.3';
++   setTimeout(() => {
++     el.style.transition = 'opacity 150ms';
++     el.style.opacity = '1';
++   }, 80);
++   reshuffleQuote();
++ }
++ document.getElementById('wQuote').addEventListener('click', e => flashAndReshuffle(e.currentTarget));
++ document.getElementById('wAuthor').addEventListener('click', e => flashAndReshuffle(e.currentTarget));
  
   document.getElementById('pickPhoto').addEventListener('click', () =>
       document.getElementById('photoFile').click());
-@@ -440,6 +554,10 @@
+@@ -440,6 +615,14 @@
   chrome.send('aeriumNewTabGetSettings');
   chrome.send('aeriumNewTabGetImage');
   chrome.send('aeriumNewTabGetTiles');
 + // 30 seconds: readable without being exact to the second, and cheap enough
 + // not to matter on a page people glance at and leave. Same interval
 + // AeriumNtpWidgets.java's Handler uses on the Android build.
-+ setInterval(renderWidgets, 30000);
++ //
++ // Only the clock and greeting, not renderWidgets() - that would put the
++ // quote back on the day's pick every 30 seconds and undo a tap on it within
++ // half a minute.
++ setInterval(updateClockAndGreeting, 30000);
  </script>
  )";
      std::move(callback).Run(

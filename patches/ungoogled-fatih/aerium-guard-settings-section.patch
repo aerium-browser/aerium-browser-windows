@@ -243,10 +243,10 @@ binding, same single consumer.
 +      Custom is loaded from a JSON file - a general chrome://flags backup as well as a settings preset. Export saves what's in effect right now; Import replaces it with a file you choose.
 +    </message>
 +    <message name="IDS_SETTINGS_AERIUM_GUARD_IMPORT_BUTTON" desc="Button that opens a file picker to load a Custom setup mode configuration.">
-+      Import from file&hellip;
++      Import from file…
 +    </message>
 +    <message name="IDS_SETTINGS_AERIUM_GUARD_EXPORT_BUTTON" desc="Button that saves the current live settings as a Custom setup mode configuration file.">
-+      Export current settings&hellip;
++      Export current settings…
 +    </message>
      <message name="IDS_SETTINGS_TITLE_AND_COUNT" desc="The title of a section in the settings page with a count of the total number of items in the section">
        <ph name="TITLE">$1<ex>Block</ex></ph> - <ph name="COUNT">$2<ex>42</ex></ph>

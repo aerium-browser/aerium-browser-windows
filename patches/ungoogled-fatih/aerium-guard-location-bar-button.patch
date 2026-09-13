@@ -112,7 +112,7 @@ file needing to know how.
 
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
-@@ -2253,3 +2253,16 @@
+@@ -2253,15 +2253,28 @@
      <message name="IDS_SETTINGS_AERIUM_GUARD_RESTART_NOTE" desc="Note explaining that part of what a setup mode changes only applies after the browser restarts.">
        Most changes apply right away - a few need a restart first.
      </message>
@@ -129,6 +129,18 @@ file needing to know how.
 +    <message name="IDS_SETTINGS_AERIUM_GUARD_BUBBLE_STATUS_ON" desc="Static status line at the end of the address-bar bubble's list of setup modes, confirming Aerium Guard is active.">
 +      Aerium Guard is turned on.
 +    </message>
+     <message name="IDS_SETTINGS_AERIUM_GUARD_IMPORT_EXPORT_NOTE" desc="Description of the import/export buttons for the Custom setup mode.">
+       Custom is loaded from a JSON file - a general chrome://flags backup as well as a settings preset. Export saves what's in effect right now; Import replaces it with a file you choose.
+     </message>
+     <message name="IDS_SETTINGS_AERIUM_GUARD_IMPORT_BUTTON" desc="Button that opens a file picker to load a Custom setup mode configuration.">
+       Import from file&hellip;
+     </message>
+     <message name="IDS_SETTINGS_AERIUM_GUARD_EXPORT_BUTTON" desc="Button that saves the current live settings as a Custom setup mode configuration file.">
+       Export current settings&hellip;
+     </message>
+     <message name="IDS_SETTINGS_TITLE_AND_COUNT" desc="The title of a section in the settings page with a count of the total number of items in the section">
+       <ph name="TITLE">$1<ex>Block</ex></ph> - <ph name="COUNT">$2<ex>42</ex></ph>
+     </message>
 --- a/chrome/browser/ui/views/location_bar/BUILD.gn
 +++ b/chrome/browser/ui/views/location_bar/BUILD.gn
 @@ -12,6 +12,7 @@

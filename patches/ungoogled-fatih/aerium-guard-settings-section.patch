@@ -190,24 +190,27 @@ binding, same single consumer.
 
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
-@@ -2211,6 +2211,48 @@
+@@ -2211,6 +2211,60 @@
      <message name="IDS_SETTINGS_CLEAR_ON_EXIT_SITES_DUPLICATE" desc="Error shown when the website typed into the add-a-site field is already in the list.">
        This site is already on the list
      </message>
 +    <message name="IDS_SETTINGS_AERIUM_GUARD_PAGE_TITLE" desc="Title of a top-level settings section, named after the browser, that offers the browser's privacy and performance setup modes.">
 +      Aerium Guard
 +    </message>
-+    <message name="IDS_SETTINGS_AERIUM_GUARD_MODES_HEADER" desc="Header above a list of three setup modes the user can switch between.">
++    <message name="IDS_SETTINGS_AERIUM_GUARD_MODES_HEADER" desc="Header above a list of four setup modes the user can switch between.">
 +      Setup mode
 +    </message>
-+    <message name="IDS_SETTINGS_AERIUM_GUARD_MODES_DESC" desc="Description of the setup modes. It explains that a mode is a shortcut for ordinary settings rather than something locked down.">
-+      Each mode is a shortcut for a set of ordinary settings and chrome://flags entries. Nothing is locked down, and you can change any of it afterwards. These are the same modes the first-run screen offers.
++    <message name="IDS_SETTINGS_AERIUM_GUARD_MODES_DESC" desc="Description of the setup modes, in plain language.">
++      Pick a mode to set a bunch of privacy and speed options at once. Nothing is locked - you can still change anything by hand afterwards.
 +    </message>
 +    <message name="IDS_SETTINGS_AERIUM_GUARD_ACTIVE_MODE" desc="Line showing which setup mode the current settings correspond to.">
 +      Current: <ph name="MODE">$1<ex>Recommended</ex></ph>
 +    </message>
-+    <message name="IDS_SETTINGS_AERIUM_GUARD_CUSTOM_LABEL" desc="Name shown for the current setup mode when the settings match none of the three offered modes, because the user has changed some of them by hand.">
++    <message name="IDS_SETTINGS_AERIUM_GUARD_CUSTOM_LABEL" desc="Name of the fourth setup mode: the user's own settings, loaded from a file. Also shown when the settings match none of the three built-in modes, because the user changed some of them by hand without importing anything.">
 +      Custom
++    </message>
++    <message name="IDS_SETTINGS_AERIUM_GUARD_CUSTOM_DESC" desc="Description of the Custom setup mode.">
++      Your own settings, loaded from a JSON file you provide.
 +    </message>
 +    <message name="IDS_SETTINGS_AERIUM_GUARD_USE_MODE" desc="Label of the button that switches to a setup mode.">
 +      Use
@@ -218,23 +221,32 @@ binding, same single consumer.
 +    <message name="IDS_SETTINGS_AERIUM_GUARD_RECOMMENDED_LABEL" desc="Name of the balanced, default setup mode.">
 +      Recommended
 +    </message>
-+    <message name="IDS_SETTINGS_AERIUM_GUARD_RECOMMENDED_DESC" desc="Description of the balanced, default setup mode.">
-+      Balanced. Do Not Track, third-party cookies blocked, no page preloading, no hyperlink auditing pings, failed page loads never sent to an error-resolution service, sites unable to probe for a saved payment method, HTTPS-First in its balanced configuration, WebRTC held to your public interface so calls cannot read your local network addresses, search engines not collected from the sites you visit, Client Hints stripped, Memory Saver on, Battery Saver on battery power, and no background process left running after you quit. Nothing here should get in a site's way.
++    <message name="IDS_SETTINGS_AERIUM_GUARD_RECOMMENDED_DESC" desc="Description of the balanced, default setup mode, in plain language.">
++      A safe, balanced default: blocks cross-site tracking, keeps pages from loading in the background before you click them, and saves battery and memory without slowing anything down.
 +    </message>
 +    <message name="IDS_SETTINGS_AERIUM_GUARD_PRIVACY_LABEL" desc="Name of the privacy-focused setup mode.">
 +      Privacy
 +    </message>
-+    <message name="IDS_SETTINGS_AERIUM_GUARD_PRIVACY_DESC" desc="Description of the privacy-focused setup mode.">
-+      Everything in Recommended, plus browsing data deleted when you close the browser, search suggestions off, strict HTTPS-First, WebRTC refusing non-proxied UDP, cross-origin referrers removed, fingerprinting noise, a blank WebGL renderer and vendor, reduced system info, punycode hostnames and a raised Incognito storage quota. Strict HTTPS-First also warns on routers and other local devices, which cannot hold a public certificate, so expect to make exceptions for the odd site.
++    <message name="IDS_SETTINGS_AERIUM_GUARD_PRIVACY_DESC" desc="Description of the privacy-focused setup mode, in plain language.">
++      Everything in Recommended, plus: your browsing data is cleared every time you close the browser, video calls can't reveal your local network, and extra noise makes your browser harder to fingerprint. Expect a few more security warnings on sites with self-signed certificates.
 +    </message>
 +    <message name="IDS_SETTINGS_AERIUM_GUARD_PERFORMANCE_LABEL" desc="Name of the speed-focused setup mode.">
 +      Performance
 +    </message>
-+    <message name="IDS_SETTINGS_AERIUM_GUARD_PERFORMANCE_DESC" desc="Description of the speed-focused setup mode.">
-+      The same privacy floor as Recommended, tuned for speed: page preloading on, parallel downloading, up to 15 simultaneous connections per host instead of 6, Memory Saver on and set to release idle tabs sooner, and Battery Saver off so nothing is throttled when unplugged.
++    <message name="IDS_SETTINGS_AERIUM_GUARD_PERFORMANCE_DESC" desc="Description of the speed-focused setup mode, in plain language.">
++      The same privacy protections as Recommended, tuned for speed: pages preload before you click them, downloads run faster, and nothing is throttled to save battery.
 +    </message>
 +    <message name="IDS_SETTINGS_AERIUM_GUARD_RESTART_NOTE" desc="Note explaining that part of what a setup mode changes only applies after the browser restarts.">
-+      Settings apply straight away. The chrome://flags entries a mode switches on need a restart, and are never switched off again, so a mode you leave keeps any flags it turned on.
++      Most changes apply right away - a few need a restart first.
++    </message>
++    <message name="IDS_SETTINGS_AERIUM_GUARD_IMPORT_EXPORT_NOTE" desc="Description of the import/export buttons for the Custom setup mode.">
++      Custom is loaded from a JSON file - a general chrome://flags backup as well as a settings preset. Export saves what's in effect right now; Import replaces it with a file you choose.
++    </message>
++    <message name="IDS_SETTINGS_AERIUM_GUARD_IMPORT_BUTTON" desc="Button that opens a file picker to load a Custom setup mode configuration.">
++      Import from file&hellip;
++    </message>
++    <message name="IDS_SETTINGS_AERIUM_GUARD_EXPORT_BUTTON" desc="Button that saves the current live settings as a Custom setup mode configuration file.">
++      Export current settings&hellip;
 +    </message>
      <message name="IDS_SETTINGS_TITLE_AND_COUNT" desc="The title of a section in the settings page with a count of the total number of items in the section">
        <ph name="TITLE">$1<ex>Block</ex></ph> - <ph name="COUNT">$2<ex>42</ex></ph>
@@ -260,7 +272,7 @@ binding, same single consumer.
      "privacy_page/do_not_track_toggle.ts",
 --- /dev/null
 +++ b/chrome/browser/resources/settings/aerium_guard_page/aerium_guard_page.html
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,50 @@
 +<style include="cr-shared-style settings-shared"></style>
 +<settings-section page-title="$i18n{aeriumGuardPageTitle}"
 +    class="cr-centered-card-container">
@@ -292,6 +304,20 @@ binding, same single consumer.
 +  </template>
 +
 +  <div class="cr-row continuation">
++    <div class="flex cr-padded-text">
++      <div class="secondary" id="importExportNote">
++        $i18n{aeriumGuardImportExportNote}
++      </div>
++    </div>
++    <cr-button on-click="onImportClick_">
++      $i18n{aeriumGuardImportButton}
++    </cr-button>
++    <cr-button on-click="onExportClick_">
++      $i18n{aeriumGuardExportButton}
++    </cr-button>
++  </div>
++
++  <div class="cr-row continuation">
 +    <div class="flex cr-padded-text secondary" id="restartNote">
 +      $i18n{aeriumGuardRestartNote}
 +    </div>
@@ -299,7 +325,7 @@ binding, same single consumer.
 +</settings-section>
 --- /dev/null
 +++ b/chrome/browser/resources/settings/aerium_guard_page/aerium_guard_page.ts
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,166 @@
 +// Copyright 2026 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -388,6 +414,11 @@ binding, same single consumer.
 +            label: loadTimeData.getString('aeriumGuardPerformanceLabel'),
 +            description: loadTimeData.getString('aeriumGuardPerformanceDesc'),
 +          },
++          {
++            id: 'custom',
++            label: loadTimeData.getString('aeriumGuardCustomLabel'),
++            description: loadTimeData.getString('aeriumGuardCustomDesc'),
++          },
 +        ],
 +      },
 +    };
@@ -428,6 +459,22 @@ binding, same single consumer.
 +      return;
 +    }
 +    chrome.send('aeriumGuardApplyPreset', [preset]);
++  }
++
++  // Opens a native file picker; the browser reads, parses and applies the
++  // chosen file, then fires 'aerium-guard-preset-changed' itself on success,
++  // which is what actually updates activePreset_ above. The resolved
++  // boolean does not distinguish "the file didn't parse" from "the dialog
++  // was cancelled" - both are a plain no-op from here, which is the right
++  // answer for a cancel and an acceptable one for a bad file: nothing was
++  // silently half-applied either way (see ParseCustomConfig()'s
++  // all-or-nothing contract in aerium_presets.h).
++  private onImportClick_() {
++    sendWithPromise<boolean>('aeriumGuardImportCustomConfig');
++  }
++
++  private onExportClick_() {
++    sendWithPromise<boolean>('aeriumGuardExportCurrentSettings');
 +  }
 +
 +  // SettingsPlugin implementation
@@ -695,7 +742,7 @@ binding, same single consumer.
              hidden="[[!pageVisibility_.performance]]">
 --- /dev/null
 +++ b/chrome/browser/ui/webui/aerium_presets.h
-@@ -0,0 +1,375 @@
+@@ -0,0 +1,735 @@
 +#ifndef CHROME_BROWSER_UI_WEBUI_AERIUM_PRESETS_H_
 +#define CHROME_BROWSER_UI_WEBUI_AERIUM_PRESETS_H_
 +
@@ -704,6 +751,8 @@ binding, same single consumer.
 +#include <string_view>
 +#include <vector>
 +
++#include "base/json/json_reader.h"
++#include "base/json/json_writer.h"
 +#include "base/values.h"
 +#include "components/prefs/pref_service.h"
 +
@@ -825,6 +874,12 @@ binding, same single consumer.
 +inline constexpr char kBackgroundModeEnabled[] = "background_mode.enabled";
 +// flags_ui::prefs::kAboutFlagsEntries - the list about_flags reads at startup.
 +inline constexpr char kAboutFlagsEntries[] = "browser.enabled_labs_experiments";
++// Where an imported Custom configuration is stored, as the friendly
++// JSON it was imported from (see the Custom section below). Empty means
++// nothing has been imported yet. Registered in
++// chrome/browser/prefs/browser_prefs.cc's RegisterProfilePrefs.
++inline constexpr char kCustomConfigJson[] =
++    "aerium_guard.custom_config_json";
 +
 +// What a preset sets each pref to.
 +struct PresetValues {
@@ -845,6 +900,15 @@ binding, same single consumer.
 +  int memory_saver_aggressiveness;
 +  int battery_saver_mode_state;
 +  bool background_mode_enabled;
++};
++
++// A user-supplied Custom preset: the same PresetValues every built-in
++// preset writes, plus a raw list of chrome://flags entries to seed -
++// Custom's escape hatch and, on its own, a general flags import/export
++// mechanism (see ParseCustomConfig/SerializeCustomConfig below).
++struct CustomPreset {
++  PresetValues values;
++  std::vector<std::string> flags;
 +};
 +
 +inline bool IsApplicablePreset(std::string_view preset) {
@@ -976,40 +1040,383 @@ binding, same single consumer.
 +// Writes a preset. Returns false and touches nothing for an unknown name or a
 +// missing PrefService. Flags only take effect after a restart, unlike the
 +// prefs; callers say so in their UI.
++// Writes every field of `values` to the prefs it belongs to, split the same
++// way PresetValues itself is: the eleven profile prefs on `profile_prefs`,
++// the four performance/background prefs on `local_state`. Shared by the
++// three built-in presets and by Custom, so there is exactly one place that
++// knows which PrefService each field belongs to.
++inline void WritePresetValues(PrefService* profile_prefs,
++                              PrefService* local_state,
++                              const PresetValues& values) {
++  profile_prefs->SetBoolean(kDoNotTrack, values.do_not_track);
++  profile_prefs->SetInteger(kCookieControlsMode, values.cookie_controls_mode);
++  profile_prefs->SetInteger(kNetworkPredictionOptions,
++                            values.network_prediction_options);
++  profile_prefs->SetBoolean(kClearDataOnExit, values.clear_data_on_exit);
++  profile_prefs->SetBoolean(kSearchSuggestEnabled,
++                            values.search_suggest_enabled);
++  profile_prefs->SetBoolean(kHttpsOnlyMode, values.https_only_mode);
++  profile_prefs->SetBoolean(kHttpsFirstBalancedMode,
++                            values.https_first_balanced_mode);
++  profile_prefs->SetString(kWebRtcIpHandlingPolicy,
++                           values.webrtc_ip_handling_policy);
++  profile_prefs->SetBoolean(kHyperlinkAuditing, values.hyperlink_auditing);
++  profile_prefs->SetBoolean(kAlternateErrorPages,
++                            values.alternate_error_pages);
++  profile_prefs->SetBoolean(kCanMakePayment, values.can_make_payment);
++
++  local_state->SetInteger(kMemorySaverModeState,
++                          values.memory_saver_mode_state);
++  local_state->SetInteger(kMemorySaverAggressiveness,
++                          values.memory_saver_aggressiveness);
++  local_state->SetInteger(kBatterySaverModeState,
++                          values.battery_saver_mode_state);
++  local_state->SetBoolean(kBackgroundModeEnabled,
++                          values.background_mode_enabled);
++}
++
++// The inverse of WritePresetValues(): reads every field back from the prefs
++// it belongs to. Used by Export, which needs the live values regardless of
++// whether they currently match a built-in preset, Custom, or neither.
++inline PresetValues ReadCurrentValues(const PrefService* profile_prefs,
++                                      const PrefService* local_state) {
++  PresetValues values;
++  values.do_not_track = profile_prefs->GetBoolean(kDoNotTrack);
++  values.cookie_controls_mode = profile_prefs->GetInteger(kCookieControlsMode);
++  values.network_prediction_options =
++      profile_prefs->GetInteger(kNetworkPredictionOptions);
++  values.clear_data_on_exit = profile_prefs->GetBoolean(kClearDataOnExit);
++  values.search_suggest_enabled =
++      profile_prefs->GetBoolean(kSearchSuggestEnabled);
++  values.https_only_mode = profile_prefs->GetBoolean(kHttpsOnlyMode);
++  values.https_first_balanced_mode =
++      profile_prefs->GetBoolean(kHttpsFirstBalancedMode);
++  // Read back as one of the two known constants, not the raw pref string,
++  // so this is safe to keep as a `const char*` the way PresetValues expects
++  // everywhere else - an arbitrary hand-set pref value outside the two
++  // known ones falls back to the public-interface-only constant.
++  values.webrtc_ip_handling_policy =
++      profile_prefs->GetString(kWebRtcIpHandlingPolicy) ==
++              kWebRtcDisableNonProxiedUdp
++          ? kWebRtcDisableNonProxiedUdp
++          : kWebRtcPublicInterfaceOnly;
++  values.hyperlink_auditing = profile_prefs->GetBoolean(kHyperlinkAuditing);
++  values.alternate_error_pages =
++      profile_prefs->GetBoolean(kAlternateErrorPages);
++  values.can_make_payment = profile_prefs->GetBoolean(kCanMakePayment);
++  values.memory_saver_mode_state =
++      local_state->GetInteger(kMemorySaverModeState);
++  values.memory_saver_aggressiveness =
++      local_state->GetInteger(kMemorySaverAggressiveness);
++  values.battery_saver_mode_state =
++      local_state->GetInteger(kBatterySaverModeState);
++  values.background_mode_enabled =
++      local_state->GetBoolean(kBackgroundModeEnabled);
++  return values;
++}
++
++// ---------------------------------------------------------------------------
++// Custom: a user-supplied preset, loaded from a JSON file rather than
++// hardcoded above. Two things live in the same JSON object:
++//
++//   - twenty named fields, one per pref writable through this header, spelled
++//     in plain language rather than as the pref path/enum literal (e.g.
++//     "third_party_cookies": "block" rather than
++//     "profile.cookie_controls_mode": 1). Every one is optional; an omitted
++//     field falls back to Recommended's own value for it, so a one-line file
++//     is a valid Custom config. payments.can_make_payment_enabled has no
++//     field at all - Custom forces it to false unconditionally, the same as
++//     the two always-on flags below, rather than leaving it for the user to
++//     turn back on.
++//   - one raw field, "flags": a plain list of chrome://flags entry strings,
++//     seeded exactly as given with no translation at all. This is not a
++//     convenience layered on the twenty named fields - it is the actual
++//     mechanism, and Export always writes the browser's ENTIRE current
++//     flags list here, not only entries the twenty fields happen to cover.
++//     A Custom config is a general chrome://flags backup/restore file
++//     first, and a settings preset second.
++//
++// A field present with a value of the wrong shape (a string where a bool is
++// expected, an enum string outside its allowed set, a non-string in `flags`)
++// fails the WHOLE parse - nothing is written for a config that is partly
++// wrong, rather than quietly keeping Recommended's value for just that
++// field.
++// ---------------------------------------------------------------------------
++
++// The two allowed values of the JSON field "webrtc_ip_handling", distinct
++// from kWebRtcPublicInterfaceOnly/kWebRtcDisableNonProxiedUdp above (those
++// are the actual pref values; these are the friendly spellings of them).
++inline constexpr char kWebRtcIpHandlingPublicOnly[] = "public_only";
++inline constexpr char kWebRtcIpHandlingDisableNonProxiedUdp[] =
++    "disable_non_proxied_udp";
++
++namespace internal {
++
++// Leaves *out untouched and returns true if `key` is absent (the caller's
++// default stands); returns false only when `key` is present with the wrong
++// JSON type.
++inline bool GetOptionalBool(const base::Value::Dict& dict,
++                            std::string_view key,
++                            bool* out) {
++  const base::Value* value = dict.Find(key);
++  if (!value) {
++    return true;
++  }
++  if (!value->is_bool()) {
++    return false;
++  }
++  *out = value->GetBool();
++  return true;
++}
++
++// `mapping` is {json string, mapped int} pairs. Same absent/wrong-type
++// contract as GetOptionalBool(), plus: a present string outside every name
++// in `mapping` is also a failure, not a fallback to the default.
++inline bool GetOptionalEnum(
++    const base::Value::Dict& dict,
++    std::string_view key,
++    std::initializer_list<std::pair<std::string_view, int>> mapping,
++    int* out) {
++  const base::Value* value = dict.Find(key);
++  if (!value) {
++    return true;
++  }
++  if (!value->is_string()) {
++    return false;
++  }
++  for (const auto& entry : mapping) {
++    if (value->GetString() == entry.first) {
++      *out = entry.second;
++      return true;
++    }
++  }
++  return false;
++}
++
++}  // namespace internal
++
++inline std::optional<CustomPreset> ParseCustomConfig(const std::string& json) {
++  std::optional<base::Value> parsed = base::JSONReader::Read(json);
++  if (!parsed.has_value() || !parsed->is_dict()) {
++    return std::nullopt;
++  }
++  const base::Value::Dict& dict = parsed->GetDict();
++
++  CustomPreset custom;
++  // Start from Recommended's own values - GetPresetValues() never fails for
++  // a built-in preset name, so this dereference is safe.
++  custom.values = *GetPresetValues(kRecommended);
++
++  if (!internal::GetOptionalBool(dict, "do_not_track",
++                                 &custom.values.do_not_track) ||
++      !internal::GetOptionalEnum(
++          dict, "third_party_cookies",
++          {{"off", 0}, {"block", 1}, {"incognito_only", 2}},
++          &custom.values.cookie_controls_mode)) {
++    return std::nullopt;
++  }
++  {
++    // Recommended's network_prediction_options (2) means preloading off.
++    bool page_preloading = false;
++    if (!internal::GetOptionalBool(dict, "page_preloading",
++                                   &page_preloading)) {
++      return std::nullopt;
++    }
++    custom.values.network_prediction_options = page_preloading ? 0 : 2;
++  }
++  if (!internal::GetOptionalBool(dict, "clear_data_on_exit",
++                                 &custom.values.clear_data_on_exit) ||
++      !internal::GetOptionalBool(dict, "search_suggestions",
++                                 &custom.values.search_suggest_enabled) ||
++      !internal::GetOptionalBool(dict, "https_only_strict",
++                                 &custom.values.https_only_mode) ||
++      !internal::GetOptionalBool(dict, "https_first_balanced",
++                                 &custom.values.https_first_balanced_mode)) {
++    return std::nullopt;
++  }
++  if (const base::Value* webrtc = dict.Find("webrtc_ip_handling")) {
++    if (!webrtc->is_string()) {
++      return std::nullopt;
++    }
++    if (webrtc->GetString() == kWebRtcIpHandlingPublicOnly) {
++      custom.values.webrtc_ip_handling_policy = kWebRtcPublicInterfaceOnly;
++    } else if (webrtc->GetString() == kWebRtcIpHandlingDisableNonProxiedUdp) {
++      custom.values.webrtc_ip_handling_policy = kWebRtcDisableNonProxiedUdp;
++    } else {
++      return std::nullopt;
++    }
++  }
++  if (!internal::GetOptionalBool(dict, "hyperlink_auditing",
++                                 &custom.values.hyperlink_auditing) ||
++      !internal::GetOptionalBool(dict, "network_error_suggestions",
++                                 &custom.values.alternate_error_pages)) {
++    return std::nullopt;
++  }
++  // Not user-configurable: forced off regardless of the file's content -
++  // there is deliberately no field name for it (see the file comment above).
++  custom.values.can_make_payment = false;
++
++  {
++    bool memory_saver = true;  // Recommended's value.
++    if (!internal::GetOptionalBool(dict, "memory_saver", &memory_saver)) {
++      return std::nullopt;
++    }
++    custom.values.memory_saver_mode_state = memory_saver ? 2 : 0;
++  }
++  if (!internal::GetOptionalEnum(
++          dict, "memory_saver_aggressiveness",
++          {{"conservative", 0}, {"medium", 1}, {"aggressive", 2}},
++          &custom.values.memory_saver_aggressiveness)) {
++    return std::nullopt;
++  }
++  if (!internal::GetOptionalEnum(dict, "battery_saver",
++                                 {{"off", 0}, {"on_battery", 2}},
++                                 &custom.values.battery_saver_mode_state)) {
++    return std::nullopt;
++  }
++  if (!internal::GetOptionalBool(dict, "keep_running_in_background",
++                                 &custom.values.background_mode_enabled)) {
++    return std::nullopt;
++  }
++
++  // The floor: seeded for Custom exactly as for the three built-in presets,
++  // with no field to opt out - see GetPresetFlags() above.
++  custom.flags = {"disable-search-engine-collection", "remove-client-hints@1"};
++
++  bool fingerprint_noise = false;
++  bool punycode_hostnames = false;
++  bool minimal_referrers = false;
++  bool larger_incognito_storage = false;
++  bool parallel_downloads = false;
++  bool more_connections_per_host = false;
++  if (!internal::GetOptionalBool(dict, "fingerprint_noise",
++                                 &fingerprint_noise) ||
++      !internal::GetOptionalBool(dict, "punycode_hostnames",
++                                 &punycode_hostnames) ||
++      !internal::GetOptionalBool(dict, "minimal_referrers",
++                                 &minimal_referrers) ||
++      !internal::GetOptionalBool(dict, "larger_incognito_storage",
++                                 &larger_incognito_storage) ||
++      !internal::GetOptionalBool(dict, "parallel_downloads",
++                                 &parallel_downloads) ||
++      !internal::GetOptionalBool(dict, "more_connections_per_host",
++                                 &more_connections_per_host)) {
++    return std::nullopt;
++  }
++  if (fingerprint_noise) {
++    custom.flags.insert(custom.flags.end(),
++                        {"fingerprinting-canvas-image-data-noise",
++                         "fingerprinting-canvas-measuretext-noise",
++                         "fingerprinting-client-rects-noise",
++                         "spoof-webgl-info@1", "reduced-system-info@1"});
++  }
++  if (punycode_hostnames) {
++    custom.flags.push_back("force-punycode-hostnames");
++  }
++  if (minimal_referrers) {
++    custom.flags.push_back("minimal-referrers@1");
++  }
++  if (larger_incognito_storage) {
++    custom.flags.push_back("increase-incognito-storage-quota@1");
++  }
++  if (parallel_downloads) {
++    custom.flags.push_back("enable-parallel-downloading@1");
++  }
++  if (more_connections_per_host) {
++    custom.flags.push_back("max-connections-per-host@1");
++  }
++
++  // The raw escape hatch: appended verbatim, with no interpretation beyond
++  // "is this a list of non-empty strings" - this is what makes a Custom
++  // config double as a general chrome://flags backup file, not just a
++  // settings preset.
++  if (const base::Value* raw_flags = dict.Find("flags")) {
++    if (!raw_flags->is_list()) {
++      return std::nullopt;
++    }
++    for (const base::Value& entry : raw_flags->GetList()) {
++      if (!entry.is_string() || entry.GetString().empty()) {
++        return std::nullopt;
++      }
++      custom.flags.push_back(entry.GetString());
++    }
++  }
++
++  return custom;
++}
++
++// The inverse of ParseCustomConfig(), for Export. Always emits every named
++// field (a full snapshot of `values`, never a partial one, unlike a
++// hand-edited import) - can_make_payment is not one of them, since it is
++// never user-configurable - plus a `flags` array containing EVERY entry
++// currently in browser.enabled_labs_experiments, not only ones the twenty
++// named fields above know how to represent. That full list is what makes
++// export double as a flags backup (see the file comment above); reimporting
++// it is a no-op for entries already present, since SeedFlags() dedupes.
++inline std::string SerializeCustomConfig(
++    const PresetValues& values,
++    const std::vector<std::string>& all_current_flags) {
++  base::Value::Dict dict;
++  dict.Set("aerium_guard_custom_version", 1);
++  dict.Set("do_not_track", values.do_not_track);
++  dict.Set("third_party_cookies",
++          values.cookie_controls_mode == 0   ? "off"
++          : values.cookie_controls_mode == 2 ? "incognito_only"
++                                              : "block");
++  dict.Set("page_preloading", values.network_prediction_options == 0);
++  dict.Set("clear_data_on_exit", values.clear_data_on_exit);
++  dict.Set("search_suggestions", values.search_suggest_enabled);
++  dict.Set("https_only_strict", values.https_only_mode);
++  dict.Set("https_first_balanced", values.https_first_balanced_mode);
++  dict.Set("webrtc_ip_handling",
++          std::string_view(values.webrtc_ip_handling_policy) ==
++                  kWebRtcDisableNonProxiedUdp
++              ? kWebRtcIpHandlingDisableNonProxiedUdp
++              : kWebRtcIpHandlingPublicOnly);
++  dict.Set("hyperlink_auditing", values.hyperlink_auditing);
++  dict.Set("network_error_suggestions", values.alternate_error_pages);
++  dict.Set("memory_saver", values.memory_saver_mode_state != 0);
++  dict.Set("memory_saver_aggressiveness",
++          values.memory_saver_aggressiveness == 0   ? "conservative"
++          : values.memory_saver_aggressiveness == 2 ? "aggressive"
++                                                     : "medium");
++  dict.Set("battery_saver",
++          values.battery_saver_mode_state == 0 ? "off" : "on_battery");
++  dict.Set("keep_running_in_background", values.background_mode_enabled);
++
++  base::Value::List flags_list;
++  for (const std::string& flag : all_current_flags) {
++    flags_list.Append(flag);
++  }
++  dict.Set("flags", std::move(flags_list));
++
++  std::string json;
++  base::JSONWriter::WriteWithOptions(
++      dict, base::JSONWriter::OPTIONS_PRETTY_PRINT, &json);
++  return json;
++}
++
 +inline bool ApplyPreset(std::string_view preset,
 +                        PrefService* profile_prefs,
 +                        PrefService* local_state) {
-+  const std::optional<PresetValues> values = GetPresetValues(preset);
-+  if (!values.has_value() || !profile_prefs || !local_state) {
++  if (!profile_prefs || !local_state) {
 +    return false;
 +  }
-+
-+  profile_prefs->SetBoolean(kDoNotTrack, values->do_not_track);
-+  profile_prefs->SetInteger(kCookieControlsMode, values->cookie_controls_mode);
-+  profile_prefs->SetInteger(kNetworkPredictionOptions,
-+                            values->network_prediction_options);
-+  profile_prefs->SetBoolean(kClearDataOnExit, values->clear_data_on_exit);
-+  profile_prefs->SetBoolean(kSearchSuggestEnabled,
-+                            values->search_suggest_enabled);
-+  profile_prefs->SetBoolean(kHttpsOnlyMode, values->https_only_mode);
-+  profile_prefs->SetBoolean(kHttpsFirstBalancedMode,
-+                            values->https_first_balanced_mode);
-+  profile_prefs->SetString(kWebRtcIpHandlingPolicy,
-+                           values->webrtc_ip_handling_policy);
-+  profile_prefs->SetBoolean(kHyperlinkAuditing, values->hyperlink_auditing);
-+  profile_prefs->SetBoolean(kAlternateErrorPages,
-+                            values->alternate_error_pages);
-+  profile_prefs->SetBoolean(kCanMakePayment, values->can_make_payment);
-+
-+  local_state->SetInteger(kMemorySaverModeState,
-+                          values->memory_saver_mode_state);
-+  local_state->SetInteger(kMemorySaverAggressiveness,
-+                          values->memory_saver_aggressiveness);
-+  local_state->SetInteger(kBatterySaverModeState,
-+                          values->battery_saver_mode_state);
-+  local_state->SetBoolean(kBackgroundModeEnabled,
-+                          values->background_mode_enabled);
-+
++  if (preset == kCustom) {
++    const std::optional<CustomPreset> custom =
++        ParseCustomConfig(profile_prefs->GetString(kCustomConfigJson));
++    if (!custom.has_value()) {
++      return false;
++    }
++    WritePresetValues(profile_prefs, local_state, custom->values);
++    SeedFlags(local_state, custom->flags);
++    return true;
++  }
++  const std::optional<PresetValues> values = GetPresetValues(preset);
++  if (!values.has_value()) {
++    return false;
++  }
++  WritePresetValues(profile_prefs, local_state, *values);
 +  SeedFlags(local_state, GetPresetFlags(preset));
 +  return true;
 +}
@@ -1073,22 +1480,29 @@ binding, same single consumer.
 +#endif  // CHROME_BROWSER_UI_WEBUI_AERIUM_PRESETS_H_
 --- /dev/null
 +++ b/chrome/browser/ui/webui/settings/aerium_guard_handler.h
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,261 @@
 +#ifndef CHROME_BROWSER_UI_WEBUI_SETTINGS_AERIUM_GUARD_HANDLER_H_
 +#define CHROME_BROWSER_UI_WEBUI_SETTINGS_AERIUM_GUARD_HANDLER_H_
 +
 +#include <string>
++#include <vector>
 +
++#include "base/files/file_path.h"
++#include "base/files/file_util.h"
 +#include "base/functional/bind.h"
 +#include "base/memory/raw_ptr.h"
 +#include "base/values.h"
 +#include "chrome/browser/browser_process.h"
 +#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/select_file_policy/chrome_select_file_policy.h"
 +#include "chrome/browser/ui/webui/aerium_presets.h"
 +#include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
 +#include "components/prefs/pref_change_registrar.h"
 +#include "components/prefs/pref_service.h"
++#include "content/public/browser/web_contents.h"
 +#include "content/public/browser/web_ui.h"
++#include "ui/shell_dialogs/select_file_dialog.h"
++#include "ui/shell_dialogs/selected_file_info.h"
 +
 +namespace settings {
 +
@@ -1103,16 +1517,28 @@ binding, same single consumer.
 +// happen in the browser, against aerium_presets.h - the same definitions the
 +// first-run screen applies, so the two cannot drift.
 +//
-+// Header-only for the same reason ungoogled_first_run.h is: it needs no
-+// BUILD.gn entry.
-+class AeriumGuardHandler : public SettingsPageUIHandler {
++// It is also where Custom's import/export lives: reading or writing an
++// arbitrary file is not something the settings WebUI's sandboxed JS can do on
++// its own, so both go through ui::SelectFileDialog here, the same mechanism
++// FileSelectHelper uses for a page's own <input type=file>.
++//
++// Header-only for the same reason the rest of this patch set is: it needs
++// no BUILD.gn entry. ui::SelectFileDialog::Listener's overrides being
++// defined inline here doesn't change that - only their declaration needs to
++// be visible to callers, same as any other virtual override.
++class AeriumGuardHandler : public SettingsPageUIHandler,
++                          public ui::SelectFileDialog::Listener {
 + public:
 +  explicit AeriumGuardHandler(Profile* profile) : profile_(profile) {}
 +
 +  AeriumGuardHandler(const AeriumGuardHandler&) = delete;
 +  AeriumGuardHandler& operator=(const AeriumGuardHandler&) = delete;
 +
-+  ~AeriumGuardHandler() override = default;
++  ~AeriumGuardHandler() override {
++    if (select_file_dialog_) {
++      select_file_dialog_->ListenerDestroyed();
++    }
++  }
 +
 +  // content::WebUIMessageHandler:
 +  void RegisterMessages() override {
@@ -1123,6 +1549,14 @@ binding, same single consumer.
 +    web_ui()->RegisterMessageCallback(
 +        "aeriumGuardApplyPreset",
 +        base::BindRepeating(&AeriumGuardHandler::HandleApplyPreset,
++                            base::Unretained(this)));
++    web_ui()->RegisterMessageCallback(
++        "aeriumGuardImportCustomConfig",
++        base::BindRepeating(&AeriumGuardHandler::HandleImportCustomConfig,
++                            base::Unretained(this)));
++    web_ui()->RegisterMessageCallback(
++        "aeriumGuardExportCurrentSettings",
++        base::BindRepeating(&AeriumGuardHandler::HandleExportCurrentSettings,
 +                            base::Unretained(this)));
 +  }
 +
@@ -1198,9 +1632,111 @@ binding, same single consumer.
 +    NotifyPresetChanged();
 +  }
 +
++  // Opens a native "Open" dialog filtered to .json. The read, the parse and
++  // the apply all happen in FileSelected() once a path comes back - this call
++  // only records which callback to resolve when that happens.
++  void HandleImportCustomConfig(const base::ListValue& args) {
++    CHECK_EQ(1U, args.size());
++    AllowJavascript();
++    pending_callback_id_ = args[0].GetString();
++    pending_operation_ = Operation::kImport;
++    SelectFile(ui::SelectFileDialog::SELECT_OPEN_FILE, base::FilePath());
++  }
++
++  // Opens a native "Save As" dialog, defaulting to aerium-guard.json. The
++  // live settings are serialized and written in FileSelected().
++  void HandleExportCurrentSettings(const base::ListValue& args) {
++    CHECK_EQ(1U, args.size());
++    AllowJavascript();
++    pending_callback_id_ = args[0].GetString();
++    pending_operation_ = Operation::kExport;
++    SelectFile(ui::SelectFileDialog::SELECT_SAVEAS_FILE,
++              base::FilePath(FILE_PATH_LITERAL("aerium-guard.json")));
++  }
++
++  void SelectFile(ui::SelectFileDialog::Type type,
++                  const base::FilePath& default_path) {
++    if (!select_file_dialog_) {
++      select_file_dialog_ = ui::SelectFileDialog::Create(
++          this, std::make_unique<ChromeSelectFilePolicy>(
++                    web_ui()->GetWebContents()));
++    }
++    ui::SelectFileDialog::FileTypeInfo file_types;
++    file_types.extensions = {{FILE_PATH_LITERAL("json")}};
++    select_file_dialog_->SelectFile(
++        type, std::u16string(), default_path, &file_types, 0,
++        FILE_PATH_LITERAL("json"),
++        web_ui()->GetWebContents()->GetTopLevelNativeWindow());
++  }
++
++  // ui::SelectFileDialog::Listener:
++  void FileSelected(const ui::SelectedFileInfo& file, int index) override {
++    const std::string callback_id = std::move(pending_callback_id_);
++    pending_callback_id_.clear();
++    if (pending_operation_ == Operation::kImport) {
++      std::string json;
++      bool applied = false;
++      if (base::ReadFileToString(file.path(), &json)) {
++        // Written before ApplyPreset() runs: ApplyPreset(kCustom, ...) reads
++        // this same pref back out, so the config it parses is the file just
++        // picked, not whatever was there before.
++        profile_->GetPrefs()->SetString(aerium_presets::kCustomConfigJson,
++                                        json);
++        applied = aerium_presets::ApplyPreset(
++            aerium_presets::kCustom, profile_->GetPrefs(),
++            g_browser_process->local_state());
++        if (!applied) {
++          // Didn't parse after all - do not leave an unusable file behind as
++          // the stored Custom config.
++          profile_->GetPrefs()->SetString(aerium_presets::kCustomConfigJson,
++                                          std::string());
++        }
++      }
++      if (applied) {
++        NotifyPresetChanged();
++      }
++      ResolveJavascriptCallback(base::Value(callback_id),
++                                base::Value(applied));
++      return;
++    }
++
++    // Export: serialize the live settings, whatever they currently are, and
++    // the browser's complete current flags list - not filtered to entries
++    // this feature's own fields recognize. See aerium_presets.h's
++    // SerializeCustomConfig() for why.
++    const aerium_presets::PresetValues values = aerium_presets::ReadCurrentValues(
++        profile_->GetPrefs(), g_browser_process->local_state());
++    std::vector<std::string> all_current_flags;
++    for (const base::Value& entry :
++        g_browser_process->local_state()->GetList(
++            aerium_presets::kAboutFlagsEntries)) {
++      if (entry.is_string()) {
++        all_current_flags.push_back(entry.GetString());
++      }
++    }
++    const std::string json =
++        aerium_presets::SerializeCustomConfig(values, all_current_flags);
++    const bool wrote_ok = base::WriteFile(file.path(), json);
++    ResolveJavascriptCallback(base::Value(callback_id), base::Value(wrote_ok));
++  }
++
++  void FileSelectionCanceled() override {
++    if (pending_callback_id_.empty()) {
++      return;
++    }
++    const std::string callback_id = std::move(pending_callback_id_);
++    pending_callback_id_.clear();
++    ResolveJavascriptCallback(base::Value(callback_id), base::Value(false));
++  }
++
 +  const raw_ptr<Profile> profile_;
 +  PrefChangeRegistrar profile_registrar_;
 +  PrefChangeRegistrar local_state_registrar_;
++
++  scoped_refptr<ui::SelectFileDialog> select_file_dialog_;
++  enum class Operation { kImport, kExport };
++  Operation pending_operation_ = Operation::kImport;
++  std::string pending_callback_id_;
 +};
 +
 +}  // namespace settings
@@ -1208,7 +1744,7 @@ binding, same single consumer.
 +#endif  // CHROME_BROWSER_UI_WEBUI_SETTINGS_AERIUM_GUARD_HANDLER_H_
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
-@@ -2425,6 +2425,23 @@
+@@ -2425,6 +2425,28 @@
         IDS_SETTINGS_CLEAR_BROWSING_DATA_ON_EXIT_LABEL},
        {"clearBrowsingDataOnExitDesc",
         IDS_SETTINGS_CLEAR_BROWSING_DATA_ON_EXIT_DESC},
@@ -1228,7 +1764,12 @@ binding, same single consumer.
 +      {"aeriumGuardPerformanceLabel",
 +       IDS_SETTINGS_AERIUM_GUARD_PERFORMANCE_LABEL},
 +      {"aeriumGuardPerformanceDesc", IDS_SETTINGS_AERIUM_GUARD_PERFORMANCE_DESC},
++      {"aeriumGuardCustomDesc", IDS_SETTINGS_AERIUM_GUARD_CUSTOM_DESC},
 +      {"aeriumGuardRestartNote", IDS_SETTINGS_AERIUM_GUARD_RESTART_NOTE},
++      {"aeriumGuardImportExportNote",
++       IDS_SETTINGS_AERIUM_GUARD_IMPORT_EXPORT_NOTE},
++      {"aeriumGuardImportButton", IDS_SETTINGS_AERIUM_GUARD_IMPORT_BUTTON},
++      {"aeriumGuardExportButton", IDS_SETTINGS_AERIUM_GUARD_EXPORT_BUTTON},
        {"clearOnExitSitesHeader", IDS_SETTINGS_CLEAR_ON_EXIT_SITES_HEADER},
        {"clearOnExitSitesDesc", IDS_SETTINGS_CLEAR_ON_EXIT_SITES_DESC},
        {"clearOnExitSitesAddTitle", IDS_SETTINGS_CLEAR_ON_EXIT_SITES_ADD_TITLE},
@@ -1383,3 +1924,13 @@ binding, same single consumer.
    }
  };
  
+--- a/chrome/browser/prefs/browser_prefs.cc
++++ b/chrome/browser/prefs/browser_prefs.cc
+@@ -1744,2 +1744,7 @@
+   AimEligibilityService::RegisterProfilePrefs(registry);
++  // Aerium: where an imported Aerium Guard "Custom" configuration is stored,
++  // as the friendly JSON it was imported from - see
++  // chrome/browser/ui/webui/aerium_presets.h, kCustomConfigJson. Empty means
++  // nothing has been imported yet.
++  registry->RegisterStringPref("aerium_guard.custom_config_json", std::string());
+   AnnouncementNotificationService::RegisterProfilePrefs(registry);

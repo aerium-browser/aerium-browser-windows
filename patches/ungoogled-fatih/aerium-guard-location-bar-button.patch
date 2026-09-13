@@ -83,22 +83,40 @@ already generated into vector_icons::kShieldIcon and costs nothing to use. No ne
 
 Strings
 -------
-Three new messages, in chrome/app/settings_strings.grdp beside the existing
-Aerium Guard block: the button's tooltip, the bubble's one-line description, and
-the line shown when the current settings match no mode. Everything else the
-bubble displays - its title, the three mode names, the note about flags needing a
-restart - reuses the messages the settings page already defines.
+Two new messages, in chrome/app/settings_strings.grdp beside the existing
+Aerium Guard block: the button's tooltip, and the static status line the
+bubble ends on. Everything else the bubble displays - its title and the four
+mode names, Custom included - reuses the messages the settings page already
+defines.
+
+Custom, and why the bubble is radio buttons and nothing else
+--------------------------------------------------------------
+The bubble originally carried two lines of prose above the three modes and
+one below - what the modes apply to, and a restart note - plus a fourth line
+shown only when nothing matched. All four are gone: the bubble is now the
+four mode names as radio buttons, Custom included, ending in one static
+"Aerium Guard is turned on" line, full stop. That prose belongs on the
+settings page, which has the room for it; a two-click popup does not.
+
+Custom is a fourth radio button, not a fifth thing bolted onto the side. If
+aerium_guard.custom_config_json (see aerium_presets.h) is empty - nothing
+has been imported yet - picking it opens the Aerium Guard settings page via
+chrome::ShowSettingsSubPageForProfile() instead of calling ApplyPreset(),
+since a file-import flow needs more room than this bubble offers. If a
+config is already stored, picking it applies it exactly like any other
+mode - aerium_presets::ApplyPreset() already handles kCustom without this
+file needing to know how.
 # Rebased onto Chromium 152: ai_mode_page_action_icon_view left both lists, so
 # the entries anchor on content_setting_image_view instead. Alphabetical order
 # is unchanged - aerium_guard_icon_view still sorts first.
 
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
-@@ -2253,6 +2253,22 @@
+@@ -2253,3 +2253,16 @@
      <message name="IDS_SETTINGS_AERIUM_GUARD_RESTART_NOTE" desc="Note explaining that part of what a setup mode changes only applies after the browser restarts.">
-       Settings apply straight away. The chrome://flags entries a mode switches on need a restart, and are never switched off again, so a mode you leave keeps any flags it turned on.
+       Most changes apply right away - a few need a restart first.
      </message>
-+    <!-- The three strings below belong to the address-bar button rather than to
++    <!-- The two strings below belong to the address-bar button rather than to
 +         the settings page. They live here because this file is a <part> of
 +         generated_resources.grd, so everything in it lands in the same
 +         chrome/grit/generated_resources.h the browser UI reads, and because the
@@ -108,15 +126,9 @@ restart - reuses the messages the settings page already defines.
 +    <message name="IDS_SETTINGS_AERIUM_GUARD_ICON_TOOLTIP" desc="Tooltip of the address-bar button that opens the Aerium Guard setup modes. The placeholder is the name of the mode currently in force.">
 +      Aerium Guard: <ph name="MODE">$1<ex>Recommended</ex></ph>
 +    </message>
-+    <message name="IDS_SETTINGS_AERIUM_GUARD_BUBBLE_DESC" desc="Line under the title of the address-bar bubble, explaining that the modes it offers apply to the whole browser rather than to the site being shown.">
-+      These modes apply to the whole browser, not just this site.
++    <message name="IDS_SETTINGS_AERIUM_GUARD_BUBBLE_STATUS_ON" desc="Static status line at the end of the address-bar bubble's list of setup modes, confirming Aerium Guard is active.">
++      Aerium Guard is turned on.
 +    </message>
-+    <message name="IDS_SETTINGS_AERIUM_GUARD_BUBBLE_CUSTOM_NOTE" desc="Note shown in the address-bar bubble when the current settings match none of the three modes, so none of them is selected.">
-+      Your settings match none of these modes. Picking one replaces them.
-+    </message>
-     <message name="IDS_SETTINGS_TITLE_AND_COUNT" desc="The title of a section in the settings page with a count of the total number of items in the section">
-       <ph name="TITLE">$1<ex>Block</ex></ph> - <ph name="COUNT">$2<ex>42</ex></ph>
-     </message>
 --- a/chrome/browser/ui/views/location_bar/BUILD.gn
 +++ b/chrome/browser/ui/views/location_bar/BUILD.gn
 @@ -12,6 +12,7 @@
@@ -256,7 +268,7 @@ restart - reuses the messages the settings page already defines.
 +#endif  // CHROME_BROWSER_UI_VIEWS_LOCATION_BAR_AERIUM_GUARD_ICON_VIEW_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/location_bar/aerium_guard_icon_view.cc
-@@ -0,0 +1,276 @@
+@@ -0,0 +1,287 @@
 +#include "chrome/browser/ui/views/location_bar/aerium_guard_icon_view.h"
 +
 +#include <memory>
@@ -268,6 +280,7 @@ restart - reuses the messages the settings page already defines.
 +#include "base/functional/bind.h"
 +#include "chrome/browser/browser_process.h"
 +#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/chrome_pages.h"
 +#include "chrome/browser/ui/views/location_bar/location_bar_bubble_delegate_view.h"
 +#include "chrome/browser/ui/webui/aerium_presets.h"
 +#include "chrome/grit/generated_resources.h"
@@ -329,15 +342,17 @@ restart - reuses the messages the settings page already defines.
 +
 +}  // namespace
 +
-+// The bubble the button opens: the three modes as a radio group, the note about
-+// flags needing a restart, and - only when the current settings match no mode -
-+// a line saying so. Picking a mode applies it straight away through
-+// aerium_presets::ApplyPreset(), the same call the settings page's handler
-+// makes, so the two cannot disagree about what a mode is.
++// The bubble the button opens: the four modes as a radio group, ending in a
++// static status line - nothing else. Picking a built-in mode applies it
++// straight away through aerium_presets::ApplyPreset(), the same call the
++// settings page's handler makes, so the two cannot disagree about what a
++// mode is. Picking Custom does the same IF a configuration has already been
++// imported; if none has, it opens the Aerium Guard settings page instead,
++// since importing a file needs more room than this bubble offers.
 +//
-+// Deliberately not offered here: any way to edit an individual setting. This is
-+// a shortcut for switching modes, and the settings page remains the place where
-+// the pieces are.
++// Deliberately not offered here: any way to edit an individual setting, or
++// to import/export a Custom configuration. This is a shortcut for switching
++// modes, and the settings page remains the place where the pieces are.
 +class AeriumGuardBubbleView : public LocationBarBubbleDelegateView {
 +  METADATA_HEADER(AeriumGuardBubbleView, LocationBarBubbleDelegateView)
 +
@@ -354,10 +369,10 @@ restart - reuses the messages the settings page already defines.
 +  void SyncToActivePreset();
 +
 +  const raw_ptr<Profile> profile_;
-+  raw_ptr<views::Label> custom_note_ = nullptr;
 +  raw_ptr<views::RadioButton> recommended_ = nullptr;
 +  raw_ptr<views::RadioButton> privacy_ = nullptr;
 +  raw_ptr<views::RadioButton> performance_ = nullptr;
++  raw_ptr<views::RadioButton> custom_ = nullptr;
 +};
 +
 +AeriumGuardBubbleView::AeriumGuardBubbleView(
@@ -379,14 +394,6 @@ restart - reuses the messages the settings page already defines.
 +      views::BoxLayout::Orientation::kVertical, gfx::Insets(),
 +      provider->GetDistanceMetric(views::DISTANCE_RELATED_CONTROL_VERTICAL)));
 +
-+  auto add_note = [this](int message_id) {
-+    auto label = std::make_unique<views::Label>(
-+        l10n_util::GetStringUTF16(message_id), views::style::CONTEXT_LABEL,
-+        views::style::STYLE_SECONDARY);
-+    label->SetMultiLine(true);
-+    label->SetHorizontalAlignment(gfx::ALIGN_TO_HEAD);
-+    return AddChildView(std::move(label));
-+  };
 +  auto add_mode = [this](int label_id, const char* preset) {
 +    auto radio = std::make_unique<views::RadioButton>(
 +        l10n_util::GetStringUTF16(label_id), /*group_id=*/0);
@@ -395,15 +402,20 @@ restart - reuses the messages the settings page already defines.
 +    return AddChildView(std::move(radio));
 +  };
 +
-+  add_note(IDS_SETTINGS_AERIUM_GUARD_BUBBLE_DESC);
-+  custom_note_ = add_note(IDS_SETTINGS_AERIUM_GUARD_BUBBLE_CUSTOM_NOTE);
 +  recommended_ = add_mode(IDS_SETTINGS_AERIUM_GUARD_RECOMMENDED_LABEL,
 +                          aerium_presets::kRecommended);
 +  privacy_ = add_mode(IDS_SETTINGS_AERIUM_GUARD_PRIVACY_LABEL,
 +                      aerium_presets::kPrivacy);
 +  performance_ = add_mode(IDS_SETTINGS_AERIUM_GUARD_PERFORMANCE_LABEL,
 +                          aerium_presets::kPerformance);
-+  add_note(IDS_SETTINGS_AERIUM_GUARD_RESTART_NOTE);
++  custom_ = add_mode(IDS_SETTINGS_AERIUM_GUARD_CUSTOM_LABEL,
++                     aerium_presets::kCustom);
++
++  auto status = std::make_unique<views::Label>(
++      l10n_util::GetStringUTF16(IDS_SETTINGS_AERIUM_GUARD_BUBBLE_STATUS_ON),
++      views::style::CONTEXT_LABEL, views::style::STYLE_SECONDARY);
++  status->SetHorizontalAlignment(gfx::ALIGN_TO_HEAD);
++  AddChildView(std::move(status));
 +
 +  SyncToActivePreset();
 +}
@@ -411,7 +423,18 @@ restart - reuses the messages the settings page already defines.
 +AeriumGuardBubbleView::~AeriumGuardBubbleView() = default;
 +
 +void AeriumGuardBubbleView::OnModePicked(const char* preset) {
-+  aerium_presets::ApplyPreset(preset, ProfilePrefsOf(profile_), LocalState());
++  PrefService* const profile_prefs = ProfilePrefsOf(profile_);
++  // Custom with nothing imported yet: a file picker needs more room than
++  // this bubble offers, so send the user to the settings page's Import
++  // control instead of silently doing nothing (ApplyPreset() itself is a
++  // no-op with no stored config).
++  if (preset == aerium_presets::kCustom && profile_prefs &&
++      profile_prefs->GetString(aerium_presets::kCustomConfigJson).empty()) {
++    chrome::ShowSettingsSubPageForProfile(profile_, "aeriumGuard");
++    SyncToActivePreset();
++    return;
++  }
++  aerium_presets::ApplyPreset(preset, profile_prefs, LocalState());
 +  // Re-read rather than trusting the click: ApplyPreset() refuses to do
 +  // anything without both PrefServices, and the radio group has already drawn
 +  // itself as selected by the time the callback runs.
@@ -423,7 +446,7 @@ restart - reuses the messages the settings page already defines.
 +  recommended_->SetChecked(active == aerium_presets::kRecommended);
 +  privacy_->SetChecked(active == aerium_presets::kPrivacy);
 +  performance_->SetChecked(active == aerium_presets::kPerformance);
-+  custom_note_->SetVisible(active == aerium_presets::kCustom);
++  custom_->SetChecked(active == aerium_presets::kCustom);
 +}
 +
 +BEGIN_METADATA(AeriumGuardBubbleView)

@@ -18,6 +18,25 @@ behind any of this.
   into the page. Click the quote for another one; each install sees its own
   rotation rather than everyone opening on the same quote the same day.
 
+**Aerium Guard**
+
+- A fourth setup mode, **Custom**, loaded from a JSON file you provide.
+  Import and export live in `chrome://settings/aeriumGuard`; the file is a
+  general `chrome://flags` backup as well as a settings preset - export
+  writes out every flag currently on, not just ones the browser's own three
+  modes touch, and import restores that same list on any profile. A dozen
+  named fields (`third_party_cookies`, `memory_saver`, `battery_saver`, and
+  so on) cover the everyday settings without needing to know the underlying
+  pref names; everything else is optional and falls back to Recommended's
+  own value.
+- The shield in the address bar is trimmed down to just the four modes as
+  plain radio buttons and a one-line "Aerium Guard is turned on" status -
+  the explanation of what the modes do and the restart note now live only on
+  the settings page, which has the room for them.
+- The settings page's own mode descriptions are shorter and in plainer
+  language - what used to read like a changelog entry for each mode now
+  reads like a sentence.
+
 **Fingerprinting**
 
 - `window.queryLocalFonts()` is off. The Local Font Access API returns every

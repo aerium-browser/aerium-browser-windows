@@ -742,7 +742,7 @@ binding, same single consumer.
              hidden="[[!pageVisibility_.performance]]">
 --- /dev/null
 +++ b/chrome/browser/ui/webui/aerium_presets.h
-@@ -0,0 +1,735 @@
+@@ -0,0 +1,736 @@
 +#ifndef CHROME_BROWSER_UI_WEBUI_AERIUM_PRESETS_H_
 +#define CHROME_BROWSER_UI_WEBUI_AERIUM_PRESETS_H_
 +
@@ -1155,7 +1155,7 @@ binding, same single consumer.
 +// Leaves *out untouched and returns true if `key` is absent (the caller's
 +// default stands); returns false only when `key` is present with the wrong
 +// JSON type.
-+inline bool GetOptionalBool(const base::Value::Dict& dict,
++inline bool GetOptionalBool(const base::DictValue& dict,
 +                            std::string_view key,
 +                            bool* out) {
 +  const base::Value* value = dict.Find(key);
@@ -1173,7 +1173,7 @@ binding, same single consumer.
 +// contract as GetOptionalBool(), plus: a present string outside every name
 +// in `mapping` is also a failure, not a fallback to the default.
 +inline bool GetOptionalEnum(
-+    const base::Value::Dict& dict,
++    const base::DictValue& dict,
 +    std::string_view key,
 +    std::initializer_list<std::pair<std::string_view, int>> mapping,
 +    int* out) {
@@ -1196,11 +1196,12 @@ binding, same single consumer.
 +}  // namespace internal
 +
 +inline std::optional<CustomPreset> ParseCustomConfig(const std::string& json) {
-+  std::optional<base::Value> parsed = base::JSONReader::Read(json);
-+  if (!parsed.has_value() || !parsed->is_dict()) {
++  std::optional<base::DictValue> parsed =
++      base::JSONReader::ReadDict(json, base::JSON_PARSE_RFC);
++  if (!parsed.has_value()) {
 +    return std::nullopt;
 +  }
-+  const base::Value::Dict& dict = parsed->GetDict();
++  const base::DictValue& dict = *parsed;
 +
 +  CustomPreset custom;
 +  // Start from Recommended's own values - GetPresetValues() never fails for
@@ -1356,7 +1357,7 @@ binding, same single consumer.
 +inline std::string SerializeCustomConfig(
 +    const PresetValues& values,
 +    const std::vector<std::string>& all_current_flags) {
-+  base::Value::Dict dict;
++  base::DictValue dict;
 +  dict.Set("aerium_guard_custom_version", 1);
 +  dict.Set("do_not_track", values.do_not_track);
 +  dict.Set("third_party_cookies",
@@ -1384,7 +1385,7 @@ binding, same single consumer.
 +          values.battery_saver_mode_state == 0 ? "off" : "on_battery");
 +  dict.Set("keep_running_in_background", values.background_mode_enabled);
 +
-+  base::Value::List flags_list;
++  base::ListValue flags_list;
 +  for (const std::string& flag : all_current_flags) {
 +    flags_list.Append(flag);
 +  }

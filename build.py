@@ -196,14 +196,15 @@ def _provide_tsc(source_tree):
     npm_prefix = subprocess.run(['npm', 'config', 'get', 'prefix'], check=True,
                                 shell=True, capture_output=True,
                                 encoding=ENCODING).stdout.strip()
-    tsc_js = Path(npm_prefix) / 'node_modules' / 'typescript' / 'bin' / 'tsc'
     npm_ts_lib = Path(npm_prefix) / 'node_modules' / 'typescript' / 'lib'
     node_exe = shutil.which('node')
 
     dest_dir = source_tree / 'third_party' / 'typescript' / 'windows-amd64' / 'src' / 'lib'
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    for dts in npm_ts_lib.glob('*.d.ts'):
-        shutil.copy2(dts, dest_dir / dts.name)
+    if dest_dir.exists():
+        shutil.rmtree(dest_dir)
+    dest_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(npm_ts_lib, dest_dir)
+    tsc_js = dest_dir / 'tsc.js'
     dest = dest_dir / 'tsc.exe'
 
     launcher_cs = '\n'.join([

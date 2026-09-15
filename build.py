@@ -192,7 +192,7 @@ def _provide_cpython3(source_tree):
 
 
 def _provide_tsc(source_tree):
-    subprocess.run(['npm', 'install', '-g', 'typescript@5'], check=True, shell=True)
+    subprocess.run(['npm', 'install', '-g', 'typescript@6.0.0-beta'], check=True, shell=True)
     npm_prefix = subprocess.run(['npm', 'config', 'get', 'prefix'], check=True,
                                 shell=True, capture_output=True,
                                 encoding=ENCODING).stdout.strip()

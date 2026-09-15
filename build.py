@@ -184,6 +184,55 @@ def _provide_clang_format(source_tree):
     get_logger().info('Provided buildtools/win-format/clang-format.exe')
 
 
+def _provide_cpython3(source_tree):
+    dest_dir = source_tree / 'third_party' / 'cpython3' / 'host' / 'bin'
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(sys.executable, dest_dir / 'python3.exe')
+    get_logger().info('Provided third_party/cpython3/host/bin/python3.exe')
+
+
+def _provide_tsc(source_tree):
+    subprocess.run(['npm', 'install', '-g', 'typescript'], check=True, shell=True)
+    npm_prefix = subprocess.run(['npm', 'config', 'get', 'prefix'], check=True,
+                                shell=True, capture_output=True,
+                                encoding=ENCODING).stdout.strip()
+    tsc_js = Path(npm_prefix) / 'node_modules' / 'typescript' / 'bin' / 'tsc'
+    node_exe = shutil.which('node')
+
+    dest_dir = source_tree / 'third_party' / 'typescript' / 'windows-amd64' / 'src' / 'lib'
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / 'tsc.exe'
+
+    launcher_cs = '\n'.join([
+        'using System.Diagnostics;',
+        'using System.Linq;',
+        'class TscLauncher {',
+        '  static int Main(string[] args) {',
+        '    var psi = new ProcessStartInfo();',
+        '    psi.FileName = @"NODE_EXE_PLACEHOLDER";',
+        '    psi.Arguments = "\\"" + @"TSC_JS_PLACEHOLDER" + "\\" " + '
+        'string.Join(" ", args.Select(a => "\\"" + a.Replace("\\"", "\\\\\\"") + "\\""));',
+        '    psi.UseShellExecute = false;',
+        '    var p = Process.Start(psi);',
+        '    p.WaitForExit();',
+        '    return p.ExitCode;',
+        '  }',
+        '}',
+        '',
+    ])
+    launcher_cs = launcher_cs.replace('NODE_EXE_PLACEHOLDER', str(node_exe))
+    launcher_cs = launcher_cs.replace('TSC_JS_PLACEHOLDER', str(tsc_js))
+
+    launcher_src = dest_dir / 'tsc_launcher.cs'
+    launcher_src.write_text(launcher_cs, encoding=ENCODING)
+
+    csc = shutil.which('csc') or r'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+    subprocess.run([csc, '/nologo', '/out:{}'.format(dest), str(launcher_src)],
+                   check=True)
+    launcher_src.unlink()
+    get_logger().info('Provided third_party/typescript/windows-amd64/src/lib/tsc.exe')
+
+
 def _stage_bundled_extensions(source_tree):
     """
     Downloads the Chromium Web Store crx into out/Default/Extensions and
@@ -466,6 +515,8 @@ def main():
         # attempts later. A resumed CI tree comes from a checkpoint that
         # already contains buildtools, so skipping it there is correct.
         _provide_clang_format(source_tree)
+        _provide_cpython3(source_tree)
+        _provide_tsc(source_tree)
 
     # chrome://aerium's patch list is generated into the source tree, and the
     # block above is skipped entirely on a resumed CI tree (line 365: the tree

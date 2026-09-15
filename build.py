@@ -187,8 +187,8 @@ def _provide_clang_format(source_tree):
 def _provide_cpython3(source_tree):
     dest_dir = source_tree / 'third_party' / 'cpython3' / 'host' / 'bin'
     dest_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(sys.executable, dest_dir / 'python3.exe')
-    get_logger().info('Provided third_party/cpython3/host/bin/python3.exe')
+    shutil.copy2(sys.executable, dest_dir / 'python3')
+    get_logger().info('Provided third_party/cpython3/host/bin/python3')
 
 
 def _provide_tsc(source_tree):
@@ -197,10 +197,13 @@ def _provide_tsc(source_tree):
                                 shell=True, capture_output=True,
                                 encoding=ENCODING).stdout.strip()
     tsc_js = Path(npm_prefix) / 'node_modules' / 'typescript' / 'bin' / 'tsc'
+    npm_ts_lib = Path(npm_prefix) / 'node_modules' / 'typescript' / 'lib'
     node_exe = shutil.which('node')
 
     dest_dir = source_tree / 'third_party' / 'typescript' / 'windows-amd64' / 'src' / 'lib'
     dest_dir.mkdir(parents=True, exist_ok=True)
+    for dts in npm_ts_lib.glob('*.d.ts'):
+        shutil.copy2(dts, dest_dir / dts.name)
     dest = dest_dir / 'tsc.exe'
 
     launcher_cs = '\n'.join([

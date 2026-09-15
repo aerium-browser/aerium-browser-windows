@@ -14,17 +14,16 @@ imported, still listed in BUILD.gn); it is simply never instantiated.
 
 --- a/chrome/browser/resources/settings/languages_page/languages_page_index.html
 +++ b/chrome/browser/resources/settings/languages_page/languages_page_index.html
-@@ -21,10 +21,6 @@
+@@ -21,9 +21,6 @@
        languages="[[languages]]" route-path$="[[routes_.SPELL_CHECK.path]]">
    </settings-spell-check-page>
-
--  <settings-translate-page slot="view" id="translate" prefs="{{prefs}}"
--      languages="[[languages]]">
+ 
+-  <settings-translate-page slot="view" id="translate" languages="[[languages]]">
 -  </settings-translate-page>
 -
  <if expr="not is_macosx">
    <settings-edit-dictionary-page slot="view" id="editDictionary"
-       data-parent-view-id="spellCheck" prefs="{{prefs}}"
+       data-parent-view-id="spellCheck"
 --- a/chrome/browser/resources/settings/languages_page/languages_page_index.ts
 +++ b/chrome/browser/resources/settings/languages_page/languages_page_index.ts
 @@ -63,7 +63,7 @@

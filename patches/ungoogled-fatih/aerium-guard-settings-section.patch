@@ -262,10 +262,9 @@ binding, same single consumer.
      "ai_page/ai_info_card.ts",
      "ai_page/ai_logging_info_bullet.ts",
      "ai_page/ai_mode_search_page.ts",
-@@ -129,6 +130,7 @@
-     "performance_page/tab_discard/exception_entry.ts",
-     "performance_page/tab_discard/exception_list.ts",
-     "performance_page/tab_discard/exception_tabbed_add_dialog.ts",
+@@ -112,5 +112,6 @@
+     "people_page/sync_encryption_options.ts",
+     "people_page/sync_page.ts",
 +    "privacy_page/clear_on_exit.ts",
      "privacy_page/clear_on_exit_sites.ts",
      "privacy_page/cookies_page.ts",
@@ -701,7 +700,7 @@ binding, same single consumer.
    AI: Route;
 --- a/chrome/browser/resources/settings/settings_main/settings_main.html
 +++ b/chrome/browser/resources/settings/settings_main/settings_main.html
-@@ -78,6 +78,13 @@
+@@ -76,6 +76,13 @@
      </div>
    </template>
  
@@ -712,9 +711,9 @@ binding, same single consumer.
 +    </template>
 +  </div>
 +
-   <template is="dom-if" if="[[showAutofillPage_(pageVisibility_.autofill)]]">
-     <div slot="view" id="autofill">
-       <template is="dom-if" if="[[renderPlugin_(
+   <template is="dom-if" if="[[showPage_(
+       pageVisibility_.yourSavedInfo)]]">
+     <div slot="view" id="yourSavedInfo">
 --- a/chrome/browser/resources/settings/settings_main/settings_main.ts
 +++ b/chrome/browser/resources/settings/settings_main/settings_main.ts
 @@ -11,6 +11,7 @@

@@ -225,7 +225,7 @@ resolves whichever webuiRoundedIconsEnabled turns out to be.
 +    SettingsAeriumMediaPageElement.is, SettingsAeriumMediaPageElement);
 --- a/chrome/browser/resources/settings/route.ts
 +++ b/chrome/browser/resources/settings/route.ts
-@@ -212,6 +212,13 @@
+@@ -225,4 +225,11 @@
      r.FONTS = r.APPEARANCE.createChild('/fonts');
    }
  
@@ -236,9 +236,7 @@ resolves whichever webuiRoundedIconsEnabled turns out to be.
 +      '/aeriumMedia', 'aeriumMedia',
 +      loadTimeData.getString('aeriumMediaPageTitle'));
 +
-   if (loadTimeData.getBoolean('enableYourSavedInfoSettingsPage')) {
-     if (visibility.yourSavedInfo !== false) {
-       r.YOUR_SAVED_INFO = r.BASIC.createSection(
+   if (visibility.yourSavedInfo !== false) {
 --- a/chrome/browser/resources/settings/router.ts
 +++ b/chrome/browser/resources/settings/router.ts
 @@ -17,6 +17,7 @@
@@ -278,7 +276,7 @@ resolves whichever webuiRoundedIconsEnabled turns out to be.
  import '../autofill_page/autofill_page_index.js';
 --- a/chrome/browser/resources/settings/settings_menu/settings_menu.html
 +++ b/chrome/browser/resources/settings/settings_menu/settings_menu.html
-@@ -96,6 +96,12 @@
+@@ -91,6 +91,12 @@
            $i18n{appearancePageTitle}
            <cr-ripple></cr-ripple>
          </a>
@@ -288,7 +286,7 @@ resolves whichever webuiRoundedIconsEnabled turns out to be.
 +          $i18n{aeriumMediaPageTitle}
 +          <cr-ripple></cr-ripple>
 +        </a>
-         <a role="menuitem" href="/search" class="cr-nav-menu-item">
+         <a role="menuitem" id="search" href="/search" class="cr-nav-menu-item">
            <cr-icon icon="settings:search"></cr-icon>
            $i18n{searchPageTitle}
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
@@ -303,21 +301,3 @@ resolves whichever webuiRoundedIconsEnabled turns out to be.
        {"ctrlTabMru", IDS_SETTINGS_CTRL_TAB_MRU},
        {"glassEffect", IDS_SETTINGS_TAB_STYLING},
        {"glassEffectClassic", IDS_SETTINGS_TAB_STYLING_CLASSIC},
---- a/chrome/common/media/cdm_registration.cc
-+++ b/chrome/common/media/cdm_registration.cc
-@@ -415,7 +415,14 @@
-   DCHECK(cdms->empty());
- 
- #if BUILDFLAG(ENABLE_WIDEVINE)
--  AddWidevine(cdms);
-+  // Aerium: DRM is opt-in. Nothing is registered until somebody asks, so a
-+  // build with no CDM behaves as though DRM does not exist rather than
-+  // advertising a capability it cannot deliver. The switch comes from the
-+  // aerium.drm_enabled pref - chrome_browser_main.cc on desktop,
-+  // ChromeApplicationImpl on Android.
-+  if (base::CommandLine::ForCurrentProcess()->HasSwitch("enable-widevine")) {
-+    AddWidevine(cdms);
-+  }
- #endif
- 
- #if BUILDFLAG(ENABLE_LIBRARY_CDMS)

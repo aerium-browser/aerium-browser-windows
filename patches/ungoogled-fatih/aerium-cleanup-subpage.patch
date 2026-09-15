@@ -83,10 +83,10 @@ Two details that are easy to get wrong here
        {"siteRulesNone", IDS_SETTINGS_SITE_RULES_NONE},
 --- a/chrome/browser/resources/settings/BUILD.gn
 +++ b/chrome/browser/resources/settings/BUILD.gn
-@@ -130,6 +130,7 @@
-     "performance_page/tab_discard/exception_entry.ts",
-     "performance_page/tab_discard/exception_list.ts",
-     "performance_page/tab_discard/exception_tabbed_add_dialog.ts",
+@@ -111,6 +111,7 @@
+     "people_page/sync_controls.ts",
+     "people_page/sync_encryption_options.ts",
+     "people_page/sync_page.ts",
 +    "privacy_page/aerium_cleanup_page.ts",
      "privacy_page/clear_on_exit.ts",
      "privacy_page/clear_on_exit_sites.ts",

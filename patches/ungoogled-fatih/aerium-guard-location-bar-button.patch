@@ -602,10 +602,10 @@ file needing to know how.
    auto clear_all_button = views::CreateVectorImageButton(base::BindRepeating(
        static_cast<void (OmniboxView::*)(const std::u16string&)>(
            &OmniboxView::SetUserText),
-@@ -994,6 +1012,14 @@
-   add_trailing_decoration(page_action_container_,
-                           /*intra_item_padding=*/0,
-                           /*edge_padding=*/trailing_decorations_edge_padding);
+@@ -874,5 +874,13 @@
+                           GetPageActionInfo().is_aim_last_visible_page_action
+                               ? kTrailingEdgePaddingForAim
+                               : trailing_decorations_edge_padding);
 +  // Aerium: added after both page action containers, so it sits to their left -
 +  // the bookmark star stays the right-most thing in the location bar.
 +  if (aerium_guard_icon_) {
@@ -616,7 +616,6 @@ file needing to know how.
 +  }
    add_trailing_decoration(ai_mode_hint_label_, /*intra_item_padding=*/0,
                            /*edge_padding=*/trailing_decorations_edge_padding);
-   for (ContentSettingImageView* view : base::Reversed(content_setting_views_)) {
 @@ -1123,6 +1149,9 @@
    for (ContentSettingImageView* image_view : content_setting_views_) {
      image_view->SetIconColor(icon_color);
@@ -627,20 +626,24 @@ file needing to know how.
  
    RefreshBackground();
    RefreshClearAllButtonIcon();
-@@ -1519,7 +1548,8 @@
+@@ -1320,11 +1320,12 @@
+ }
  
  int LocationBarView::GetMinimumTrailingWidth() const {
-   int trailing_width = IncrementalMinimumWidth(page_action_icon_container_) +
--                       IncrementalMinimumWidth(page_action_container_);
-+                       IncrementalMinimumWidth(page_action_container_) +
+-  int trailing_width = IncrementalMinimumWidth(page_action_container_);
++  int trailing_width = IncrementalMinimumWidth(page_action_container_) +
 +                       IncrementalMinimumWidth(aerium_guard_icon_);
  
    for (ContentSettingImageView* content_setting_view : content_setting_views_) {
      trailing_width += IncrementalMinimumWidth(content_setting_view);
-@@ -1662,6 +1692,12 @@
    }
  
-   page_action_icon_controller_->UpdateAll();
+   return trailing_width;
+ }
+@@ -1461,5 +1461,11 @@
+       browser_view->UpdateWebAppStatusIconsVisiblity();
+     }
+   }
 +
 +  // Aerium: driven from here rather than by the controller, which does not know
 +  // about it, so that it hides and comes back with the icons beside it.
@@ -649,7 +652,6 @@ file needing to know how.
 +  }
  }
  
- void LocationBarView::RefreshAiModePageActionIconView() {
 --- a/chrome/browser/ui/views/location_bar/location_bar_view.h
 +++ b/chrome/browser/ui/views/location_bar/location_bar_view.h
 @@ -21,6 +21,7 @@
@@ -660,7 +662,9 @@ file needing to know how.
  #include "chrome/browser/ui/views/location_bar/content_setting_image_view.h"
  #include "chrome/browser/ui/views/location_bar/location_icon_view.h"
  #include "chrome/browser/ui/views/omnibox/omnibox_popup_presenter_delegate.h"
-@@ -593,6 +594,12 @@
+@@ -577,9 +577,15 @@
+ 
+ 
    // The content setting views.
    ContentSettingViews content_setting_views_;
  
@@ -670,6 +674,7 @@ file needing to know how.
 +  // that have no Browser.
 +  raw_ptr<AeriumGuardIconView> aerium_guard_icon_ = nullptr;
 +
-   // The controller for page action icons.
-   raw_ptr<PageActionIconController> page_action_icon_controller_ = nullptr;
+   // The container for page action icons.
+   raw_ptr<page_actions::PageActionContainerView> page_action_container_ =
+       nullptr;
  

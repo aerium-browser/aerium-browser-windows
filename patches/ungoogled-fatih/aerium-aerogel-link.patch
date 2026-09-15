@@ -94,7 +94,7 @@ the build applies it.
      case IDC_PRINT:
        return IsPrintPreviewEnabled();
  
-@@ -3750,6 +3766,17 @@ void RenderViewContextMenu::ExecuteCommand(int id, int event_flags) {
+@@ -3818,6 +3818,17 @@
            /*started_from_context_menu=*/true);
        break;
  
@@ -109,6 +109,6 @@ the build applies it.
 +          params_.link_url);
 +      break;
 +
+     case IDC_CONTENT_CONTEXT_OPENLINK_ISOLATED:
      case IDC_CONTENT_CONTEXT_OPENLINKOFFTHERECORD:
        // Pass along the |referring_url| so we can show it in browser UI. Note
-       // that this won't and shouldn't be sent via the referrer header.

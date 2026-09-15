@@ -311,10 +311,10 @@ and hosted app data are still off.
  
 --- a/chrome/browser/resources/settings/BUILD.gn
 +++ b/chrome/browser/resources/settings/BUILD.gn
-@@ -129,6 +129,7 @@
-     "performance_page/tab_discard/exception_entry.ts",
-     "performance_page/tab_discard/exception_list.ts",
-     "performance_page/tab_discard/exception_tabbed_add_dialog.ts",
+@@ -109,6 +109,7 @@
+     "people_page/sync_controls.ts",
+     "people_page/sync_encryption_options.ts",
+     "people_page/sync_page.ts",
 +    "privacy_page/clear_on_exit_sites.ts",
      "privacy_page/cookies_page.ts",
      "privacy_page/do_not_track_toggle.ts",

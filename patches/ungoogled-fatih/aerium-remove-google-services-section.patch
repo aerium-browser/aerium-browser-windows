@@ -302,7 +302,7 @@ plainly where the suggestions come from.
    </settings-people-page>
  
 -  <settings-sync-page slot="view" id="sync"
--      data-parent-view-id="parent" prefs="{{prefs}}"
+-      data-parent-view-id="parent"
 -      route-path$="[[routes_.SYNC.path]]">
 -  </settings-sync-page>
 -
@@ -313,15 +313,14 @@ plainly where the suggestions come from.
  <if expr="not is_chromeos">
     <settings-manage-profile slot="view" id="manageProfile"
         data-parent-view-id="parent" profile-name="[[profileName_]]"
-@@ -34,12 +25,4 @@
-          route-path$="[[routes_.ACCOUNT.path]]">
+@@ -35,11 +26,4 @@
       </settings-account-page>
     </template>
--
+ 
 -   <template is="dom-if" if="[[replaceSyncPromosWithSignInPromos_]]"
 -      restamp>
 -     <settings-google-services-page slot="view" id="googleServices"
--         data-parent-view-id="parent" prefs="{{prefs}}"
+-         data-parent-view-id="parent"
 -         route-path$="[[routes_.GOOGLE_SERVICES.path]]">
 -     </settings-google-services-page>
 -   </template>
@@ -354,38 +353,38 @@ plainly where the suggestions come from.
          case routes.SIGN_OUT:
 --- a/chrome/browser/resources/settings/privacy_page/personalization_options.html
 +++ b/chrome/browser/resources/settings/privacy_page/personalization_options.html
-@@ -117,15 +117,6 @@
+@@ -118,15 +118,6 @@
      </cr-link-row>
  </if><!-- chromeos -->
  </if><!-- _google_chrome -->
--    <template is="dom-if" if="[[showSearchSuggestToggle_()]]" restamp>
+-    ${this.showSearchSuggestToggle_() ? html`
 -      <settings-toggle-button id="searchSuggestToggle"
 -          class="hr"
--          pref="{{prefs.search.suggest_enabled}}"
+-          pref-key="search.suggest_enabled"
 -          label="$i18n{searchSuggestPref}"
 -          sub-label="$i18n{searchSuggestPrefDesc}">
 -      </settings-toggle-button>
--    </template>
+-    ` : ''}
 -
      <!-- This toggle is only shown for users with the appropriate enterprise
          policy enabled. The state is not changeable by the user, so when shown,
          it is alays selected but disabled. -->
 --- a/chrome/browser/resources/settings/privacy_page/personalization_options.ts
 +++ b/chrome/browser/resources/settings/privacy_page/personalization_options.ts
-@@ -43,8 +43,6 @@
+@@ -49,8 +49,6 @@
  
  import type {SettingsToggleButtonElement} from '../controls/settings_toggle_button.js';
  import {loadTimeData} from '../i18n_setup.js';
 -import {pageVisibility} from '../page_visibility.js';
 -import type {PrivacyPageVisibility} from '../page_visibility.js';
  import type {SettingsSignoutDialogElement} from '../people_page/signout_dialog.js';
- import {RelaunchMixin, RestartType} from '../relaunch_mixin.js';
+ import {RelaunchMixinLit, RestartType} from '../relaunch_mixin_lit.js';
  
-@@ -268,15 +266,6 @@
+@@ -260,15 +258,6 @@
    }
    // </if>
  
--  private showSearchSuggestToggle_(): boolean {
+-  protected showSearchSuggestToggle_(): boolean {
 -    if (pageVisibility?.privacy === undefined) {
 -      // pageVisibility isn't defined in non-Guest profiles
 -      // (crbug.com/40211731).
@@ -395,66 +394,34 @@ plainly where the suggestions come from.
 -  }
 -
    // <if expr="is_chromeos">
-   private navigateTo_(url: string): void {
-     window.location.href = url;
---- a/chrome/browser/resources/settings/search_page/search_page.html
-+++ b/chrome/browser/resources/settings/search_page/search_page.html
-@@ -97,5 +97,15 @@
-           on-click="onManageSearchEnginesClick_"
+   protected onMetricsReportingLinkClick_() {
+     // TODO(wesokuhara) Deep link directly to metrics toggle via settingId.
+--- a/chrome/browser/resources/settings/search_page/search_page.html.ts
++++ b/chrome/browser/resources/settings/search_page/search_page.html.ts
+@@ -85,6 +85,16 @@
+           @click="${this.onManageSearchEnginesClick_}"
            role-description="$i18n{subpageArrowRoleDescription}"></cr-link-row>
-     </template>
+     ` : ''}
 +
 +    <!-- Aerium: relocated here from Settings > Privacy and security, which
 +         used to present it as part of the "Sync and Google services" block.
 +         The suggestions come from whichever search engine is selected above,
 +         so this is where people look for it. -->
 +    <settings-toggle-button id="searchSuggestToggle" class="hr"
-+        pref="{{prefs.search.suggest_enabled}}"
++        pref-key="search.suggest_enabled"
 +        label="$i18n{searchSuggestPref}"
 +        sub-label="$i18n{searchSuggestPrefDesc}">
 +    </settings-toggle-button>
    </div>
  </settings-section>
+ <!--_html_template_end_-->`;
 --- a/chrome/browser/resources/settings/search_page/search_page.ts
 +++ b/chrome/browser/resources/settings/search_page/search_page.ts
-@@ -16,10 +16,12 @@
+@@ -14,6 +14,7 @@
  import './extension_controlled_message.js';
  import './search_engine_icon.js';
  import './search_engine_list_dialog.js';
 +import '../controls/settings_toggle_button.js';
  import '../settings_page/settings_section.js';
- import '../settings_shared.css.js';
- import '../settings_vars.css.js';
  
-+import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
- import type {CrToastElement} from 'chrome://resources/cr_elements/cr_toast/cr_toast.js';
- import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
- import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
-@@ -35,8 +37,8 @@
- import {SearchEnginesBrowserProxyImpl, SearchEnginesInteractions} from './search_engines_browser_proxy.js';
- import {getTemplate} from './search_page.html.js';
- 
--const SettingsSearchPageElementBase =
--    SettingsViewMixin(WebUiListenerMixin(I18nMixin(PolymerElement)));
-+const SettingsSearchPageElementBase = SettingsViewMixin(
-+    WebUiListenerMixin(I18nMixin(PrefsMixin(PolymerElement))));
- 
- export class SettingsSearchPageElement extends SettingsSearchPageElementBase {
-   static get is() {
-@@ -49,8 +51,6 @@
- 
-   static get properties() {
-     return {
--      prefs: Object,
--
-       /**
-        * List of search engines available in the search engine list dialog.
-        */
-@@ -84,7 +84,6 @@
-     };
-   }
- 
--  declare prefs: Object;
-   declare private searchEngines_: SearchEngine[];
-   declare private showSearchEngineListDialog_: boolean;
-   declare private defaultSearchEngine_: SearchEngine|null;
+ import {PrefServiceObserverMixinLit} from '/shared/settings/prefs2/pref_service_observer_mixin_lit.js';

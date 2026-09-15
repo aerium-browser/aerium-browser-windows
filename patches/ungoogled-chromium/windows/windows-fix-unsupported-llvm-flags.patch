@@ -1,10 +1,10 @@
 --- a/build/config/compiler/BUILD.gn
 +++ b/build/config/compiler/BUILD.gn
-@@ -1577,7 +1577,7 @@ config("clang_warning_suppression") {
+@@ -1590,7 +1590,7 @@
  # See also: https://crbug.com/40891132#comment10
  ubsan_hardening("c_array_bounds") {
    sanitizer = "array-bounds"
--  condition = !(is_asan && target_cpu == "x86") && !is_wasm
+-  condition = !(is_asan && target_cpu == "x86")
 +  condition = false
  
    # Because we've enabled array-bounds sanitizing we also want to suppress

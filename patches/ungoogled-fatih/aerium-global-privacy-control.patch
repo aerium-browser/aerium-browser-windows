@@ -27,15 +27,11 @@ recognises.
 
 --- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
 +++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
-@@ -3467,10 +3467,11 @@
-       implied_by: ["GlobalPrivacyControlForce"],
-       base_feature: "none",
+@@ -3406,6 +3406,7 @@
      },
      {
        name: "GlobalPrivacyControlForce",
 +      status: "stable",
      },
      {
-       name: "GraphemeClusterBoundsCheck",
-       status: "stable",
-     },
+       name: "GlobalPrivacyControlTest",

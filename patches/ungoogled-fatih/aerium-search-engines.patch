@@ -92,8 +92,7 @@
  
 --- a/third_party/search_engines_data/resources/definitions/prepopulated_engines.json
 +++ b/third_party/search_engines_data/resources/definitions/prepopulated_engines.json
-@@ -22,13 +22,13 @@
-     // use a lower number. This number is used by UMA stats and must be updated
+@@ -23,12 +23,12 @@
      // to include the full range or else not all engines will be counted in
      // stats.
 -    "kMaxPrepopulatedEngineID": 116,
@@ -103,7 +102,7 @@
      // existing data should get a new version. Otherwise, existing data may
      // continue to be used and updates made here will not always appear.
      // Also then run tools/search_engine_choice/generate_search_engine_icons.py.
--    "kCurrentDataVersion": 210
+-    "kCurrentDataVersion": 211
 +    "kCurrentDataVersion": 254
    },
  
@@ -152,15 +151,6 @@
      "ecosia": {
        "name": "Ecosia",
        "keyword": "ecosia.org",
-@@ -424,7 +454,7 @@
-     },
- 
-     "startpage": {
--      "name": "startpage",
-+      "name": "Startpage",
-       "keyword": "startpage.com",
-       "favicon_url": "https://www.startpage.com/favicon.ico",
-       "base_builtin_resource_id": "SEARCH_ENGINE_STARTPAGE",
 --- a/third_party/search_engines_data/resources/definitions/regional_settings.json
 +++ b/third_party/search_engines_data/resources/definitions/regional_settings.json
 @@ -1419,9 +1419,15 @@

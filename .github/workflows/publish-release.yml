@@ -2,7 +2,7 @@ name: publish-release
 on:
   workflow_run:
     workflows:
-      - build-x64
+      - Build
     types:
       - completed
   # A build that auto-resume dispatched finishes WITHOUT emitting any

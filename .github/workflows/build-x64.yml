@@ -1,4 +1,4 @@
-name: build-x64
+name: Build
 on:
   workflow_dispatch:
     inputs:

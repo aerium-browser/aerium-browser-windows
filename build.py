@@ -317,6 +317,31 @@ def _get_installed_sdk_version():
     return versions[-1] if versions else None
 
 
+def _pin_sdk_version(source_tree):
+    installed = _get_installed_sdk_version()
+    if not installed:
+        get_logger().warning(
+            'No Windows SDK with um headers found; leaving the pinned SDK alone')
+        return
+    pattern = re.compile(r"^SDK_VERSION = '([0-9.]+)'$", re.MULTILINE)
+    for relative in ('build/toolchain/win/setup_toolchain.py', 'build/vs_toolchain.py'):
+        path = source_tree / relative
+        text = path.read_text(encoding=ENCODING)
+        match = pattern.search(text)
+        if not match:
+            raise RuntimeError(
+                'No SDK_VERSION assignment in {}'.format(relative))
+        if match.group(1) == installed:
+            get_logger().info('%s already pins SDK %s', relative, installed)
+            continue
+        get_logger().info(
+            'Repinning %s from SDK %s to %s, which is the newest installed',
+            relative, match.group(1), installed)
+        path.write_text(
+            pattern.sub("SDK_VERSION = '{}'".format(installed), text, count=1),
+            encoding=ENCODING)
+
+
 def _get_vcvars_command():
     command = 'call "%s"' % _get_vcvars_path()
     sdk_version = _get_installed_sdk_version()
@@ -542,6 +567,7 @@ def main():
         _provide_clang_format(source_tree)
         _provide_cpython3(source_tree)
         _provide_tsc(source_tree)
+        _pin_sdk_version(source_tree)
 
     # chrome://aerium's patch list is generated into the source tree, and the
     # block above is skipped entirely on a resumed CI tree (line 365: the tree

@@ -49,7 +49,6 @@ Aerium is a browser for people who'd rather their browser stayed out of the way.
 - **Lighter by default.** Memory Saver and Battery Saver are on out of the box, and a handful of background network chatter (hint prefetching, domain reliability pings) is off. The name comes from aerogel, the lightest solid there is.
 - **DRM off by default, your call either way.** Widevine isn't registered until you turn it on in **Settings → Media**. Nothing is fetched from Google until you flip that switch.
 
-- **Aerogel tabs.** A tab with a cookie jar of its own, from the app menu or by right-clicking a link. Sign in to a second account on a site you are already signed in to, or open a link without handing it to the profile that knows you. The jar is never written to disk and is emptied when the tab closes. It is not Incognito: your history still records where you went, which is the point. This separates identity, not traces.
 
 ## Building
 

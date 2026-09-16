@@ -239,14 +239,17 @@ def _provide_tsc(source_tree):
 
     dom_lib = dest_dir / 'lib.dom.d.ts'
     dom_text = dom_lib.read_text(encoding=ENCODING)
-    dom_text, widened = re.subn(r'^    innerHTML: string;$',
-                                '    innerHTML: string | TrustedHTML;',
-                                dom_text, flags=re.MULTILINE)
+    dom_text, widened = re.subn(
+        r'^    innerHTML: string;$',
+        '    get innerHTML(): string;\n'
+        '    set innerHTML(value: string | TrustedHTML);',
+        dom_text, flags=re.MULTILINE)
     if widened != 2:
         raise RuntimeError(
             'Expected 2 innerHTML declarations in lib.dom.d.ts, rewrote {} - the '
-            'stock TypeScript DOM lib types innerHTML as string, while Chromium '
-            'WebUI assigns string|TrustedHTML to it'.format(widened))
+            'stock TypeScript DOM lib types innerHTML as a plain string, while '
+            'Chromium WebUI assigns string|TrustedHTML to it and reads it back '
+            'as string'.format(widened))
     dom_lib.write_text(dom_text, encoding=ENCODING, newline='')
     get_logger().info('Widened innerHTML to string|TrustedHTML in lib.dom.d.ts')
 

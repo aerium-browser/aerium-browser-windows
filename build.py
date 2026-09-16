@@ -306,12 +306,33 @@ def _get_vcvars_path(name='64'):
     return vcvars_path
 
 
+def _get_installed_sdk_version():
+    include_root = Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)'),
+                        'Windows Kits', '10', 'include')
+    if not include_root.is_dir():
+        return None
+    versions = sorted((entry.name for entry in include_root.iterdir()
+                       if re.fullmatch(r'\d+(\.\d+)*', entry.name) and (entry / 'um').is_dir()),
+                      key=lambda name: tuple(int(part) for part in name.split('.')))
+    return versions[-1] if versions else None
+
+
+def _get_vcvars_command():
+    command = 'call "%s"' % _get_vcvars_path()
+    sdk_version = _get_installed_sdk_version()
+    if sdk_version:
+        get_logger().info('Pinning the Windows SDK to %s', sdk_version)
+        command = '%s %s' % (command, sdk_version)
+    else:
+        get_logger().warning('No Windows SDK with um headers found - letting vcvars pick')
+    return '%s >nul' % command
+
+
 def _run_build_process(*args, **kwargs):
     """
     Runs the subprocess with the correct environment variables for building
     """
-    # Add call to set VC variables
-    cmd_input = ['call "%s" >nul' % _get_vcvars_path()]
+    cmd_input = [_get_vcvars_command()]
     cmd_input.append('set DEPOT_TOOLS_WIN_TOOLCHAIN=0')
     cmd_input.append(' '.join(map('"{}"'.format, args)))
     cmd_input.append('exit\n')
@@ -326,8 +347,7 @@ def _run_build_process_timeout(*args, timeout):
     """
     Runs the subprocess with the correct environment variables for building
     """
-    # Add call to set VC variables
-    cmd_input = ['call "%s" >nul' % _get_vcvars_path()]
+    cmd_input = [_get_vcvars_command()]
     cmd_input.append('set DEPOT_TOOLS_WIN_TOOLCHAIN=0')
     cmd_input.append(' '.join(map('"{}"'.format, args)))
     cmd_input.append('exit\n')
@@ -522,12 +542,6 @@ def main():
         _provide_clang_format(source_tree)
         _provide_cpython3(source_tree)
         _provide_tsc(source_tree)
-
-        _sdk_root = Path(r'C:\Program Files (x86)\Windows Kits\10\include')
-        get_logger().info(
-            'Windows SDK include dirs present: %s',
-            sorted(p.name for p in _sdk_root.iterdir()) if _sdk_root.is_dir()
-            else '<no such directory>')
 
     # chrome://aerium's patch list is generated into the source tree, and the
     # block above is skipped entirely on a resumed CI tree (line 365: the tree

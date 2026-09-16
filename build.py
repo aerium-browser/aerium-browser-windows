@@ -184,6 +184,37 @@ def _provide_clang_format(source_tree):
     get_logger().info('Provided buildtools/win-format/clang-format.exe')
 
 
+def _provide_crubit(source_tree):
+    dest_dir = source_tree / 'third_party' / 'rust-toolchain' / 'lib' / 'third_party' / 'crubit'
+    if (dest_dir / 'support').is_dir():
+        get_logger().info('Crubit support sources already present')
+        return
+
+    update_rust = (source_tree / 'tools' / 'rust' / 'update_rust.py').read_text(encoding=ENCODING)
+    match = re.search(r"^CRUBIT_REVISION = '([0-9a-f]{40})'$", update_rust, re.MULTILINE)
+    if not match:
+        raise RuntimeError('No CRUBIT_REVISION pin in tools/rust/update_rust.py')
+    revision = match.group(1)
+
+    checkout = source_tree / 'third_party' / 'crubit-src'
+    if not (checkout / '.git').is_dir():
+        if checkout.exists():
+            shutil.rmtree(checkout)
+        subprocess.run(['git', 'clone', '--filter=blob:none', '--no-checkout',
+                        'https://github.com/google/crubit', str(checkout)], check=True)
+    subprocess.run(['git', 'checkout', revision], cwd=str(checkout), check=True)
+
+    get_logger().info('Installing crubit/support at %s to %s', revision[:12], dest_dir)
+    for item in ('BUILD.gn', 'LICENSE', 'crubit.gni', 'support'):
+        source_path = checkout / item
+        target_path = dest_dir / item
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        if source_path.is_dir():
+            shutil.copytree(source_path, target_path, dirs_exist_ok=True)
+        else:
+            shutil.copy2(source_path, target_path)
+
+
 def _provide_cpython3(source_tree):
     dest_dir = source_tree / 'third_party' / 'cpython3' / 'host' / 'bin'
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -205,6 +236,20 @@ def _provide_tsc(source_tree):
     dest_dir.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(npm_ts_lib, dest_dir)
     (dest_dir / 'package.json').write_text('{"type": "commonjs"}\n', encoding=ENCODING)
+
+    dom_lib = dest_dir / 'lib.dom.d.ts'
+    dom_text = dom_lib.read_text(encoding=ENCODING)
+    dom_text, widened = re.subn(r'^    innerHTML: string;$',
+                                '    innerHTML: string | TrustedHTML;',
+                                dom_text, flags=re.MULTILINE)
+    if widened != 2:
+        raise RuntimeError(
+            'Expected 2 innerHTML declarations in lib.dom.d.ts, rewrote {} - the '
+            'stock TypeScript DOM lib types innerHTML as string, while Chromium '
+            'WebUI assigns string|TrustedHTML to it'.format(widened))
+    dom_lib.write_text(dom_text, encoding=ENCODING, newline='')
+    get_logger().info('Widened innerHTML to string|TrustedHTML in lib.dom.d.ts')
+
     tsc_js = dest_dir / 'tsc.js'
     dest = dest_dir / 'tsc.exe'
 
@@ -629,6 +674,8 @@ def main():
         # Generate version file
         with open(RUST_FLAG_FILE, 'w') as f:
             subprocess.run([source_tree / 'third_party' / 'rust-toolchain-x64' / 'rustc' / 'bin' / 'rustc.exe', '--version'], stdout=f)
+
+    _provide_crubit(source_tree)
 
     if not args.ci or not (source_tree / 'out/Default').exists():
         # Output args.gn

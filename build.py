@@ -167,12 +167,12 @@ def _provide_clang_format(source_tree):
     pre-flight found that; this is the same fix on this side.
 
     The copy comes from the LLVM release already downloaded and unpacked into
-    third_party/llvm-build, rather than from the pin in DEPS. clang-format only
+    third_party/llvm-prebuilt, rather than from the pin in DEPS. clang-format only
     decides how a generated header is laid out before it is compiled, so a
     version difference changes whitespace in a file nobody reads - and it saves
     a fourth download to keep in step.
     """
-    src = source_tree / 'third_party' / 'llvm-build' / 'Release+Asserts' / 'bin' / 'clang-format.exe'
+    src = source_tree / 'third_party' / 'llvm-prebuilt' / 'bin' / 'clang-format.exe'
     if not src.exists():
         raise FileNotFoundError(
             'clang-format.exe not found at {} - it should come from the LLVM '
@@ -182,6 +182,28 @@ def _provide_clang_format(source_tree):
     dest_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dest_dir / 'clang-format.exe')
     get_logger().info('Provided buildtools/win-format/clang-format.exe')
+
+
+def _restore_toolchain_url(source_tree):
+    path = source_tree / 'tools' / 'clang' / 'scripts' / 'update.py'
+    text = path.read_text(encoding=ENCODING)
+    text, restored = re.subn(r'commondatastorage\.9oo91eapis\.qjz9zk',
+                             'commondatastorage.googleapis.com', text)
+    if restored == 0:
+        raise RuntimeError(
+            'No substituted commondatastorage host in tools/clang/scripts/update.py '
+            '- domain substitution no longer rewrites the bucket the clang and Rust '
+            'packages are fetched from, so this reversal is stale')
+    path.write_text(text, encoding=ENCODING, newline='')
+    get_logger().info('Restored the clang/Rust download host in %s', path.name)
+
+
+def _provide_chromium_toolchain(source_tree):
+    for relative in (('tools', 'clang', 'scripts', 'update.py'),
+                     ('tools', 'rust', 'update_rust.py')):
+        script = source_tree / Path(*relative)
+        get_logger().info('Running %s', script.name)
+        subprocess.run([sys.executable, str(script)], check=True, cwd=str(source_tree))
 
 
 def _provide_crubit(source_tree):
@@ -605,13 +627,15 @@ def main():
         _generate_patch_manifest(source_tree)
 
         # Put clang-format where gn expects it. Inside the prepare block, not
-        # beside the ninja call: it copies out of third_party/llvm-build, which
+        # beside the ninja call: it copies out of third_party/llvm-prebuilt, which
         # only exists once the downloads above have been unpacked. Run
         # unconditionally it raised on a --ci retry, where the tree exists so
         # this block is skipped but a failure earlier in prepare meant LLVM had
         # never been unpacked - turning someone else's error into mine two
         # attempts later. A resumed CI tree comes from a checkpoint that
         # already contains buildtools, so skipping it there is correct.
+        _restore_toolchain_url(source_tree)
+        _provide_chromium_toolchain(source_tree)
         _provide_clang_format(source_tree)
         _provide_cpython3(source_tree)
         _provide_tsc(source_tree)
@@ -641,42 +665,6 @@ def main():
     if not patch_manifest.exists():
         get_logger().info('Patch manifest missing from the tree - regenerating')
         _generate_patch_manifest(source_tree)
-
-    # Check if rust-toolchain folder has been populated
-    HOST_CPU_IS_64BIT = sys.maxsize > 2**32
-    RUST_DIR_DST = source_tree / 'third_party' / 'rust-toolchain'
-    RUST_DIR_SRC64 = source_tree / 'third_party' / 'rust-toolchain-x64'
-    RUST_DIR_SRC86 = source_tree / 'third_party' / 'rust-toolchain-x86'
-    RUST_DIR_SRCARM = source_tree / 'third_party' / 'rust-toolchain-arm'
-    RUST_FLAG_FILE = RUST_DIR_DST / 'INSTALLED_VERSION'
-    if not args.ci or not RUST_FLAG_FILE.exists():
-        # Directories to copy from source to target folder
-        DIRS_TO_COPY = ['bin', 'lib']
-
-        # Loop over all source folders
-        for rust_dir_src in [RUST_DIR_SRC64, RUST_DIR_SRC86, RUST_DIR_SRCARM]:
-            # Loop over all dirs to copy
-            for dir_to_copy in DIRS_TO_COPY:
-                # Copy bin folder for host architecture
-                if (dir_to_copy == 'bin') and (HOST_CPU_IS_64BIT != (rust_dir_src == RUST_DIR_SRC64)):
-                    continue
-
-                # Create target dir
-                target_dir = RUST_DIR_DST / dir_to_copy
-                if not os.path.isdir(target_dir):
-                    os.makedirs(target_dir)
-
-                # Loop over all subfolders of the rust source dir
-                for cp_src in rust_dir_src.glob(f'*/{dir_to_copy}/*'):
-                    cp_dst = target_dir / cp_src.name
-                    if cp_src.is_dir():
-                        shutil.copytree(cp_src, cp_dst, dirs_exist_ok=True)
-                    else:
-                        shutil.copy2(cp_src, cp_dst)
-
-        # Generate version file
-        with open(RUST_FLAG_FILE, 'w') as f:
-            subprocess.run([source_tree / 'third_party' / 'rust-toolchain-x64' / 'rustc' / 'bin' / 'rustc.exe', '--version'], stdout=f)
 
     _provide_crubit(source_tree)
 
@@ -735,7 +723,7 @@ def main():
             _run_build_process('out\\Default\\gn.exe', 'ls', 'out\\Default', target)
             _run_build_process('out\\Default\\gn.exe', 'check', 'out\\Default', target)
 
-    if not args.ci or not os.path.exists('third_party\\rust-toolchain\\bin\\bindgen.exe'):
+    if not os.path.exists('third_party\\rust-toolchain\\bin\\bindgen.exe'):
         # Build bindgen
         _run_build_process(
             sys.executable,

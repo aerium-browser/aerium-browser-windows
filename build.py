@@ -204,6 +204,7 @@ def _provide_tsc(source_tree):
         shutil.rmtree(dest_dir)
     dest_dir.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(npm_ts_lib, dest_dir)
+    (dest_dir / 'package.json').write_text('{"type": "commonjs"}\n', encoding=ENCODING)
     tsc_js = dest_dir / 'tsc.js'
     dest = dest_dir / 'tsc.exe'
 
@@ -521,6 +522,12 @@ def main():
         _provide_clang_format(source_tree)
         _provide_cpython3(source_tree)
         _provide_tsc(source_tree)
+
+        _sdk_root = Path(r'C:\Program Files (x86)\Windows Kits\10\include')
+        get_logger().info(
+            'Windows SDK include dirs present: %s',
+            sorted(p.name for p in _sdk_root.iterdir()) if _sdk_root.is_dir()
+            else '<no such directory>')
 
     # chrome://aerium's patch list is generated into the source tree, and the
     # block above is skipped entirely on a resumed CI tree (line 365: the tree

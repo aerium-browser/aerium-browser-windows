@@ -275,6 +275,28 @@ def _provide_tsc(source_tree):
     dom_lib.write_text(dom_text, encoding=ENCODING, newline='')
     get_logger().info('Widened innerHTML to string|TrustedHTML in lib.dom.d.ts')
 
+    newer_prefix = source_tree.parent / 'ts-newer'
+    subprocess.run(['npm', 'install', '-g', '--prefix', str(newer_prefix),
+                    'typescript@6.0.0-beta'], check=True, shell=True)
+    newer_lib = next(
+        (c for c in (newer_prefix / 'node_modules' / 'typescript' / 'lib',
+                     newer_prefix / 'lib' / 'node_modules' / 'typescript' / 'lib')
+         if c.is_dir()), None)
+    if newer_lib is None:
+        raise RuntimeError('No typescript lib under {}'.format(newer_prefix))
+    for lib_file in newer_lib.glob('lib.*.d.ts'):
+        if not (dest_dir / lib_file.name).exists():
+            shutil.copy2(lib_file, dest_dir / lib_file.name)
+
+    tsgo = (source_tree / 'third_party' / 'typescript' / 'tsgo.gni').read_text(encoding=ENCODING)
+    missing = sorted(name for name in set(re.findall(r'"(lib\.[^"]+\.d\.ts)"', tsgo))
+                     if not (dest_dir / name).exists())
+    if missing:
+        raise RuntimeError(
+            'tsgo.gni lists lib files the installed TypeScript does not ship: {}'.format(
+                ' '.join(missing)))
+    get_logger().info('Provided %d TypeScript lib files', len(list(dest_dir.glob('lib.*.d.ts'))))
+
     tsc_js = dest_dir / 'tsc.js'
     dest = dest_dir / 'tsc.exe'
 

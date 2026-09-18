@@ -245,7 +245,7 @@ def _provide_cpython3(source_tree):
 
 
 def _provide_tsc(source_tree):
-    subprocess.run(['npm', 'install', '-g', 'typescript@5.9.2'], check=True, shell=True)
+    subprocess.run(['npm', 'install', '-g', 'typescript@6.0.0-beta'], check=True, shell=True)
     npm_prefix = subprocess.run(['npm', 'config', 'get', 'prefix'], check=True,
                                 shell=True, capture_output=True,
                                 encoding=ENCODING).stdout.strip()
@@ -259,7 +259,18 @@ def _provide_tsc(source_tree):
     shutil.copytree(npm_ts_lib, dest_dir)
     (dest_dir / 'package.json').write_text('{"type": "commonjs"}\n', encoding=ENCODING)
 
+    dom_prefix = source_tree.parent / 'ts-dom'
+    subprocess.run(['npm', 'install', '-g', '--prefix', str(dom_prefix),
+                    'typescript@5.9.2'], check=True, shell=True)
+    dom_src = next(
+        (c / 'lib.dom.d.ts' for c in (dom_prefix / 'node_modules' / 'typescript' / 'lib',
+                                      dom_prefix / 'lib' / 'node_modules' / 'typescript' / 'lib')
+         if (c / 'lib.dom.d.ts').is_file()), None)
+    if dom_src is None:
+        raise RuntimeError('No lib.dom.d.ts under {}'.format(dom_prefix))
     dom_lib = dest_dir / 'lib.dom.d.ts'
+    shutil.copy2(dom_src, dom_lib)
+
     dom_text = dom_lib.read_text(encoding=ENCODING)
     dom_text, widened = re.subn(
         r'^    innerHTML: string;$',
@@ -272,21 +283,11 @@ def _provide_tsc(source_tree):
             'stock TypeScript DOM lib types innerHTML as a plain string, while '
             'Chromium WebUI assigns string|TrustedHTML to it and reads it back '
             'as string'.format(widened))
+    if not re.search(r'^    hidden: boolean;$', dom_text, flags=re.MULTILINE):
+        raise RuntimeError(
+            'lib.dom.d.ts does not type hidden as a plain boolean; Chromium WebUI '
+            'assigns it to boolean')
     dom_lib.write_text(dom_text, encoding=ENCODING, newline='')
-    get_logger().info('Widened innerHTML to string|TrustedHTML in lib.dom.d.ts')
-
-    newer_prefix = source_tree.parent / 'ts-newer'
-    subprocess.run(['npm', 'install', '-g', '--prefix', str(newer_prefix),
-                    'typescript@6.0.0-beta'], check=True, shell=True)
-    newer_lib = next(
-        (c for c in (newer_prefix / 'node_modules' / 'typescript' / 'lib',
-                     newer_prefix / 'lib' / 'node_modules' / 'typescript' / 'lib')
-         if c.is_dir()), None)
-    if newer_lib is None:
-        raise RuntimeError('No typescript lib under {}'.format(newer_prefix))
-    for lib_file in newer_lib.glob('lib.*.d.ts'):
-        if not (dest_dir / lib_file.name).exists():
-            shutil.copy2(lib_file, dest_dir / lib_file.name)
 
     tsgo = (source_tree / 'third_party' / 'typescript' / 'tsgo.gni').read_text(encoding=ENCODING)
     missing = sorted(name for name in set(re.findall(r'"(lib\.[^"]+\.d\.ts)"', tsgo))

@@ -181,8 +181,8 @@ terminator - the first )" in the page is the intended one.
    }
 --- a/chrome/browser/prefs/browser_prefs.cc
 +++ b/chrome/browser/prefs/browser_prefs.cc
-@@ -1744,6 +1744,17 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
-   AimEligibilityService::RegisterProfilePrefs(registry);
+@@ -1759,6 +1759,17 @@
+   registry->RegisterStringPref("aerium_guard.custom_config_json", std::string());
    AnnouncementNotificationService::RegisterProfilePrefs(registry);
    autofill::prefs::RegisterProfilePrefs(registry);
 +  // Aerium: the new tab page. Registered here rather than beside a subsystem

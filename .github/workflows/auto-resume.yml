@@ -33,7 +33,7 @@ jobs:
           BRANCH: 'master'
           BUILD_WORKFLOW: 'build-x64.yml'
           CHECKPOINT_PATTERN: 'build-artifact(-x86|-arm)?(-b)?'
-          ERROR_MARKER_PATTERN: ''
+          ERROR_MARKER_PATTERN: 'build-error(-x86|-arm)?'
           PROGRESS_JOB_PATTERN: ''
           ATTEMPT_CAP: '5'
         run: |

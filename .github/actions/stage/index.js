@@ -81,6 +81,7 @@ async function run() {
 
     const artifact = new DefaultArtifactClient();
     const artifactName = x86 ? 'build-artifact-x86' : (arm ? 'build-artifact-arm' : 'build-artifact');
+    const errorMarkerName = x86 ? 'build-error-x86' : (arm ? 'build-error-arm' : 'build-error');
 
     // The checkpoint lives in one of two slots, alternating between stages.
     //
@@ -115,6 +116,77 @@ async function run() {
             return null;
         }
     }
+
+    const saveCheckpoint = async () => {
+        await new Promise(r => setTimeout(r, 5000));
+        await exec.exec('7z', ['a', '-tzip', 'C:\\ungoogled-chromium-windows\\artifacts.zip',
+            'C:\\ungoogled-chromium-windows\\build\\src', '-mx=3', '-mtc=on'], {ignoreReturnCode: true});
+        // Write to the free slot, keeping the existing checkpoint intact for
+        // the whole of the pack-and-upload window, and only drop it once the
+        // replacement is actually stored. See the slot comment above for the
+        // run this is here to stop repeating.
+        const current = {};
+        for (const slot of artifactSlots) {
+            current[slot] = await findSlot(slot);
+        }
+        const occupied = artifactSlots.filter(slot => current[slot]);
+        let target;
+        let previous = null;
+        if (occupied.length === 0) {
+            // Nothing to lose - first checkpoint of the run.
+            target = artifactSlots[0];
+        } else if (occupied.length === 1) {
+            previous = occupied[0];
+            target = artifactSlots.find(slot => slot !== previous);
+        } else {
+            // Both occupied, which means a previous stage was interrupted
+            // after uploading but before it could clear the older slot.
+            // Overwrite the older one and keep the newer as the fallback.
+            const older = current[artifactSlots[0]].id < current[artifactSlots[1]].id
+                ? artifactSlots[0] : artifactSlots[1];
+            target = older;
+            previous = artifactSlots.find(slot => slot !== older);
+            try {
+                await artifact.deleteArtifact(target);
+            } catch (e) {
+                // ignored - the upload below reports the real failure
+            }
+        }
+
+        let uploaded = false;
+        for (let i = 0; i < 5; ++i) {
+            try {
+                await artifact.uploadArtifact(target, ['C:\\ungoogled-chromium-windows\\artifacts.zip'],
+                    'C:\\ungoogled-chromium-windows', {retentionDays: 10, compressionLevel: 0});
+                uploaded = true;
+                break;
+            } catch (e) {
+                console.error(`Upload artifact failed: ${e}`);
+                // Wait 10 seconds between the attempts
+                await new Promise(r => setTimeout(r, 10000));
+            }
+        }
+
+        if (uploaded) {
+            appendSummary(`- **checkpoint**: saved to \`${target}\``);
+            if (previous) {
+                try {
+                    await artifact.deleteArtifact(previous);
+                } catch (e) {
+                    // Leaving the old slot behind costs one checkpoint of
+                    // storage for its retention period and nothing else - the
+                    // next stage picks the newer of the two by id.
+                    console.log(`could not remove the previous checkpoint ${previous}: ${e}`);
+                }
+            }
+        } else if (previous) {
+            appendSummary(`- **checkpoint**: upload failed, resuming from \`${previous}\``);
+        } else {
+            appendSummary('- **checkpoint**: upload failed and there was no earlier one');
+        }
+        core.setOutput('finished', false);
+    };
+
 
     if (from_artifact) {
         // Cross-run resume (build-1 of a fresh dispatch picking up a dead
@@ -218,23 +290,20 @@ async function run() {
     // Capped at the old 3.5h so this can only ever shorten a stage, and
     // floored at 30 minutes so a pathologically slow restore still makes some
     // progress instead of checkpointing an unchanged tree forever.
-    const JOB_LIMIT_SECONDS = 6 * 60 * 60;
-    const CHECKPOINT_RESERVE_SECONDS = 55 * 60;
-    const MAX_NINJA_SECONDS = 3.5 * 60 * 60;
+    const JOB_LIMIT_SECONDS = 350 * 60;
+    const MIN_RESERVE_SECONDS = 15 * 60;
+    const MAX_RESERVE_SECONDS = 90 * 60;
     const MIN_NINJA_SECONDS = 30 * 60;
     const spentSeconds = Math.round((Date.now() - stageStartMs) / 1000);
+    const reserveSeconds = Math.min(MAX_RESERVE_SECONDS,
+                                    Math.max(MIN_RESERVE_SECONDS, spentSeconds));
     const ninjaSeconds = Math.max(
         MIN_NINJA_SECONDS,
-        Math.min(MAX_NINJA_SECONDS,
-                 JOB_LIMIT_SECONDS - spentSeconds - CHECKPOINT_RESERVE_SECONDS));
+        JOB_LIMIT_SECONDS - spentSeconds - reserveSeconds);
     appendSummary(`- **compile budget**: ${(ninjaSeconds / 3600).toFixed(2)}h`
-        + ` (${(spentSeconds / 60).toFixed(0)} min already spent restoring)`);
+        + ` (${(spentSeconds / 60).toFixed(0)} min spent restoring,`
+        + ` ${(reserveSeconds / 60).toFixed(0)} min reserved for the checkpoint)`);
 
-    const args = ['build.py', '--ci', '-j', '4', '--ninja-timeout', String(ninjaSeconds)]
-    if (x86)
-        args.push('--x86')
-    if (arm)
-        args.push('--arm')
     await exec.exec('python', ['-m', 'pip', 'install', 'httplib2==0.22.0'], {
         cwd: 'C:\\ungoogled-chromium-windows',
         ignoreReturnCode: true
@@ -255,22 +324,44 @@ async function run() {
     // every time rather than making progress.
     const MAX_FAST_FAIL_ATTEMPTS = 3;
     let buildStart, buildMinutes, retCode;
-    for (let attempt = 1; attempt <= MAX_FAST_FAIL_ATTEMPTS; ++attempt) {
-        buildStart = Date.now();
-        retCode = await exec.exec('python', args, {
-            cwd: 'C:\\ungoogled-chromium-windows',
-            ignoreReturnCode: true
-        });
-        buildMinutes = (Date.now() - buildStart) / 60000;
-        // Success, or a slow failure (the stage hit build.py's own 3.5h ninja
-        // timeout) - either way this attempt loop is done.
-        if (retCode === 0 || buildMinutes >= 60) {
-            break;
+    const runSlice = async (seconds) => {
+        const args = ['build.py', '--ci', '-j', '4', '--ninja-timeout', String(seconds)]
+        if (x86)
+            args.push('--x86')
+        if (arm)
+            args.push('--arm')
+        appendSummary(`- **slice budget**: ${(seconds / 3600).toFixed(2)}h`);
+        for (let attempt = 1; attempt <= MAX_FAST_FAIL_ATTEMPTS; ++attempt) {
+            buildStart = Date.now();
+            retCode = await exec.exec('python', args, {
+                cwd: 'C:\\ungoogled-chromium-windows',
+                ignoreReturnCode: true
+            });
+            buildMinutes = (Date.now() - buildStart) / 60000;
+            // Success, or a slow failure (the stage hit build.py's own 3.5h ninja
+            // timeout) - either way this attempt loop is done.
+            if (retCode === 0 || buildMinutes >= 60) {
+                break;
+            }
+            if (attempt < MAX_FAST_FAIL_ATTEMPTS) {
+                console.log(`build.py failed after ${buildMinutes.toFixed(1)} minutes (exit ${retCode}) - attempt ${attempt}/${MAX_FAST_FAIL_ATTEMPTS}, retrying in place (ninja resumes incrementally)...`);
+            }
         }
-        if (attempt < MAX_FAST_FAIL_ATTEMPTS) {
-            console.log(`build.py failed after ${buildMinutes.toFixed(1)} minutes (exit ${retCode}) - attempt ${attempt}/${MAX_FAST_FAIL_ATTEMPTS}, retrying in place (ninja resumes incrementally)...`);
+    };
+
+    await runSlice(Math.floor(ninjaSeconds / 2));
+    if (retCode !== 0 && buildMinutes >= 60) {
+        appendSummary('- **mid-stage checkpoint**: first slice used its budget, saving before the second');
+        await saveCheckpoint();
+        const spentNow = Math.round((Date.now() - stageStartMs) / 1000);
+        const secondSliceSeconds = JOB_LIMIT_SECONDS - spentNow - reserveSeconds;
+        if (secondSliceSeconds >= MIN_NINJA_SECONDS) {
+            await runSlice(secondSliceSeconds);
+        } else {
+            appendSummary(`- **second slice skipped**: only ${(secondSliceSeconds / 60).toFixed(0)} min left`);
         }
     }
+
     // build.py's internal ninja timeout is 3.5h, so a stage that exits
     // non-zero after only minutes did NOT time out - it hit a real error
     // (clone failure, patch failure, gn failure). Without this check every
@@ -283,6 +374,20 @@ async function run() {
     // checkpoint upload on fast-fail also keeps a broken tree from
     // overwriting the last good checkpoint on resumed runs.
     if (retCode !== 0 && buildMinutes < 60) {
+        core.setOutput('deterministic', 'true');
+        const markerDir = 'C:\\ungoogled-chromium-windows\\stage-status';
+        const markerPath = `${markerDir}\\build-error.txt`;
+        try {
+            await io.mkdirP(markerDir);
+            fs.writeFileSync(markerPath,
+                `exit_code=${retCode}\nstage_run_id=${process.env.GITHUB_RUN_ID}\n`
+                + `commit=${process.env.GITHUB_SHA}\nminutes=${buildMinutes.toFixed(1)}\n`);
+            await artifact.deleteArtifact(errorMarkerName).catch(() => {});
+            await artifact.uploadArtifact(errorMarkerName, [markerPath], markerDir,
+                {retentionDays: 10});
+        } catch (e) {
+            console.log(`could not record the deterministic-failure marker (non-fatal): ${e}`);
+        }
         core.setFailed(`build.py failed after only ${buildMinutes.toFixed(1)} minutes (exit ${retCode}) on all ${MAX_FAST_FAIL_ATTEMPTS} attempts - real error, not a stage timeout. Not uploading a checkpoint.`);
         return;
     }
@@ -315,73 +420,7 @@ async function run() {
             }
         }
     } else {
-        await new Promise(r => setTimeout(r, 5000));
-        await exec.exec('7z', ['a', '-tzip', 'C:\\ungoogled-chromium-windows\\artifacts.zip',
-            'C:\\ungoogled-chromium-windows\\build\\src', '-mx=3', '-mtc=on'], {ignoreReturnCode: true});
-        // Write to the free slot, keeping the existing checkpoint intact for
-        // the whole of the pack-and-upload window, and only drop it once the
-        // replacement is actually stored. See the slot comment above for the
-        // run this is here to stop repeating.
-        const current = {};
-        for (const slot of artifactSlots) {
-            current[slot] = await findSlot(slot);
-        }
-        const occupied = artifactSlots.filter(slot => current[slot]);
-        let target;
-        let previous = null;
-        if (occupied.length === 0) {
-            // Nothing to lose - first checkpoint of the run.
-            target = artifactSlots[0];
-        } else if (occupied.length === 1) {
-            previous = occupied[0];
-            target = artifactSlots.find(slot => slot !== previous);
-        } else {
-            // Both occupied, which means a previous stage was interrupted
-            // after uploading but before it could clear the older slot.
-            // Overwrite the older one and keep the newer as the fallback.
-            const older = current[artifactSlots[0]].id < current[artifactSlots[1]].id
-                ? artifactSlots[0] : artifactSlots[1];
-            target = older;
-            previous = artifactSlots.find(slot => slot !== older);
-            try {
-                await artifact.deleteArtifact(target);
-            } catch (e) {
-                // ignored - the upload below reports the real failure
-            }
-        }
-
-        let uploaded = false;
-        for (let i = 0; i < 5; ++i) {
-            try {
-                await artifact.uploadArtifact(target, ['C:\\ungoogled-chromium-windows\\artifacts.zip'],
-                    'C:\\ungoogled-chromium-windows', {retentionDays: 10, compressionLevel: 0});
-                uploaded = true;
-                break;
-            } catch (e) {
-                console.error(`Upload artifact failed: ${e}`);
-                // Wait 10 seconds between the attempts
-                await new Promise(r => setTimeout(r, 10000));
-            }
-        }
-
-        if (uploaded) {
-            appendSummary(`- **checkpoint**: saved to \`${target}\``);
-            if (previous) {
-                try {
-                    await artifact.deleteArtifact(previous);
-                } catch (e) {
-                    // Leaving the old slot behind costs one checkpoint of
-                    // storage for its retention period and nothing else - the
-                    // next stage picks the newer of the two by id.
-                    console.log(`could not remove the previous checkpoint ${previous}: ${e}`);
-                }
-            }
-        } else if (previous) {
-            appendSummary(`- **checkpoint**: upload failed, resuming from \`${previous}\``);
-        } else {
-            appendSummary('- **checkpoint**: upload failed and there was no earlier one');
-        }
-        core.setOutput('finished', false);
+        await saveCheckpoint();
     }
 }
 

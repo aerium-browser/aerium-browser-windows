@@ -26,6 +26,8 @@ inputs:
 outputs:
   finished:
     description: If a previous stage already finished the build, the stage will set all output variables to the input ones and exit
+  deterministic:
+    description: true when the build failed in a way that will reproduce, so the next stage must not run
 runs:
   using: 'node24'
   main: 'index.js'

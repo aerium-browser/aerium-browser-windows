@@ -262,14 +262,27 @@ def _provide_tsc(source_tree):
     dom_prefix = source_tree.parent / 'ts-dom'
     subprocess.run(['npm', 'install', '-g', '--prefix', str(dom_prefix),
                     'typescript@5.9.2'], check=True, shell=True)
-    dom_src = next(
-        (c / 'lib.dom.d.ts' for c in (dom_prefix / 'node_modules' / 'typescript' / 'lib',
-                                      dom_prefix / 'lib' / 'node_modules' / 'typescript' / 'lib')
+    dom_dir = next(
+        (c for c in (dom_prefix / 'node_modules' / 'typescript' / 'lib',
+                     dom_prefix / 'lib' / 'node_modules' / 'typescript' / 'lib')
          if (c / 'lib.dom.d.ts').is_file()), None)
-    if dom_src is None:
+    if dom_dir is None:
         raise RuntimeError('No lib.dom.d.ts under {}'.format(dom_prefix))
+    for name in ('lib.dom.d.ts', 'lib.dom.iterable.d.ts'):
+        if not (dom_dir / name).is_file():
+            raise RuntimeError('No {} under {}'.format(name, dom_dir))
+        shutil.copy2(dom_dir / name, dest_dir / name)
     dom_lib = dest_dir / 'lib.dom.d.ts'
-    shutil.copy2(dom_src, dom_lib)
+
+    iterators = len(re.findall(
+        r'\[Symbol\.iterator\]',
+        (dest_dir / 'lib.dom.iterable.d.ts').read_text(encoding=ENCODING)))
+    if iterators < 40:
+        raise RuntimeError(
+            'lib.dom.iterable.d.ts declares only {} Symbol.iterator members. It must '
+            'come from the same TypeScript release as lib.dom.d.ts: 6.x moved these '
+            'into lib.dom.d.ts and left a stub here, so mixing the two drops every '
+            'DOM iterator'.format(iterators))
 
     dom_text = dom_lib.read_text(encoding=ENCODING)
     dom_text, widened = re.subn(

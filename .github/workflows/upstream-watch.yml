@@ -53,11 +53,20 @@ jobs:
             exit 1
           fi
 
-          # sort -V understands both shapes in play here: 151.0.7922.173-1 and
-          # the plain 4-field tags. Taking the last line rather than comparing
-          # against PINNED directly means a tag that sorts *older* than the pin
-          # is ignored, which is what should happen if upstream ever retracts.
-          LATEST=$(git tag --list | sort -V | tail -1)
+          LATEST=""
+          for TAG in $(git tag --list | sort -V | tac | head -20); do
+            CR=$(git show "$TAG:chromium_version.txt" | tr -d '[:space:]')
+            if curl -sSf -o /dev/null -r 0-0 --max-time 40 \
+                 "https://commondatastorage.googleapis.com/chromium-browser-official/chromium-$CR-lite.tar.xz"; then
+              LATEST="$TAG"
+              break
+            fi
+            echo "Skipping $TAG - Chromium $CR has no published source tarball"
+          done
+          if [ -z "$LATEST" ]; then
+            echo "No recent upstream tag has a published Chromium source tarball." >&2
+            exit 1
+          fi
           cd ..
 
           echo "pinned=$PINNED" >> "$GITHUB_OUTPUT"

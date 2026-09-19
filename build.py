@@ -435,6 +435,37 @@ def _pin_sdk_version(source_tree):
             encoding=ENCODING)
 
 
+def _align_ntddi_version(source_tree):
+    installed = _get_installed_sdk_version()
+    if not installed:
+        get_logger().warning(
+            'No Windows SDK with um headers found; leaving NTDDI_VERSION alone')
+        return
+    sdkddkver = Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)'),
+                     'Windows Kits', '10', 'include', installed, 'shared', 'sdkddkver.h')
+    if not sdkddkver.is_file():
+        raise RuntimeError('No sdkddkver.h in Windows SDK {}'.format(installed))
+    known = {name: int(value, 16) for name, value in re.findall(
+        r'^#define\s+(NTDDI_WIN\w+)\s+(0x[0-9A-Fa-f]{8})\s*$',
+        sdkddkver.read_text(encoding=ENCODING, errors='replace'), re.MULTILINE)}
+    if not known:
+        raise RuntimeError('No NTDDI_WIN* macros in {}'.format(sdkddkver))
+    path = source_tree / 'build' / 'config' / 'win' / 'BUILD.gn'
+    text = path.read_text(encoding=ENCODING)
+    match = re.search(r'"NTDDI_VERSION=(NTDDI_\w+)"', text)
+    if not match:
+        raise RuntimeError('No NTDDI_VERSION define in build/config/win/BUILD.gn')
+    if match.group(1) in known:
+        get_logger().info('Windows SDK %s defines %s', installed, match.group(1))
+        return
+    newest = max(known, key=known.get)
+    get_logger().info(
+        'Windows SDK %s does not define %s; lowering NTDDI_VERSION to %s',
+        installed, match.group(1), newest)
+    path.write_text(text[:match.start(1)] + newest + text[match.end(1):],
+                    encoding=ENCODING, newline='')
+
+
 def _get_vcvars_command():
     command = 'call "%s"' % _get_vcvars_path()
     sdk_version = _get_installed_sdk_version()
@@ -663,6 +694,7 @@ def main():
         _provide_cpython3(source_tree)
         _provide_tsc(source_tree)
         _pin_sdk_version(source_tree)
+        _align_ntddi_version(source_tree)
 
     # chrome://aerium's patch list is generated into the source tree, and the
     # block above is skipped entirely on a resumed CI tree (line 365: the tree
